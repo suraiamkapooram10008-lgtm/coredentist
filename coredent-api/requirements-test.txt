@@ -1,0 +1,34 @@
+# Testing dependencies for CoreDent API
+
+# Core testing framework
+pytest==7.4.4
+pytest-asyncio==0.23.2
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+
+# HTTP testing
+httpx==0.26.0
+requests==2.31.0
+
+# FastAPI testing
+fastapi[all]==0.109.0
+
+# Database testing
+sqlalchemy==2.0.25
+alembic==1.13.1
+
+# Test utilities
+factory-boy==3.3.0
+faker==22.2.0
+
+# Coverage reporting
+coverage==7.4.0
+
+# Performance testing
+pytest-benchmark==4.0.0
+
+# Parallel testing
+pytest-xdist==3.5.0
+
+# Test data
+responses==0.24.1
