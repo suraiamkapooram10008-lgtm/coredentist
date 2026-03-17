@@ -1,4 +1,5 @@
 # CoreDent Frontend – Production Launch Checklist
+<!-- Code review submission -->
 
 This repository contains the frontend for the CoreDent Dental Practice Management System. Below is the **Production App Master Checklist** that should be followed to ensure a secure, reliable, and user‑friendly launch.
 
