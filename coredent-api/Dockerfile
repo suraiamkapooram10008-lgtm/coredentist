@@ -34,6 +34,9 @@ COPY coredent-api/ .
 # Ensure alembic.ini is in the correct location
 RUN cp /app/alembic.ini /app/alembic.ini 2>/dev/null || true
 
+# Make migration script executable
+RUN chmod +x /app/run_migrations.sh
+
 # Create non-root user for security (HIPAA Best Practice)
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app
