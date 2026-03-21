@@ -36,6 +36,7 @@ RUN cp /app/alembic.ini /app/alembic.ini 2>/dev/null || true
 
 # Make startup script executable
 RUN chmod +x /app/start.sh
+RUN chmod +x /app/start.py
 
 # Make migration script executable
 RUN chmod +x /app/run_migrations.sh
@@ -53,4 +54,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Start application (migrations should be run separately via Railway job or CLI)
-CMD ["/app/start.sh"]
+CMD ["python", "/app/start.py"]
