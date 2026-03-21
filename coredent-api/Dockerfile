@@ -31,6 +31,9 @@ COPY --from=builder /install /usr/local
 # Copy application code (from coredent-api directory)
 COPY coredent-api/ .
 
+# Ensure alembic.ini is in the correct location
+RUN cp /app/alembic.ini /app/alembic.ini 2>/dev/null || true
+
 # Create non-root user for security (HIPAA Best Practice)
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app

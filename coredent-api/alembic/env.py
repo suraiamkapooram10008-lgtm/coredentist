@@ -17,6 +17,12 @@ from app.core.config import settings
 # this is the Alembic Config object
 config = context.config
 
+# Explicitly set the config file path (works in both local and Railway)
+import os
+config_file = os.environ.get("ALEMBIC_CONFIG", "/app/alembic.ini")
+if os.path.exists(config_file):
+    config = context.Config(config_file)
+
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
