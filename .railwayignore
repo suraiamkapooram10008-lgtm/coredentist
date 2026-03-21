@@ -1,45 +1,31 @@
-# Railway Ignore File
-# Files and directories to exclude from Railway deployments
+# Railway Ignore File - Exclude everything except backend
 
-# Documentation
+# Ignore root level files
 *.md
-!README.md
-docs/
+*.txt
+*.sh
+.git/
 .github/
-
-# Tests
-**/tests/
-**/__tests__/
-*.test.ts
-*.test.tsx
-*.test.py
-*.spec.ts
-*.spec.tsx
-**/.pytest_cache/
-coverage/
-.coverage
-
-# Development
 .vscode/
 .idea/
-*.log
 .DS_Store
-.env.local
-.env.development
-
-# Build artifacts (will be rebuilt)
-node_modules/
 __pycache__/
 *.pyc
-dist/
-build/
-.next/
-out/
+*.log
 
-# Database files (use Railway PostgreSQL)
+# Ignore frontend
+coredent-style-main/
+node_modules/
+
+# Ignore test databases
 *.db
 *.sqlite
 *.sqlite3
+test.db
+tmp_test.py
 
-# Benchmarks
+# Ignore benchmarks
 .benchmarks/
+
+# Keep only backend
+!coredent-api/
