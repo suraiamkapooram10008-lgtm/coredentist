@@ -43,5 +43,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run migrations and start application
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Start application (migrations should be run separately via Railway job or CLI)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
