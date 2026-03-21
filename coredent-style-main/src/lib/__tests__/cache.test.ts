@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { sessionCache, localCache } from '../cache';
 
 // Mock storage
-const mockSessionStorage = (() => {
+const createMockStorage = (): Storage => {
   let store: Record<string, string> = {};
   return {
     getItem: vi.fn((key: string) => store[key] || null),
@@ -15,24 +15,18 @@ const mockSessionStorage = (() => {
     clear: vi.fn(() => {
       store = {};
     }),
+    key: vi.fn((index: number) => {
+      const keys = Object.keys(store);
+      return index >= 0 && index < keys.length ? keys[index] : null;
+    }),
+    get length() {
+      return Object.keys(store).length;
+    },
   };
-})();
+};
 
-const mockLocalStorage = (() => {
-  let store: Record<string, string> = {};
-  return {
-    getItem: vi.fn((key: string) => store[key] || null),
-    setItem: vi.fn((key: string, value: string) => {
-      store[key] = value;
-    }),
-    removeItem: vi.fn((key: string) => {
-      delete store[key];
-    }),
-    clear: vi.fn(() => {
-      store = {};
-    }),
-  };
-})();
+const mockSessionStorage = createMockStorage();
+const mockLocalStorage = createMockStorage();
 
 Object.defineProperty(window, 'sessionStorage', { value: mockSessionStorage });
 Object.defineProperty(window, 'localStorage', { value: mockLocalStorage });
@@ -77,7 +71,7 @@ describe('sessionCache', () => {
 
     it('should handle storage quota exceeded', () => {
       // Mock storage to throw quota exceeded error
-      mockSessionStorage.setItem.mockImplementationOnce(() => {
+      (mockSessionStorage.setItem as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
         throw new Error('QuotaExceededError');
       });
 
@@ -198,7 +192,7 @@ describe('localCache', () => {
 
     it('should handle storage quota exceeded', () => {
       // Mock storage to throw quota exceeded error
-      mockLocalStorage.setItem.mockImplementationOnce(() => {
+      (mockLocalStorage.setItem as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
         throw new Error('QuotaExceededError');
       });
 

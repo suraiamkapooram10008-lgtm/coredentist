@@ -10,7 +10,7 @@ from sqlalchemy.sql import func
 import uuid
 import enum
 
-from app.core.database import Base
+from app.core.base import Base
 
 
 class InsuranceType(str, enum.Enum):
@@ -127,6 +127,7 @@ class PatientInsurance(Base):
     patient = relationship("Patient", back_populates="insurances")
     carrier = relationship("InsuranceCarrier", back_populates="patient_insurances")
     claims = relationship("InsuranceClaim", back_populates="patient_insurance")
+    eligibility = relationship("Eligibility", back_populates="patient_insurance", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<PatientInsurance {self.patient_id} - {self.insurance_type}>"
@@ -184,6 +185,7 @@ class InsuranceClaim(Base):
     patient = relationship("Patient", back_populates="insurance_claims")
     patient_insurance = relationship("PatientInsurance", back_populates="claims")
     carrier = relationship("InsuranceCarrier", back_populates="claims")
+    eob = relationship("ExplanationOfBenefits", back_populates="claim", cascade="all, delete-orphan", uselist=False)
     
     @property
     def outstanding_balance(self) -> float:
@@ -227,76 +229,47 @@ class InsurancePreAuthorization(Base):
     
     def __repr__(self):
         return f"<PreAuthorization {self.authorization_number} - {self.status}>"
-        
-        # Eligibility model
-        class Eligibility(Base):
-            """Eligibility verification result"""
-            __tablename__ = "eligibility"
-            id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
-            patient_insurance_id = Column(UUID(as_uuid=True), ForeignKey("patient_insurances.id"), nullable=False)
-            carrier_id = Column(UUID(as_uuid=True), ForeignKey("insurance_carriers.id"), nullable=False)
-            verified_at = Column(DateTime(timezone=True), server_default=func.now())
-            is_active = Column(Boolean, default=True)
-            # Coverage details
-            coverage_status = Column(String(50))
-            remaining_benefits = Column(Numeric(10, 2))
-            deductible_remaining = Column(Numeric(10, 2))
-            notes = Column(Text)
-            # Relationships
-            patient = relationship("Patient", back_populates="eligibility")
-            patient_insurance = relationship("PatientInsurance", back_populates="eligibility")
-            carrier = relationship("InsuranceCarrier", back_populates="eligibility")
-            def __repr__(self):
-                return f"<Eligibility {self.id} - {self.coverage_status}>"
-        
-        # Explanation of Benefits model
-        class ExplanationOfBenefits(Base):
-            """EOB for a claim"""
-            __tablename__ = "explanations_of_benefits"
-            id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            claim_id = Column(UUID(as_uuid=True), ForeignKey("insurance_claims.id"), nullable=False)
-            generated_at = Column(DateTime(timezone=True), server_default=func.now())
-            description = Column(Text)
-            amount_covered = Column(Numeric(10, 2))
-            amount_patient_responsibility = Column(Numeric(10, 2))
-            # Relationships
-            claim = relationship("InsuranceClaim", back_populates="eob")
-            def __repr__(self):
-                return f"<EOB {self.id} for Claim {self.claim_id}>"
-        
-        # New models for Eligibility and Explanation of Benefits (EOB)
-        class Eligibility(Base):
-            """Eligibility verification result"""
-            __tablename__ = "eligibility"
-            id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
-            patient_insurance_id = Column(UUID(as_uuid=True), ForeignKey("patient_insurances.id"), nullable=False)
-            carrier_id = Column(UUID(as_uuid=True), ForeignKey("insurance_carriers.id"), nullable=False)
-            verified_at = Column(DateTime(timezone=True), server_default=func.now())
-            is_active = Column(Boolean, default=True)
-            # Coverage details
-            coverage_status = Column(String(50))  # e.g., "covered", "not_covered"
-            remaining_benefits = Column(Numeric(10, 2))
-            deductible_remaining = Column(Numeric(10, 2))
-            notes = Column(Text)
-            # Relationships
-            patient = relationship("Patient", back_populates="eligibility")
-            patient_insurance = relationship("PatientInsurance", back_populates="eligibility")
-            carrier = relationship("InsuranceCarrier", back_populates="eligibility")
-            def __repr__(self):
-                return f"<Eligibility {self.id} - {self.coverage_status}>"
-        
-        class ExplanationOfBenefits(Base):
-            """EOB for a claim"""
-            __tablename__ = "explanations_of_benefits"
-            id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            claim_id = Column(UUID(as_uuid=True), ForeignKey("insurance_claims.id"), nullable=False)
-            generated_at = Column(DateTime(timezone=True), server_default=func.now())
-            description = Column(Text)
-            amount_covered = Column(Numeric(10, 2))
-            amount_patient_responsibility = Column(Numeric(10, 2))
-            # Relationships
-            claim = relationship("InsuranceClaim", back_populates="eob")
-            def __repr__(self):
-                return f"<EOB {self.id} for Claim {self.claim_id}>"
+
+
+class Eligibility(Base):
+    """Eligibility verification result"""
+    __tablename__ = "eligibility"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
+    patient_insurance_id = Column(UUID(as_uuid=True), ForeignKey("patient_insurances.id"), nullable=False)
+    carrier_id = Column(UUID(as_uuid=True), ForeignKey("insurance_carriers.id"), nullable=False)
+    verified_at = Column(DateTime(timezone=True), server_default=func.now())
+    is_active = Column(Boolean, default=True)
+
+    # Coverage details
+    coverage_status = Column(String(50))  # e.g., "covered", "not_covered"
+    remaining_benefits = Column(Numeric(10, 2))
+    deductible_remaining = Column(Numeric(10, 2))
+    notes = Column(Text)
+
+    # Relationships
+    patient = relationship("Patient", back_populates="eligibility")
+    patient_insurance = relationship("PatientInsurance", back_populates="eligibility")
+    carrier = relationship("InsuranceCarrier", back_populates="eligibility")
+
+    def __repr__(self):
+        return f"<Eligibility {self.id} - {self.coverage_status}>"
+
+
+class ExplanationOfBenefits(Base):
+    """EOB for a claim"""
+    __tablename__ = "explanations_of_benefits"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    claim_id = Column(UUID(as_uuid=True), ForeignKey("insurance_claims.id"), nullable=False)
+    generated_at = Column(DateTime(timezone=True), server_default=func.now())
+    description = Column(Text)
+    amount_covered = Column(Numeric(10, 2))
+    amount_patient_responsibility = Column(Numeric(10, 2))
+
+    # Relationships
+    claim = relationship("InsuranceClaim", back_populates="eob")
+
+    def __repr__(self):
+        return f"<EOB {self.id} for Claim {self.claim_id}>"

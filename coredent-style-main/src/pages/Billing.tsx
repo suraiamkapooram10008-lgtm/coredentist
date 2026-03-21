@@ -3,7 +3,8 @@
 // Invoice management and payment tracking
 // ============================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,11 +41,9 @@ type TabFilter = 'all' | 'pending' | 'paid' | 'overdue';
 
 export default function Billing() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   
   // State
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [summary, setSummary] = useState<BillingSummary | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<TabFilter>('all');
   
@@ -54,29 +53,21 @@ export default function Billing() {
   const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null);
   const [deletingInvoice, setDeletingInvoice] = useState<Invoice | null>(null);
 
-  // Load data
-  useEffect(() => {
-    async function loadData() {
-      setIsLoading(true);
-      try {
-        const [invoicesData, summaryData] = await Promise.all([
-          billingApi.getInvoices(),
-          billingApi.getSummary(),
-        ]);
-        setInvoices(invoicesData);
-        setSummary(summaryData);
-      } catch (error) {
-        toast({
-          title: 'Error',
-          description: 'Failed to load billing data',
-          variant: 'destructive',
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    loadData();
-  }, [toast]);
+  // Load invoices with React Query
+  const { data: invoices = [], isLoading: isLoadingInvoices } = useQuery({
+    queryKey: ['billing', 'invoices'],
+    queryFn: () => billingApi.getInvoices(),
+    staleTime: 2 * 60 * 1000, // 2 minutes
+  });
+
+  // Load billing summary
+  const { data: summary, isLoading: isLoadingSummary } = useQuery({
+    queryKey: ['billing', 'summary'],
+    queryFn: () => billingApi.getSummary(),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  const isLoading = isLoadingInvoices || isLoadingSummary;
 
   // Filter invoices
   const filteredInvoices = invoices.filter(invoice => {

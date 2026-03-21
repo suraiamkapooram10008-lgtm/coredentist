@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -65,46 +66,54 @@ function getGreeting(): string {
 
 export default function Dashboard() {
   const { user, hasRole } = useAuth();
-  const [isLoading, setIsLoading] = useState(true);
-  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    let isActive = true;
-    const loadDashboard = async () => {
-      setIsLoading(true);
-      const today = new Date();
-      const startOfToday = new Date(today);
-      startOfToday.setHours(0, 0, 0, 0);
-      const endOfToday = new Date(today);
-      endOfToday.setHours(23, 59, 59, 999);
-      const monthStart = startOfMonth(today);
-      try {
-        const [metricsData, appointmentsResponse, summaryData] = await Promise.all([
-          reportsApi.getDashboardMetrics({ from: monthStart, to: today }),
-          appointmentsApi.list({ startDate: startOfToday.toISOString(), endDate: endOfToday.toISOString() }),
-          billingApi.getSummary(),
-        ]);
-        if (!isActive) return;
-        setMetrics(metricsData);
-        setAppointments(appointmentsResponse.success && appointmentsResponse.data ? appointmentsResponse.data : []);
-        setBillingSummary(summaryData);
-      } catch {
-        if (!isActive) return;
-        setMetrics(null);
-        setAppointments([]);
-        setBillingSummary(null);
-      } finally {
-        if (isActive) setIsLoading(false);
-      }
-    };
-    loadDashboard();
-    return () => {
-      isActive = false;
-    };
-  }, []);
+  // Calculate date ranges
+  const today = useMemo(() => new Date(), []);
+  const startOfToday = useMemo(() => {
+    const date = new Date(today);
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }, [today]);
+  const endOfToday = useMemo(() => {
+    const date = new Date(today);
+    date.setHours(23, 59, 59, 999);
+    return date;
+  }, [today]);
+  const monthStart = useMemo(() => startOfMonth(today), [today]);
+
+  // Load dashboard metrics with React Query
+  const { data: metrics, isLoading: isLoadingMetrics } = useQuery({
+    queryKey: ['dashboard', 'metrics', monthStart, today],
+    queryFn: () => reportsApi.getDashboardMetrics({ from: monthStart, to: today }),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  // Load today's appointments
+  const { data: appointmentsResponse, isLoading: isLoadingAppointments } = useQuery({
+    queryKey: ['dashboard', 'appointments', startOfToday, endOfToday],
+    queryFn: () => appointmentsApi.list({ 
+      startDate: startOfToday.toISOString(), 
+      endDate: endOfToday.toISOString() 
+    }),
+    staleTime: 2 * 60 * 1000, // 2 minutes (appointments change more frequently)
+  });
+
+  // Load billing summary
+  const { data: billingSummary, isLoading: isLoadingBilling } = useQuery({
+    queryKey: ['dashboard', 'billing-summary'],
+    queryFn: () => billingApi.getSummary(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Extract appointments from response
+  const appointments = useMemo(() => {
+    return appointmentsResponse?.success && appointmentsResponse.data 
+      ? appointmentsResponse.data 
+      : [];
+  }, [appointmentsResponse]);
+
+  const isLoading = isLoadingMetrics || isLoadingAppointments || isLoadingBilling;
 
   const filteredQuickActions = quickActions.filter(action =>
     action.roles.some(role => hasRole(role as UserRole))

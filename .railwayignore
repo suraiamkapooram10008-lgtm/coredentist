@@ -1,0 +1,45 @@
+# Railway Ignore File
+# Files and directories to exclude from Railway deployments
+
+# Documentation
+*.md
+!README.md
+docs/
+.github/
+
+# Tests
+**/tests/
+**/__tests__/
+*.test.ts
+*.test.tsx
+*.test.py
+*.spec.ts
+*.spec.tsx
+**/.pytest_cache/
+coverage/
+.coverage
+
+# Development
+.vscode/
+.idea/
+*.log
+.DS_Store
+.env.local
+.env.development
+
+# Build artifacts (will be rebuilt)
+node_modules/
+__pycache__/
+*.pyc
+dist/
+build/
+.next/
+out/
+
+# Database files (use Railway PostgreSQL)
+*.db
+*.sqlite
+*.sqlite3
+
+# Benchmarks
+.benchmarks/

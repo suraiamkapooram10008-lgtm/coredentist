@@ -12,7 +12,7 @@ import json
 import uuid as uuid_lib
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.api.deps import get_current_user
 from app.models.user import User
 from app.models.treatment import (
     TreatmentPlan,

@@ -4,18 +4,31 @@ SQLAlchemy 2.0 async setup with PostgreSQL
 """
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
+from app.core.base import Base
 
-# Create async engine
+engine_url = settings.DATABASE_URL
+if engine_url.startswith("postgresql://"):
+    engine_url = engine_url.replace("postgresql://", "postgresql+asyncpg://")
+
+engine_kwargs = {
+    "echo": settings.DEBUG,
+}
+
+# PostgreSQL pool settings
+if engine_url.startswith("postgresql+"):
+    engine_kwargs.update(
+        pool_size=settings.DATABASE_POOL_SIZE,
+        max_overflow=settings.DATABASE_MAX_OVERFLOW,
+        poolclass=NullPool if settings.DEBUG else None,
+    )
+
 engine = create_async_engine(
-    settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"),
-    echo=settings.DEBUG,
-    pool_size=settings.DATABASE_POOL_SIZE,
-    max_overflow=settings.DATABASE_MAX_OVERFLOW,
-    poolclass=NullPool if settings.DEBUG else None,
+    engine_url,
+    **engine_kwargs,
 )
 
 # Create async session factory
@@ -26,9 +39,6 @@ AsyncSessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
 )
-
-# Create declarative base
-Base = declarative_base()
 
 
 async def get_db() -> AsyncSession:

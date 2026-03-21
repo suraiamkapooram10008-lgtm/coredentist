@@ -11,26 +11,36 @@ from fastapi.exceptions import RequestValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-import sentry_sdk
-from sentry_sdk.integrations.fastapi import FastApiIntegration
-from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
 from app.core.config import settings
 from app.core.database import engine
 from app.api.v1.api import api_router
 from app.models import Base
 
-# Initialize Sentry for error tracking
-if settings.SENTRY_DSN:
-    sentry_sdk.init(
-        dsn=settings.SENTRY_DSN,
-        integrations=[
-            FastApiIntegration(),
-            SqlalchemyIntegration(),
-        ],
-        traces_sample_rate=0.1,
-        environment=settings.ENVIRONMENT,
-    )
+# Initialize Sentry for error tracking (optional)
+# Sentry is optional for local development and tests; some environments (e.g., Python 3.13)
+# may have compatibility issues with dependencies like eventlet.
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+except Exception:
+    sentry_sdk = None
+
+if settings.SENTRY_DSN and sentry_sdk:
+    try:
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            integrations=[
+                FastApiIntegration(),
+                SqlalchemyIntegration(),
+            ],
+            traces_sample_rate=0.1,
+            environment=settings.ENVIRONMENT,
+        )
+    except Exception:
+        # Fail gracefully if Sentry initialization fails
+        sentry_sdk = None
 
 # Create FastAPI application
 app = FastAPI(

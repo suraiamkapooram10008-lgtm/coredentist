@@ -28,17 +28,17 @@ describe('Edge‑case testing', () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve({ ok: true }) as any
     );
-    // @ts-ignore
+    // @ts-expect-error - mocking global fetch for testing
     globalThis.fetch = fetchMock;
     // Force non‑development mode
     const originalEnv = import.meta.env;
-    // @ts-ignore
+    // @ts-expect-error - mocking import.meta.env for testing
     import.meta.env = { ...originalEnv, DEV: false };
     logger.error('Test error', new Error('Test'));
     // Expect fetch called
     expect(fetchMock).toHaveBeenCalled();
     // Restore
-    // @ts-ignore
+    // @ts-expect-error - restoring mocked import.meta.env
     import.meta.env = originalEnv;
   });
 });
