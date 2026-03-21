@@ -3,7 +3,8 @@
 // Manage treatment plans for patients
 // ============================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,10 +32,9 @@ type TabFilter = 'all' | 'active' | 'completed';
 
 export default function TreatmentPlans() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   
   // State
-  const [plans, setPlans] = useState<TreatmentPlan[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<TabFilter>('all');
   
@@ -44,25 +44,12 @@ export default function TreatmentPlans() {
   const [viewingPlan, setViewingPlan] = useState<TreatmentPlan | null>(null);
   const [deletingPlan, setDeletingPlan] = useState<TreatmentPlan | null>(null);
 
-  // Load plans
-  useEffect(() => {
-    async function loadPlans() {
-      setIsLoading(true);
-      try {
-        const data = await treatmentPlanApi.getPlans();
-        setPlans(data);
-      } catch (error) {
-        toast({
-          title: 'Error',
-          description: 'Failed to load treatment plans',
-          variant: 'destructive',
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    loadPlans();
-  }, [toast]);
+  // Load plans with React Query
+  const { data: plans = [], isLoading } = useQuery({
+    queryKey: ['treatment-plans'],
+    queryFn: () => treatmentPlanApi.getPlans(),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
 
   // Filter plans
   const filteredPlans = plans.filter(plan => {

@@ -77,6 +77,7 @@ export default function Reports() {
 
   const [activeTab, setActiveTab] = useState('overview');
 
+  // effect:audited — Load metrics when date range changes
   useEffect(() => {
     loadMetrics(dateRange);
   }, [dateRange, loadMetrics]);

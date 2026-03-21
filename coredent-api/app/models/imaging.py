@@ -10,7 +10,7 @@ from sqlalchemy.sql import func
 import uuid
 import enum
 
-from app.core.database import Base
+from app.core.base import Base
 
 
 class ImageType(str, enum.Enum):

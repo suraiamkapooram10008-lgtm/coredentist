@@ -80,6 +80,7 @@ const Carousel = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivEl
       [scrollPrev, scrollNext],
     );
 
+    // effect:audited — Embla carousel API synchronization
     React.useEffect(() => {
       if (!api || !setApi) {
         return;
@@ -88,6 +89,7 @@ const Carousel = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivEl
       setApi(api);
     }, [api, setApi]);
 
+    // effect:audited — Embla carousel event listeners with cleanup
     React.useEffect(() => {
       if (!api) {
         return;

@@ -11,7 +11,7 @@ from typing import List, Optional, Any
 import json
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.api.deps import get_current_user
 from app.core.edi import submit_dental_claim
 from app.models.user import User
 from app.models.insurance import (
@@ -41,6 +41,8 @@ from app.schemas.insurance import (
     PreAuthorizationUpdate,
     PreAuthorizationResponse,
     PreAuthorizationListResponse,
+    EligibilityListResponse,
+    ExplanationOfBenefitsListResponse,
     InsuranceVerificationRequest,
     InsuranceVerificationResponse,
 )

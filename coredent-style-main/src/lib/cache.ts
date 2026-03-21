@@ -260,16 +260,45 @@ export const sessionCache = {
   },
 
   size(): number {
-    return sessionStorage.length;
+    let count = 0;
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key) {
+        try {
+          const item = sessionStorage.getItem(key);
+          if (item) {
+            const entry = JSON.parse(item) as { expiresAt: number };
+            if (Date.now() <= entry.expiresAt) {
+              count++;
+            }
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+    }
+    return count;
   },
 
   keys(): string[] {
-    const keys: string[] = [];
+    const validKeys: string[] = [];
     for (let i = 0; i < sessionStorage.length; i++) {
       const key = sessionStorage.key(i);
-      if (key) keys.push(key);
+      if (key) {
+        try {
+          const item = sessionStorage.getItem(key);
+          if (item) {
+            const entry = JSON.parse(item) as { expiresAt: number };
+            if (Date.now() <= entry.expiresAt) {
+              validKeys.push(key);
+            }
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
     }
-    return keys;
+    return validKeys;
   },
 };
 

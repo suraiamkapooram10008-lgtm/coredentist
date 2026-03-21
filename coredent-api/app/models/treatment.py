@@ -11,7 +11,7 @@ import uuid
 import enum
 from datetime import datetime
 
-from app.core.database import Base
+from app.core.base import Base
 
 
 class TreatmentPlanStatus(str, enum.Enum):

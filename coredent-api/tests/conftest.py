@@ -1,8 +1,18 @@
 """
 Test configuration and fixtures for CoreDent API tests
 """
+import os
+
+# Ensure required env vars for Settings to load during tests
+os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("DEBUG", "True")
+os.environ.setdefault("ENVIRONMENT", "test")
+
 import pytest
 import asyncio
+import datetime
+import uuid
 from typing import AsyncGenerator, Generator
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -12,6 +22,8 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.core.database import get_db, Base
 from app.core.config import settings
+from app.core.security import get_password_hash
+from app.models.practice import Practice
 from app.models.user import User
 from app.models.patient import Patient
 from app.models.appointment import Appointment
@@ -77,15 +89,35 @@ def db_session():
 
 
 @pytest.fixture
-def test_user(db_session):
-    """Create test user"""
+def test_practice(db_session):
+    """Create test practice"""
+    practice = Practice(
+        name="Test Practice",
+        email="test@practice.com",
+        phone="555-0100",
+        address_street="123 Test St",
+        address_city="Testville",
+        address_state="TS",
+        address_zip="12345",
+    )
+    db_session.add(practice)
+    db_session.commit()
+    db_session.refresh(practice)
+    return practice
+
+
+@pytest.fixture
+def test_user(db_session, test_practice):
+    """Create test user with unique email"""
+    import uuid
+    unique_email = f"testuser_{uuid.uuid4().hex[:8]}@example.com"
     user = User(
-        email="test@example.com",
-        hashed_password="$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",  # secret
+        email=unique_email,
+        password_hash=get_password_hash("secret"),  # secret
         first_name="Test",
         last_name="User",
         role="dentist",
-        practice_id="practice-1",
+        practice_id=test_practice.id,
         is_active=True,
     )
     db_session.add(user)
@@ -95,22 +127,20 @@ def test_user(db_session):
 
 
 @pytest.fixture
-def test_patient(db_session):
+def test_patient(db_session, test_practice):
     """Create test patient"""
     patient = Patient(
+        practice_id=test_practice.id,
         first_name="John",
         last_name="Doe",
         email="john.doe@example.com",
         phone="+1234567890",
-        date_of_birth="1990-01-01",
+        date_of_birth=datetime.date(1990, 1, 1),
         gender="male",
-        address={
-            "street": "123 Main St",
-            "city": "Springfield",
-            "state": "IL",
-            "zip_code": "62701",
-            "country": "USA"
-        },
+        address_street="123 Main St",
+        address_city="Springfield",
+        address_state="IL",
+        address_zip="62701",
         emergency_contact={
             "name": "Jane Doe",
             "relationship": "spouse",
@@ -126,15 +156,16 @@ def test_patient(db_session):
 
 
 @pytest.fixture
-def test_appointment(db_session, test_patient, test_user):
+def test_appointment(db_session, test_practice, test_patient, test_user):
     """Create test appointment"""
     appointment = Appointment(
+        practice_id=test_practice.id,
         patient_id=test_patient.id,
         provider_id=test_user.id,
         appointment_type="cleaning",
         status="scheduled",
-        start_time="2026-03-17T10:00:00",
-        end_time="2026-03-17T11:00:00",
+        start_time=datetime.datetime(2026, 3, 17, 10, 0, 0),
+        end_time=datetime.datetime(2026, 3, 17, 11, 0, 0),
         duration=60,
         notes="Regular cleaning appointment",
     )
@@ -148,10 +179,10 @@ def test_appointment(db_session, test_patient, test_user):
 def auth_headers(client, test_user):
     """Get authentication headers for test user"""
     login_data = {
-        "username": test_user.email,
+        "email": test_user.email,
         "password": "secret"
     }
-    response = client.post("/api/v1/auth/login", data=login_data)
+    response = client.post("/api/v1/auth/login", json=login_data)
     token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
 

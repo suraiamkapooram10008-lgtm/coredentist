@@ -63,6 +63,7 @@ export function TreatmentPlanDialog({
     },
   });
 
+  // effect:audited — Reset form state when dialog opens
   React.useEffect(() => {
     if (open) {
       form.reset({
