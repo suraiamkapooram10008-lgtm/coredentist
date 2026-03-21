@@ -4,12 +4,12 @@ Audit logs and user sessions for HIPAA compliance
 """
 
 from sqlalchemy import Column, String, DateTime, ForeignKey, JSON, Text
-from sqlalchemy.dialects.postgresql import UUID, INET
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 
-from app.core.database import Base
+from app.core.base import Base
 
 
 class AuditLog(Base):
@@ -24,7 +24,8 @@ class AuditLog(Base):
     entity_id = Column(UUID(as_uuid=True), nullable=False)
     
     changes = Column(JSON)  # Before/after values for updates
-    ip_address = Column(INET)
+    # Use string type for IP address for SQLite compatibility
+    ip_address = Column(String(45))
     user_agent = Column(Text)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
@@ -46,7 +47,8 @@ class Session(Base):
     refresh_token = Column(String(500), unique=True, nullable=False, index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     
-    ip_address = Column(INET)
+    # Use string type for IP address for SQLite compatibility
+    ip_address = Column(String(45))
     user_agent = Column(Text)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())

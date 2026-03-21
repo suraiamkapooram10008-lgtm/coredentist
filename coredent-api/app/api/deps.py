@@ -6,8 +6,10 @@ Reusable dependencies for FastAPI endpoints
 from fastapi import Depends, HTTPException, status, Header, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select
-from typing import Optional
+from typing import Optional, Union
+import asyncio
 from uuid import UUID
 
 from app.core.database import get_db
@@ -21,7 +23,7 @@ security = HTTPBearer()
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db),
+    db: Union[AsyncSession, Session] = Depends(get_db),
 ) -> User:
     """
     Get current authenticated user from JWT token
@@ -52,8 +54,11 @@ async def get_current_user(
             detail="Invalid token payload",
         )
     
-    result = await db.execute(select(User).where(User.id == UUID(user_id)))
-    user = result.scalar_one_or_none()
+    # Support both async and sync SQLAlchemy sessions (tests use sync sessions)
+    query = db.execute(select(User).where(User.id == UUID(user_id)))
+    if asyncio.iscoroutine(query):
+        query = await query
+    user = query.scalar_one_or_none()
     
     if not user:
         raise HTTPException(

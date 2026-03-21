@@ -5,12 +5,14 @@ CRUD operations for appointments
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select, and_, or_
 from datetime import datetime, timedelta
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Union
+import asyncio
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.api.deps import get_current_user
 from app.models.user import User
 from app.models.appointment import Appointment, AppointmentStatus, AppointmentTypeEnum, Chair
 from app.models.patient import Patient
@@ -24,6 +26,14 @@ from app.schemas.appointment import (
 from app.api.deps import verify_csrf
 
 router = APIRouter()
+
+
+async def _execute(db: Union[AsyncSession, Session], query):
+    """Execute a SQLAlchemy query on either async or sync session."""
+    result = db.execute(query)
+    if asyncio.iscoroutine(result):
+        result = await result
+    return result
 
 
 @router.get("/", response_model=AppointmentListResponse)
@@ -57,7 +67,7 @@ async def list_appointments(
     # Order by start time
     query = query.order_by(Appointment.start_time)
     
-    result = await db.execute(query)
+    result = await _execute(db, query)
     appointments = result.scalars().all()
     
     return AppointmentListResponse(
@@ -103,11 +113,12 @@ async def create_appointment(
     Create new appointment
     """
     # Verify patient exists and belongs to practice
-    result = await db.execute(
+    result = await _execute(
+        db,
         select(Patient).where(
             Patient.id == appointment_data.patient_id,
             Patient.practice_id == current_user.practice_id,
-        )
+        ),
     )
     patient = result.scalar_one_or_none()
     
@@ -131,7 +142,7 @@ async def create_appointment(
     if appointment_data.chair_id:
         conflict_query = conflict_query.where(Appointment.chair_id == appointment_data.chair_id)
     
-    result = await db.execute(conflict_query)
+    result = await _execute(db, conflict_query)
     conflicts = result.scalars().all()
     
     if conflicts:
@@ -321,4 +332,4 @@ async def get_available_slots(
         
         current_time += timedelta(minutes=15)  # 15 minute intervals
     
-    return slots
+    return slots

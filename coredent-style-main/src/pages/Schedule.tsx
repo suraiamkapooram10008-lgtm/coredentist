@@ -57,7 +57,7 @@ export default function Schedule() {
   const [editingAppointment, setEditingAppointment] = useState<ScheduleAppointment | null>(null);
   const [selectedPatientForNew, setSelectedPatientForNew] = useState<PatientSearchResult | null>(null);
 
-  // Load data on mount and when date changes
+  // effect:audited — Load data on mount and when date changes
   useEffect(() => {
     loadData();
   }, [loadData]);
@@ -363,7 +363,7 @@ export default function Schedule() {
         onOpenChange={setIsDetailsSheetOpen}
         appointment={selectedAppointment}
         onEdit={() => selectedAppointment && handleEditAppointment(selectedAppointment)}
-        onStatusChange={(status) => selectedAppointment && handleStatusChange(selectedAppointment.id, status)}
+        onStatusChange={(status: AppointmentStatus) => selectedAppointment && handleStatusChange(selectedAppointment.id, status)}
         onCancel={() => selectedAppointment && handleCancelAppointment(selectedAppointment.id)}
         canEdit={canEdit}
       />

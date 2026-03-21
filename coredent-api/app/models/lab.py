@@ -10,7 +10,7 @@ from sqlalchemy.sql import func
 import uuid
 import enum
 
-from app.core.database import Base
+from app.core.base import Base
 
 
 class LabCaseStatus(str, enum.Enum):
@@ -93,6 +93,7 @@ class Lab(Base):
     # Relationships
     practice = relationship("Practice", back_populates="labs")
     cases = relationship("LabCase", back_populates="lab")
+    invoices = relationship("LabInvoice", back_populates="lab", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Lab {self.name}>"
@@ -156,6 +157,7 @@ class LabCase(Base):
     patient = relationship("Patient", back_populates="lab_cases")
     provider = relationship("User")
     invoices = relationship("LabInvoice", back_populates="lab_case")
+    communications = relationship("LabCommunication", back_populates="lab_case", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<LabCase {self.case_number} - {self.status}>"

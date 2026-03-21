@@ -14,7 +14,7 @@ requests==2.31.0
 fastapi[all]==0.109.0
 
 # Database testing
-sqlalchemy==2.0.25
+sqlalchemy==2.0.48
 alembic==1.13.1
 
 # Test utilities

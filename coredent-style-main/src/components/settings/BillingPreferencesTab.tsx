@@ -3,7 +3,7 @@
 // Configure billing and invoicing settings
 // ============================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,10 +47,6 @@ export function BillingPreferencesTab({ preferences, onUpdate }: BillingPreferen
   const [formData, setFormData] = useState<BillingPreferences>(preferences);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    setFormData(preferences);
-  }, [preferences]);
 
   const handleInputChange = (field: keyof BillingPreferences, value: string | number | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }));

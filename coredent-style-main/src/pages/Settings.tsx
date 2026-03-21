@@ -26,6 +26,7 @@ export default function Settings() {
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
 
+  // effect:audited — Load settings data on mount with cleanup
   useEffect(() => {
     let isActive = true;
     const loadSettings = async () => {

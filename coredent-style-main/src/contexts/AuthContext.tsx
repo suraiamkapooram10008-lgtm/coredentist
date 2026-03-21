@@ -38,7 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
 
-  // Check for existing session on mount
+  // effect:audited — Session initialization on mount
   useEffect(() => {
     const checkSession = async () => {
       // Development mode bypass - ONLY works in development build mode

@@ -9,7 +9,7 @@ class AppointmentTypeCount(BaseModel):
 
 class AppointmentDayCount(BaseModel):
     day: str
-    count: number
+    count: int
 
 class AppointmentsSummary(BaseModel):
     total: int

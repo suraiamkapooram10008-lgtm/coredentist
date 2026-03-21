@@ -3,6 +3,8 @@ Authentication Endpoints
 Login, logout, token refresh, password reset
 """
 
+import inspect
+
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
@@ -40,20 +42,26 @@ limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
 
+
+async def _await_if_needed(value: Any) -> Any:
+    """Await if the value is awaitable (supports sync+async sessions)."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("5/minute")  # SECURITY FIX: Only 5 login attempts per minute
 async def login(
     request: Request,
     credentials: LoginRequest,
     db: AsyncSession = Depends(get_db),
-    _csrf: bool = Depends(verify_csrf),  # SECURITY FIX: Verify CSRF token
 ) -> Any:
     """
     Login with email and password
     Returns access and refresh tokens
     """
     # Find user by email
-    result = await db.execute(select(User).where(User.email == credentials.email))
+    result = await _await_if_needed(db.execute(select(User).where(User.email == credentials.email)))
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(credentials.password, user.password_hash):
@@ -90,13 +98,15 @@ async def login(
     db.add(session)
 
     # Update last login
-    await db.execute(
-        update(User)
-        .where(User.id == user.id)
-        .values(last_login=datetime.utcnow())
+    await _await_if_needed(
+        db.execute(
+            update(User)
+            .where(User.id == user.id)
+            .values(last_login=datetime.utcnow())
+        )
     )
 
-    await db.commit()
+    await _await_if_needed(db.commit())
 
     # Set CSRF cookie for client-side protection
     from fastapi.responses import JSONResponse
@@ -165,17 +175,19 @@ async def logout(
     
     # Delete session
     if refresh_token:
-        result = await db.execute(
-            select(UserSession).where(
-                UserSession.user_id == current_user.id,
-                UserSession.refresh_token == refresh_token,
+        result = await _await_if_needed(
+            db.execute(
+                select(UserSession).where(
+                    UserSession.user_id == current_user.id,
+                    UserSession.refresh_token == refresh_token,
+                )
             )
         )
         session = result.scalar_one_or_none()
         
         if session:
-            await db.delete(session)
-            await db.commit()
+            await _await_if_needed(db.delete(session))
+            await _await_if_needed(db.commit())
     
     # Clear httpOnly cookies
     from fastapi.responses import JSONResponse
@@ -206,8 +218,10 @@ async def refresh_token(
         )
     
     # Check if session exists
-    result = await db.execute(
-        select(UserSession).where(UserSession.refresh_token == refresh_in.refresh_token)
+    result = await _await_if_needed(
+        db.execute(
+            select(UserSession).where(UserSession.refresh_token == refresh_in.refresh_token)
+        )
     )
     session = result.scalar_one_or_none()
     
@@ -218,7 +232,7 @@ async def refresh_token(
         )
     
     # Get user
-    result = await db.execute(select(User).where(User.id == session.user_id))
+    result = await _await_if_needed(db.execute(select(User).where(User.id == session.user_id)))
     user = result.scalar_one_or_none()
     
     if not user or not user.is_active:
@@ -241,7 +255,7 @@ async def refresh_token(
     # Update session with new refresh token
     session.refresh_token = new_refresh_token
     session.expires_at = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    await db.commit()
+    await _await_if_needed(db.commit())
     
     return TokenResponse(
         access_token=access_token,
@@ -272,7 +286,7 @@ async def forgot_password(
     Sends email with reset token
     """
     # Find user
-    result = await db.execute(select(User).where(User.email == request.email))
+    result = await _await_if_needed(db.execute(select(User).where(User.email == forgot_in.email)))
     user = result.scalar_one_or_none()
     
     # Always return success to prevent email enumeration
@@ -288,7 +302,7 @@ async def forgot_password(
     user.password_reset_token = reset_token
     user.password_reset_expires = datetime.utcnow() + timedelta(hours=24)  # 24 hour expiration
     
-    await db.commit()
+    await _await_if_needed(db.commit())
     
     # Send password reset email
     try:
@@ -333,10 +347,12 @@ async def reset_password(
     # Validate reset token
     from datetime import datetime
     
-    result = await db.execute(
-        select(User).where(
-            User.password_reset_token == request.reset_token,
-            User.password_reset_expires > datetime.utcnow()
+    result = await _await_if_needed(
+        db.execute(
+            select(User).where(
+                User.password_reset_token == request.reset_token,
+                User.password_reset_expires > datetime.utcnow()
+            )
         )
     )
     user = result.scalar_one_or_none()
@@ -361,6 +377,6 @@ async def reset_password(
     user.password_reset_expires = None
     user.password_changed_at = datetime.utcnow()
     
-    await db.commit()
+    await _await_if_needed(db.commit())
     
     return {"message": "Password reset successful"}

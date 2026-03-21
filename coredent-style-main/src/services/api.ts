@@ -87,7 +87,8 @@ class ApiClient {
       clearTimeout(timeoutId);
 
       // Handle 401 Unauthorized - session expired
-      if (response.status === 401) {
+      // But skip token refresh for login endpoints (can't refresh when not logged in)
+      if (response.status === 401 && !endpoint.includes('/auth/login')) {
         if (retry) {
           const newToken = await this.refreshAccessToken();
           if (newToken) {
@@ -107,6 +108,18 @@ class ApiClient {
           error: {
             code: 'UNAUTHORIZED',
             message: 'Your session has expired. Please sign in again.',
+          },
+        };
+      }
+
+      // For login endpoint with 401, return invalid credentials error
+      if (response.status === 401 && endpoint.includes('/auth/login')) {
+        const data = await response.json().catch(() => ({}));
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_CREDENTIALS',
+            message: data.message || 'Invalid credentials',
           },
         };
       }

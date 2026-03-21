@@ -11,7 +11,7 @@ from sqlalchemy.sql import func
 import uuid
 import enum
 
-from app.core.database import Base
+from app.core.base import Base
 
 
 class PatientStatus(str, enum.Enum):
@@ -57,7 +57,9 @@ class Patient(Base):
     emergency_contact = Column(JSON)  # {name, relationship, phone}
     
     # Medical Information
-    medical_alerts = Column(ARRAY(String), default=[])
+    # Use JSON for lists/dicts for SQLite compatibility (ARRAY is Postgres-only).
+    # Stored as JSON arrays.
+    medical_alerts = Column(JSON, default=[])
     medical_history = Column(JSON, default={})
     dental_history = Column(JSON, default={})
     insurance_info = Column(JSON)
@@ -90,6 +92,7 @@ class Patient(Base):
     messages = relationship("PatientMessage", back_populates="patient", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="patient", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="patient", cascade="all, delete-orphan")
+    payment_cards = relationship("PaymentCard", back_populates="patient")
     
     @property
     def full_name(self) -> str:

@@ -11,7 +11,7 @@ from sqlalchemy.sql import func
 import uuid
 import enum
 
-from app.core.database import Base
+from app.core.base import Base
 from app.core.encryption import encrypt_value, decrypt_value
 
 

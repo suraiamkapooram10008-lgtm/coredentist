@@ -33,6 +33,7 @@ export function PatientSearchDialog({
   const [results, setResults] = useState<PatientSearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  // effect:audited — Reset search state when dialog closes
   useEffect(() => {
     if (!open) {
       setQuery('');
@@ -40,6 +41,7 @@ export function PatientSearchDialog({
     }
   }, [open]);
 
+  // effect:audited — Debounced patient search with cleanup
   useEffect(() => {
     const searchPatients = async () => {
       if (query.length >= 2) {

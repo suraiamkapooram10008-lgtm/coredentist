@@ -3,7 +3,7 @@
 // Configure dental chairs and treatment rooms
 // ============================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -56,10 +56,6 @@ export function ChairsTab({ chairs, onUpdate }: ChairsTabProps) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
-
-  useEffect(() => {
-    setChairList([...chairs]);
-  }, [chairs]);
 
   const openAddDialog = () => {
     setEditingChair(null);

@@ -9,7 +9,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 
-from app.core.database import Base
+from app.core.base import Base
 
 
 class Practice(Base):
@@ -63,6 +63,13 @@ class Practice(Base):
     campaigns = relationship("Campaign", back_populates="practice")
     marketing_templates = relationship("MarketingTemplate", back_populates="practice")
     newsletter_subscriptions = relationship("NewsletterSubscription", back_populates="practice")
-    
+
+    # Payment / Billing Relationships
+    payment_cards = relationship("PaymentCard", back_populates="practice")
+    payment_transactions = relationship("PaymentTransaction", back_populates="practice")
+    recurring_billing = relationship("RecurringBilling", back_populates="practice")
+    payment_terminals = relationship("PaymentTerminal", back_populates="practice")
+    payment_settings = relationship("PaymentSettings", back_populates="practice")
+
     def __repr__(self):
         return f"<Practice {self.name}>"
