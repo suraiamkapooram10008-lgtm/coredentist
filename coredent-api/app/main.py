@@ -57,14 +57,12 @@ limiter = Limiter(key_func=get_remote_address, default_limits=[f"{settings.RATE_
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Enforce HTTPS and HSTS in production
+# Add security headers in production (Railway handles HTTPS at proxy level)
 if not settings.DEBUG:
-    from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
-    app.add_middleware(HTTPSRedirectMiddleware)
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
         response = await call_next(request)
-        # HSTS
+        # HSTS (Railway already provides HTTPS)
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
         # SECURITY FIX: Add comprehensive security headers
         response.headers["X-Content-Type-Options"] = "nosniff"
