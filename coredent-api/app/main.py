@@ -91,7 +91,8 @@ app.add_middleware(
 )
 
 # Trusted Host Middleware (security)
-if not settings.DEBUG:
+# Only enable if ALLOWED_HOSTS is explicitly configured
+if not settings.DEBUG and settings.ALLOWED_HOSTS:
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=settings.ALLOWED_HOSTS,
