@@ -5,15 +5,10 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Accept build arguments
-ARG VITE_API_BASE_URL=https://coredentist-production.up.railway.app/api/v1
-ARG VITE_ENABLE_DEMO_MODE=false
-ARG VITE_DEBUG=false
-
-# Set environment variables for build
-ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
-ENV VITE_ENABLE_DEMO_MODE=$VITE_ENABLE_DEMO_MODE
-ENV VITE_DEBUG=$VITE_DEBUG
+# Set build environment variables directly (no args needed)
+ENV VITE_API_BASE_URL=https://coredentist-production.up.railway.app/api/v1
+ENV VITE_ENABLE_DEMO_MODE=false
+ENV VITE_DEBUG=false
 ENV CI=true
 
 # Copy package files
@@ -25,8 +20,8 @@ RUN npm ci --ignore-scripts
 # Copy source code
 COPY . .
 
-# Build the application with verbose output
-RUN npm run build || (echo "Build failed, checking dist..." && ls -la dist/ && exit 1)
+# Build the application
+RUN npm run build
 
 # Verify dist folder exists and has content
 RUN if [ ! -d "dist" ] || [ -z "$(ls -A dist)" ]; then echo "ERROR: dist folder is empty!"; exit 1; fi
