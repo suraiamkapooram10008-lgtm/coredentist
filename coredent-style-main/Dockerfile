@@ -8,14 +8,17 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies (skip prepare script which tries to install husky)
-RUN npm ci --only=production --ignore-scripts
+# Install ALL dependencies (including dev) for build, skip prepare script
+RUN npm ci --ignore-scripts
 
 # Copy source code
 COPY . .
 
 # Build the application
 RUN npm run build
+
+# Remove dev dependencies, keep only production
+RUN npm prune --omit=dev
 
 # Stage 2: Production
 FROM nginx:alpine
