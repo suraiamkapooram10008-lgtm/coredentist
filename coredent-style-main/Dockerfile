@@ -5,6 +5,16 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Accept build arguments
+ARG VITE_API_BASE_URL=https://api.coredent.com/api/v1
+ARG VITE_ENABLE_DEMO_MODE=false
+ARG VITE_DEBUG=false
+
+# Set environment variables for build
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_ENABLE_DEMO_MODE=$VITE_ENABLE_DEMO_MODE
+ENV VITE_DEBUG=$VITE_DEBUG
+
 # Copy package files
 COPY package*.json ./
 
