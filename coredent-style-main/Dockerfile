@@ -8,8 +8,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies (skip prepare script which tries to install husky)
+RUN npm ci --only=production --ignore-scripts
 
 # Copy source code
 COPY . .
