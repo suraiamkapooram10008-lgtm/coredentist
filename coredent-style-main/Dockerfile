@@ -45,15 +45,19 @@ RUN if [ ! -f /usr/share/nginx/html/index.html ]; then \
 # Copy nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
+# Copy entrypoint script
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
 # Verify nginx config is valid
 RUN nginx -t
 
 # Expose port 80
 EXPOSE 80
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=5 \
+# Health check - increased start period to allow nginx to fully initialize
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=10 \
   CMD wget --no-verbose --tries=1 --spider http://localhost/health || exit 1
 
-# Start nginx
-CMD ["nginx", "-g", "daemon off;"]
+# Start nginx with entrypoint script
+ENTRYPOINT ["/docker-entrypoint.sh"]
