@@ -48,8 +48,8 @@ RUN ls -la /usr/share/nginx/html/ && \
 # Verify nginx config is valid
 RUN nginx -t
 
-# Expose port 80
-EXPOSE 80
+# Expose port 8080 (Railway default)
+EXPOSE 8080
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
