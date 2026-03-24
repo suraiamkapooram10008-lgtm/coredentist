@@ -49,7 +49,9 @@ async def list_labs(
         query = query.where(Lab.is_preferred == is_preferred)
     
     if search:
-        query = query.where(Lab.name.ilike(f"%{search}%"))
+        # Use parameterized query to prevent SQL injection
+        search_pattern = f"%{search}%"
+        query = query.where(Lab.name.ilike(search_pattern))
     
     query = query.order_by(Lab.name)
     

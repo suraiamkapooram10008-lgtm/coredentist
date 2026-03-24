@@ -55,6 +55,7 @@ async def login(
     request: Request,
     credentials: LoginRequest,
     db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),  # SECURITY: Required when samesite="none"
 ) -> Any:
     """
     Login with email and password
@@ -113,13 +114,12 @@ async def login(
     from app.core.security import generate_csrf_token
     csrf_token = generate_csrf_token()
     
-    # SECURITY FIX: Use httpOnly, Secure cookies for tokens
+    # SECURITY FIX: Use httpOnly, Secure cookies for tokens only
+    # Do NOT return tokens in response body to prevent XSS token theft
     response = JSONResponse(content={
-        "access_token": access_token,  # Keep for backward compatibility
-        "refresh_token": refresh_token,  # Keep for backward compatibility
         "token_type": "bearer",
         "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        "csrf_token": csrf_token,
+        "message": "Login successful",
     })
     
     # Set httpOnly, Secure cookies for access token
@@ -127,8 +127,8 @@ async def login(
         key="access_token",
         value=access_token,
         httponly=True,        # JavaScript cannot access - prevents XSS token theft
-        secure=not settings.DEBUG,  # HTTPS only in production
-        samesite="strict",    # CSRF protection
+        secure=True,  # HTTPS only (Railway provides HTTPS)
+        samesite="none",    # Allow cross-origin (frontend on different domain)
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # 15 minutes
         path="/"
     )
@@ -138,8 +138,8 @@ async def login(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=not settings.DEBUG,
-        samesite="strict",
+        secure=True,
+        samesite="none",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,  # 7 days
         path="/"
     )
@@ -149,8 +149,8 @@ async def login(
         key="csrf_token",
         value=csrf_token,
         httponly=True,
-        secure=not settings.DEBUG,
-        samesite="strict",
+        secure=True,
+        samesite="none",
         max_age=86400,  # 24 hours
         path="/"
     )

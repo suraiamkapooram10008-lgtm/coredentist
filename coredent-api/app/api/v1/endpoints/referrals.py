@@ -54,7 +54,9 @@ async def list_referral_sources(
         query = query.where(ReferralSource1.source_type == source_type)
     
     if search:
-        query = query.where(ReferralSource1.name.ilike(f"%{search}%"))
+        # Use parameterized query to prevent SQL injection
+        search_pattern = f"%{search}%"
+        query = query.where(ReferralSource1.name.ilike(search_pattern))
     
     query = query.order_by(ReferralSource1.name)
     

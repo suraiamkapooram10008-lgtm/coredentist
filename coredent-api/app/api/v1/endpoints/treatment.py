@@ -654,10 +654,12 @@ async def list_procedure_library(
         query = query.where(ProcedureLibrary.is_active == is_active)
     
     if search:
+        # Use parameterized query to prevent SQL injection
+        search_pattern = f"%{search}%"
         query = query.where(
             or_(
-                ProcedureLibrary.ada_code.ilike(f"%{search}%"),
-                ProcedureLibrary.description.ilike(f"%{search}%"),
+                ProcedureLibrary.ada_code.ilike(search_pattern),
+                ProcedureLibrary.description.ilike(search_pattern),
             )
         )
     

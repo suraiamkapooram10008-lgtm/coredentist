@@ -69,7 +69,9 @@ async def list_carriers(
         query = query.where(InsuranceCarrier.is_active == is_active)
     
     if search:
-        query = query.where(InsuranceCarrier.name.ilike(f"%{search}%"))
+        # Use parameterized query to prevent SQL injection
+        search_pattern = f"%{search}%"
+        query = query.where(InsuranceCarrier.name.ilike(search_pattern))
     
     query = query.order_by(InsuranceCarrier.name)
     

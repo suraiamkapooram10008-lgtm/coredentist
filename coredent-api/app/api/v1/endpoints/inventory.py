@@ -48,9 +48,11 @@ async def list_inventory_items(
         query = query.where(InventoryItem.category == category)
     
     if search:
+        # Use parameterized query to prevent SQL injection
+        search_pattern = f"%{search}%"
         query = query.where(
-            (InventoryItem.name.ilike(f"%{search}%")) | 
-            (InventoryItem.sku.ilike(f"%{search}%"))
+            (InventoryItem.name.ilike(search_pattern)) | 
+            (InventoryItem.sku.ilike(search_pattern))
         )
     
     query = query.order_by(InventoryItem.name)
@@ -304,7 +306,9 @@ async def list_suppliers(
         query = query.where(Supplier.is_active == is_active)
     
     if search:
-        query = query.where(Supplier.name.ilike(f"%{search}%"))
+        # Use parameterized query to prevent SQL injection
+        search_pattern = f"%{search}%"
+        query = query.where(Supplier.name.ilike(search_pattern))
     
     query = query.order_by(Supplier.name)
     

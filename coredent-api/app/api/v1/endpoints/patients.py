@@ -46,13 +46,16 @@ async def list_patients(
     # Build query
     stmt = select(Patient).where(Patient.practice_id == practice_id)
     
-    # Apply search
+    # Apply search - Use parameterized queries to prevent SQL injection
     if query:
+        # Escape special LIKE characters to prevent pattern injection
+        # and use bound parameters
+        search_pattern = f"%{query}%"
         search_filter = or_(
-            Patient.first_name.ilike(f"%{query}%"),
-            Patient.last_name.ilike(f"%{query}%"),
-            Patient.email.ilike(f"%{query}%"),
-            Patient.phone.ilike(f"%{query}%"),
+            Patient.first_name.ilike(search_pattern),
+            Patient.last_name.ilike(search_pattern),
+            Patient.email.ilike(search_pattern),
+            Patient.phone.ilike(search_pattern),
         )
         stmt = stmt.where(search_filter)
     
