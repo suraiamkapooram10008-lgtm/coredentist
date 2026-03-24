@@ -53,5 +53,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Start application (migrations should be run separately via Railway job or CLI)
+# Start application (migrations run automatically via start.py)
 CMD ["python", "/app/start.py"]
