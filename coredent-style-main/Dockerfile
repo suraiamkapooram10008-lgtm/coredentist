@@ -31,19 +31,19 @@ RUN ls -la dist/ && test -f dist/index.html
 # Stage 2: Production
 FROM nginx:alpine
 
-# Install wget for healthcheck
-RUN apk add --no-cache wget
+# Install wget and curl for healthcheck
+RUN apk add --no-cache wget curl
 
-# Copy built assets
+# Copy nginx config FIRST
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Fallback: copy index.html from source if not in dist (fixes PWA build issue)
-RUN if [ ! -f /usr/share/nginx/html/index.html ]; then \
-    cp /app/index.html /usr/share/nginx/html/index.html; \
-    fi
-
-# Copy nginx config
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Verify files were copied
+RUN ls -la /usr/share/nginx/html/ && \
+    test -f /usr/share/nginx/html/index.html && \
+    echo "✓ index.html found"
 
 # Verify nginx config is valid
 RUN nginx -t
@@ -52,8 +52,9 @@ RUN nginx -t
 EXPOSE 80
 
 # Health check - check the /health endpoint that Railway expects
-HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost/health || exit 1
+# Using curl instead of wget for better error messages
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost/health || exit 1
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
