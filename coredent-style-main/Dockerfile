@@ -1,22 +1,13 @@
 # Multi-stage build for production
 # Updated: 2026-03-24 - Fixed healthcheck and PWA config
+# CACHE BUSTING: Changed order to break all caches
 
 # Stage 1: Build
 FROM node:20-alpine AS builder
 
-# Cache busting - forces rebuild (changes on every deploy)
-ARG CACHE_BUST=1
-ENV CACHE_BUST=$CACHE_BUST
-
 WORKDIR /app
 
-# Copy package files first
-COPY package*.json ./
-
-# Install dependencies
-RUN npm ci --ignore-scripts
-
-# Copy source code
+# Copy ALL source code first (breaks npm cache)
 COPY . .
 
 # Set build environment variables
@@ -24,6 +15,9 @@ ENV VITE_API_BASE_URL=https://coredentist-production.up.railway.app/api/v1
 ENV VITE_ENABLE_DEMO_MODE=false
 ENV VITE_DEBUG=false
 ENV CI=true
+
+# Install dependencies (will run fresh because source changed)
+RUN npm ci --ignore-scripts
 
 # Build the application
 RUN npm run build

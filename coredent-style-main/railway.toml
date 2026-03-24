@@ -8,7 +8,3 @@ restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
 healthcheckPath = "/health"
 healthcheckTimeout = 100
-
-# Force fresh build by changing build args
-[build.args]
-CACHE_BUST = "20260324_0720"
