@@ -51,10 +51,5 @@ RUN nginx -t
 # Expose port 80
 EXPOSE 80
 
-# Health check - check the /health endpoint that Railway expects
-# Using curl instead of wget for better error messages
-HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \
-  CMD curl -f http://localhost/health || exit 1
-
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
