@@ -15,20 +15,14 @@ export const pwaConfig = VitePWA({
     start_url: '/',
     icons: [
       {
-        src: 'pwa-192x192.png',
+        src: 'favicon.svg',
         sizes: '192x192',
-        type: 'image/png',
+        type: 'image/svg+xml',
       },
       {
-        src: 'pwa-512x512.png',
+        src: 'favicon.svg',
         sizes: '512x512',
-        type: 'image/png',
-      },
-      {
-        src: 'pwa-512x512.png',
-        sizes: '512x512',
-        type: 'image/png',
-        purpose: 'any maskable',
+        type: 'image/svg+xml',
       },
     ],
   },
@@ -36,7 +30,7 @@ export const pwaConfig = VitePWA({
     globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
     runtimeCaching: [
       {
-        urlPattern: /^https:\/\/api\.coredent\.com\/.*/i,
+        urlPattern: /^https:\/\/coredentist-production\.up\.railway\.app\/.*/i,
         handler: 'NetworkFirst',
         options: {
           cacheName: 'api-cache',
@@ -63,7 +57,7 @@ export const pwaConfig = VitePWA({
     ],
   },
   devOptions: {
-    enabled: true,
+    enabled: false, // Disable in production build
     type: 'module',
   },
 });

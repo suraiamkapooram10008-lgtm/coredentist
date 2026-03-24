@@ -70,7 +70,7 @@ try:
     # Create practice
     practice_id = str(uuid4())
     cursor.execute("""
-        INSERT INTO practice (
+        INSERT INTO practices (
             id, name, email, phone,
             address_street, address_city, address_state, address_zip,
             timezone, currency, created_at, updated_at
@@ -101,7 +101,7 @@ try:
     # Create admin user
     user_id = str(uuid4())
     cursor.execute("""
-        INSERT INTO "user" (
+        INSERT INTO users (
             id, email, password_hash, first_name, last_name,
             role, practice_id, is_active, created_at, updated_at
         ) VALUES (
@@ -114,7 +114,7 @@ try:
         password_hash,
         "Admin",
         "User",
-        "owner",
+        "DENTIST",
         practice_id,
         True
     ))

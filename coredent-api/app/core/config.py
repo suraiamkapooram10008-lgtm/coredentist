@@ -29,7 +29,10 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
     # CORS
-    CORS_ORIGINS: List[str] = []
+    CORS_ORIGINS: List[str] = [
+        "https://respectful-strength-production-ef28.up.railway.app",
+        "https://coredentist-production.up.railway.app"
+    ]
     
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

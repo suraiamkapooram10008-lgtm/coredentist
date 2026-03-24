@@ -1,48 +1,53 @@
 # Multi-stage build for production
+# Updated: 2026-03-24 - Fixed healthcheck and PWA config
 
 # Stage 1: Build
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Set build environment variables directly (no args needed)
-ENV VITE_API_BASE_URL=https://coredentist-production.up.railway.app/api/v1
-ENV VITE_ENABLE_DEMO_MODE=false
-ENV VITE_DEBUG=false
-ENV CI=true
-
-# Copy package files
+# Copy package files first
 COPY package*.json ./
 
-# Install ALL dependencies (including dev) for build, skip prepare script
+# Install dependencies
 RUN npm ci --ignore-scripts
 
 # Copy source code
 COPY . .
 
+# Set build environment variables
+ENV VITE_API_BASE_URL=https://coredentist-production.up.railway.app/api/v1
+ENV VITE_ENABLE_DEMO_MODE=false
+ENV VITE_DEBUG=false
+ENV CI=true
+
 # Build the application
 RUN npm run build
 
-# Verify dist folder exists and has content
-RUN if [ ! -d "dist" ] || [ -z "$(ls -A dist)" ]; then echo "ERROR: dist folder is empty!"; exit 1; fi
-
-# Remove dev dependencies, keep only production
-RUN npm prune --omit=dev
+# Verify build output
+RUN ls -la dist/ && test -f dist/index.html
 
 # Stage 2: Production
 FROM nginx:alpine
 
-# Copy built assets from builder
+# Install wget for healthcheck
+RUN apk add --no-cache wget
+
+# Copy built assets
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Verify files were copied
-RUN ls -la /usr/share/nginx/html/ || echo "WARNING: dist files not found"
-
-# Copy nginx configuration
+# Copy nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Expose port
+# Verify nginx config is valid
+RUN nginx -t
+
+# Expose port 80
 EXPOSE 80
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost/health || exit 1
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
