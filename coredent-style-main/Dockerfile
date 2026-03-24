@@ -4,6 +4,10 @@
 # Stage 1: Build
 FROM node:20-alpine AS builder
 
+# Cache busting - forces rebuild (changes on every deploy)
+ARG CACHE_BUST=1
+ENV CACHE_BUST=$CACHE_BUST
+
 WORKDIR /app
 
 # Copy package files first
