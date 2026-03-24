@@ -51,9 +51,9 @@ RUN nginx -t
 # Expose port 80
 EXPOSE 80
 
-# Health check - simple check that nginx is running
+# Health check - check the /health endpoint that Railway expects
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost/ || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost/health || exit 1
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
