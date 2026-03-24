@@ -51,9 +51,9 @@ RUN nginx -t
 # Expose port 80
 EXPOSE 80
 
-# Health check - increased start period to allow nginx to fully initialize
-HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=10 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost/health || exit 1
+# Health check - simple check that nginx is running
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost/ || exit 1
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
