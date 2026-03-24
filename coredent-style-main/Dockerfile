@@ -1,17 +1,16 @@
 # Multi-stage build for production
 # Updated: 2026-03-24 - Fixed healthcheck and PWA config
-# Force fresh build by using unique build timestamp
+# Force fresh build by including build timestamp file
 
 # Stage 1: Build
 FROM node:20-alpine AS builder
 
-# Build timestamp - changes on every deploy to force fresh build
-ARG BUILD_TIMESTAMP=202603241045
-ENV BUILD_TIMESTAMP=$BUILD_TIMESTAMP
-
 WORKDIR /app
 
-# Copy ALL source code first
+# Copy build timestamp file FIRST (changes on every deploy)
+COPY .build-timestamp ./
+
+# Copy ALL source code
 COPY . .
 
 # Set build environment variables
