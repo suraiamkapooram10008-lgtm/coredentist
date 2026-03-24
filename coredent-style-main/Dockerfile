@@ -1,13 +1,17 @@
 # Multi-stage build for production
 # Updated: 2026-03-24 - Fixed healthcheck and PWA config
-# CACHE BUSTING: Changed order to break all caches
+# Force fresh build by using unique build timestamp
 
 # Stage 1: Build
 FROM node:20-alpine AS builder
 
+# Build timestamp - changes on every deploy to force fresh build
+ARG BUILD_TIMESTAMP=202603241045
+ENV BUILD_TIMESTAMP=$BUILD_TIMESTAMP
+
 WORKDIR /app
 
-# Copy ALL source code first (breaks npm cache)
+# Copy ALL source code first
 COPY . .
 
 # Set build environment variables
@@ -16,7 +20,7 @@ ENV VITE_ENABLE_DEMO_MODE=false
 ENV VITE_DEBUG=false
 ENV CI=true
 
-# Install dependencies (will run fresh because source changed)
+# Install dependencies
 RUN npm ci --ignore-scripts
 
 # Build the application
