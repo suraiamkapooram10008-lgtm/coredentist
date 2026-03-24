@@ -37,6 +37,11 @@ RUN apk add --no-cache wget
 # Copy built assets
 COPY --from=builder /app/dist /usr/share/nginx/html
 
+# Fallback: copy index.html from source if not in dist (fixes PWA build issue)
+RUN if [ ! -f /usr/share/nginx/html/index.html ]; then \
+    cp /app/index.html /usr/share/nginx/html/index.html; \
+    fi
+
 # Copy nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
