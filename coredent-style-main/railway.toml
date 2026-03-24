@@ -6,5 +6,4 @@ buildContext = "."
 [deploy]
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
-healthcheckPath = "/health"
-healthcheckTimeout = 100
+port = 80
