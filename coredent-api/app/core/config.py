@@ -93,6 +93,21 @@ class Settings(BaseSettings):
     # Sentry (Optional)
     SENTRY_DSN: str = ""
     
+    # Stripe Payments (Optional)
+    STRIPE_API_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    
+    # Insurance EDI - DentalXChange (Optional)
+    DXC_API_KEY: str = ""
+    DXC_API_SECRET: str = ""
+    DXC_BASE_URL: str = "https://api.dentalxchange.com/v2"
+    
+    # QuickBooks Integration (Optional)
+    QB_CLIENT_ID: str = ""
+    QB_CLIENT_SECRET: str = ""
+    QB_REDIRECT_URI: str = ""
+    QB_ENVIRONMENT: str = "sandbox"
+    
     # File Upload
     MAX_UPLOAD_SIZE: int = 10485760  # 10MB
     ALLOWED_EXTENSIONS: List[str] = ["pdf", "jpg", "jpeg", "png", "doc", "docx"]

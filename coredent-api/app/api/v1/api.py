@@ -18,6 +18,9 @@ from app.api.v1.endpoints import (
     labs,
     referrals,
     reports,
+    payments,
+    edi,
+    accounting,
 )
 
 api_router = APIRouter()
@@ -35,3 +38,6 @@ api_router.include_router(inventory.router, prefix="/inventory", tags=["Inventor
 api_router.include_router(labs.router, prefix="/labs", tags=["Lab Management"])
 api_router.include_router(referrals.router, prefix="/referrals", tags=["Referral Management"])
 api_router.include_router(reports.router, prefix="/reports", tags=["Reporting & Analytics"])
+api_router.include_router(payments.router, prefix="/payments", tags=["Payments"])
+api_router.include_router(edi.router, prefix="/edi", tags=["Insurance EDI"])
+api_router.include_router(accounting.router, prefix="/accounting", tags=["Accounting Integration"])
