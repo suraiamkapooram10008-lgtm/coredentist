@@ -6,7 +6,7 @@ FastAPI application with HIPAA-compliant security features
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.exceptions import RequestValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -16,6 +16,29 @@ from app.core.config import settings
 from app.core.database import engine
 from app.api.v1.api import api_router
 from app.models import Base
+
+import logging
+import logging.config
+import json
+from datetime import datetime
+from pythonjsonlogger import jsonlogger
+
+if settings.ENVIRONMENT == "production":
+    class CustomJsonFormatter(jsonlogger.JsonFormatter):
+        def add_fields(self, record, message, extra):
+            super().add_fields(record, message, extra)
+            record['timestamp'] = datetime.utcnow().isoformat()
+            record['level'] = record.levelname
+            record['service'] = settings.APP_NAME
+    
+    handler = logging.StreamHandler()
+    handler.setFormatter(CustomJsonFormatter('%(timestamp)s %(level)s %(name)s %(message)s'))
+    
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.handlers = [handler]
+
+logger = logging.getLogger(__name__)
 
 # Initialize Sentry for error tracking (optional)
 # Sentry is optional for local development and tests; some environments (e.g., Python 3.13)
@@ -87,6 +110,15 @@ app.add_middleware(
     expose_headers=["X-Total-Count", "X-Page", "X-Page-Size"],
     max_age=3600,  # Cache preflight for 1 hour
 )
+
+# Redis-backed rate limiting (if REDIS_URL is configured)
+if settings.REDIS_URL:
+    try:
+        from app.core.redis_rate_limit import RedisRateLimitMiddleware
+        app.add_middleware(RedisRateLimitMiddleware, requests=settings.RATE_LIMIT_PER_MINUTE)
+        print("✅ Redis rate limiting enabled")
+    except Exception as e:
+        print(f"⚠️  Redis rate limiting unavailable: {e}")
 
 # Trusted Host Middleware (security)
 # Only enable if ALLOWED_HOSTS is explicitly configured
@@ -177,12 +209,31 @@ async def shutdown_event():
 @app.get("/health", tags=["Health"])
 async def health_check():
     """Health check endpoint for monitoring"""
+    db_status = "unknown"
+    try:
+        from sqlalchemy import text
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+            db_status = "connected"
+    except Exception:
+        db_status = "disconnected"
+    
     return {
-        "status": "healthy",
+        "status": "healthy" if db_status == "connected" else "degraded",
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "environment": settings.ENVIRONMENT,
+        "database": db_status,
     }
+
+
+# Prometheus metrics endpoint
+@app.get("/metrics", tags=["Monitoring"])
+async def metrics():
+    """Prometheus metrics endpoint"""
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    
+    return PlainTextResponse(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 # Root endpoint

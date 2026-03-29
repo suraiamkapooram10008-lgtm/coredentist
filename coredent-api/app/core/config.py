@@ -18,9 +18,9 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "production"
     
     # Database
-    DATABASE_URL: str
+    DATABASE_URL: str = ""  # Required in production, can be empty in dev
     DATABASE_POOL_SIZE: int = 20
-    DATABASE_MAX_OVERFLOW: int = 0
+    DATABASE_MAX_OVERFLOW: int = 20  # Allow burst capacity in production
     
     # Security
     SECRET_KEY: str
@@ -131,5 +131,24 @@ class Settings(BaseSettings):
         case_sensitive = True
 
 
-# Create settings instance
+def validate_production_config() -> None:
+    """Validate required production configuration"""
+    if settings.ENVIRONMENT == "production":
+        # Check SECRET_KEY
+        if settings.SECRET_KEY == "insecure-default-key-for-dev-only-change-in-production":
+            raise ValueError("SECURITY: SECRET_KEY must be changed in production")
+        
+        # Check ENCRYPTION_KEY is set
+        if not settings.ENCRYPTION_KEY:
+            raise ValueError("SECURITY: ENCRYPTION_KEY must be set in production")
+        
+        # Check DATABASE_URL is set
+        if not settings.DATABASE_URL:
+            raise ValueError("DATABASE_URL must be configured in production")
+
+
+# Create settings instance (must be before validation)
 settings = Settings()
+
+# Validate production config on import
+validate_production_config()
