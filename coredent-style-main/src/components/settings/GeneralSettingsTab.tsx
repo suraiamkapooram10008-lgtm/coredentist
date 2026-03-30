@@ -173,7 +173,7 @@ export function GeneralSettingsTab({ settings, onUpdate }: GeneralSettingsTabPro
             <Avatar className="h-24 w-24">
               <AvatarImage src={logoPreview} alt="Clinic logo" />
               <AvatarFallback className="bg-primary text-primary-foreground text-2xl">
-                {formData.name.charAt(0)}
+                {formData.name?.charAt(0) || '?'}
               </AvatarFallback>
             </Avatar>
             <div className="space-y-2">

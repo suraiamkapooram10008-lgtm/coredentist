@@ -13,7 +13,8 @@ interface PatientCardProps {
 
 // Memoized patient card to prevent unnecessary re-renders
 export const PatientCard = memo(function PatientCard({ patient, onSelect }: PatientCardProps) {
-  const getInitials = (firstName: string, lastName: string) => {
+  const getInitials = (firstName: string | undefined, lastName: string | undefined) => {
+    if (!firstName || !lastName) return '?';
     return `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
   };
 

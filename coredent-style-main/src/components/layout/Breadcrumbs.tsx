@@ -27,7 +27,7 @@ export function Breadcrumbs({ className, customLabels = {} }: BreadcrumbsProps) 
           const to = `/${pathnames.slice(0, index + 1).join("/")}`;
           
           // Use custom label or capitalize/format the path slug
-          let label = customLabels[value] || value.charAt(0).toUpperCase() + value.slice(1).replace(/-/g, " ");
+          let label = customLabels[value] || (value?.charAt(0) || '?').toUpperCase() + (value?.slice(1) || '').replace(/-/g, " ");
           
           // Handle UUIDs or IDs (very rough check)
           if (value.length > 20 || (value.includes("-") && value.split("-").length > 2)) {

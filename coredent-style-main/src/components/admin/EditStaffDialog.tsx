@@ -115,7 +115,8 @@ export function EditStaffDialog({ staff, open, onOpenChange, onSuccess }: EditSt
     }
   };
 
-  const getInitials = (first: string, last: string) => {
+  const getInitials = (first: string | undefined, last: string | undefined) => {
+    if (!first || !last) return '?';
     return `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
   };
 

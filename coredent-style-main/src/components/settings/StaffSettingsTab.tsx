@@ -133,7 +133,8 @@ export function StaffSettingsTab() {
     return matchesSearch && matchesRole && matchesStatus;
   });
 
-  const getInitials = (firstName: string, lastName: string) => {
+  const getInitials = (firstName: string | undefined, lastName: string | undefined) => {
+    if (!firstName || !lastName) return '?';
     return `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
   };
 

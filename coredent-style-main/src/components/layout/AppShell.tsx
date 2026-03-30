@@ -23,7 +23,7 @@ export function AppShell({ children }: AppShellProps) {
 
   // Determine feature name from path (e.g., /patients -> Patients)
   const rawPath = location.pathname.split('/')[1] || 'Dashboard';
-  const featureName = rawPath.charAt(0).toUpperCase() + rawPath.slice(1);
+  const featureName = (rawPath?.charAt(0) || '?').toUpperCase() + (rawPath?.slice(1) || '');
 
   return (
     <div className="min-h-screen bg-background">

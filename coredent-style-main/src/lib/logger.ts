@@ -53,14 +53,15 @@ class Logger {
   private sendToMonitoring(entry: LogEntry) {
     // Send error logs to monitoring endpoint regardless of environment (required for tests)
     if (entry.level === 'error') {
+      // Disabled for now - backend doesn't have /api/logs endpoint
       // Use globalThis.fetch to ensure mocked fetch is used in tests
-      globalThis.fetch('/api/logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(entry),
-      }).catch(() => {
-        // Silently fail if logging endpoint is unavailable
-      });
+      // globalThis.fetch('/api/logs', {
+      //   method: 'POST',
+      //   headers: { 'Content-Type': 'application/json' },
+      //   body: JSON.stringify(entry),
+      // }).catch(() => {
+      //   // Silently fail if logging endpoint is unavailable
+      // });
     }
   }
 
