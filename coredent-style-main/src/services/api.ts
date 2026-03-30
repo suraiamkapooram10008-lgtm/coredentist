@@ -64,8 +64,12 @@ class ApiClient {
       ...options.headers,
     };
     
-    // SECURITY: Use httpOnly cookies for authentication (set by backend)
-    // No need to set Authorization header - cookies are sent automatically
+    // Add Authorization header if token is available (for cross-origin deployment)
+    if (this.token) {
+      Object.assign(headers, {
+        'Authorization': `Bearer ${this.token}`,
+      });
+    }
     
     // Add CSRF token for state-changing requests
     if (options.method && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(options.method)) {
