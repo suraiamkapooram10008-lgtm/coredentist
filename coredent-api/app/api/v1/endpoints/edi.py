@@ -17,7 +17,7 @@ from app.models.user import User
 from app.models.insurance import PatientInsurance, InsuranceClaim, ClaimStatus
 from app.models.patient import Patient
 from app.api.deps import get_current_user, verify_csrf
-from app.schemas.insurance import (
+from app.schemas.edi import (
     EligibilityCheckRequest,
     EligibilityCheckResponse,
     ClaimSubmitRequest,
