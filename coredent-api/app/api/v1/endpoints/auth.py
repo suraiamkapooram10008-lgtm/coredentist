@@ -114,11 +114,14 @@ async def login(
     from app.core.security import generate_csrf_token
     csrf_token = generate_csrf_token()
     
-    # SECURITY FIX: Use httpOnly, Secure cookies for tokens only
-    # Do NOT return tokens in response body to prevent XSS token theft
+    # For cross-origin deployment, return tokens in response body
+    # Frontend will store in localStorage since httpOnly cookies don't work cross-origin
     response = JSONResponse(content={
+        "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "csrf_token": csrf_token,
         "message": "Login successful",
     })
     
