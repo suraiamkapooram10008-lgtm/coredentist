@@ -37,6 +37,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
+  
+  // CRITICAL FIX: Token storage for cross-origin auth
 
   // effect:audited — Session initialization on mount
   useEffect(() => {
