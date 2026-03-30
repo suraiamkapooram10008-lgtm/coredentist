@@ -260,6 +260,9 @@ export const authApi = {
   getCurrentUser: () => 
     apiClient.get<User>('/auth/me'),
 
+  setToken: (token: string | null) =>
+    apiClient.setToken(token),
+
   validateInvitation: (token: string) =>
     apiClient.get<InvitationDetails>('/auth/invitations/validate', { token }),
 

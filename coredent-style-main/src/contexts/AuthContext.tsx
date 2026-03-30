@@ -50,6 +50,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      // Restore token from localStorage if available
+      const savedToken = localStorage.getItem('access_token');
+      if (savedToken) {
+        authApi.setToken(savedToken);
+      }
+
       // SECURITY: In production, tokens are in httpOnly cookies
       // We just need to verify the session is valid by calling the API
       if (import.meta.env.MODE === 'production') {
@@ -65,10 +71,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           // Session invalid - tokens cleared by backend via httpOnly cookies
           clearCsrfToken();
+          authApi.setToken(null);
+          localStorage.removeItem('access_token');
         }
       } catch {
         // Session check failed - treat as logged out
         clearCsrfToken();
+        authApi.setToken(null);
+        localStorage.removeItem('access_token');
       }
       
       setIsLoading(false);
@@ -84,15 +94,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const response = await authApi.login(credentials);
       
       if (response.success && response.data) {
-        const { csrf_token } = response.data;
+        const { csrf_token, access_token } = response.data;
         
-        // SECURITY FIX: Tokens now stored in httpOnly cookies by backend
-        // Only store CSRF token for request headers
+        // Store access token for cross-origin requests
+        if (access_token) {
+          authApi.setToken(access_token);
+          localStorage.setItem('access_token', access_token);
+        }
+        
+        // Store CSRF token for request headers
         refreshCsrfToken(csrf_token);
 
         const userResponse = await authApi.getCurrentUser();
         if (!userResponse.success || !userResponse.data) {
           clearCsrfToken();
+          authApi.setToken(null);
+          localStorage.removeItem('access_token');
           toast({
             variant: 'destructive',
             title: 'Login Failed',
@@ -128,7 +145,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         
         return false;
       }
-    } catch (error) {
+    } catch {
       toast({
         variant: 'destructive',
         title: 'Login Error',
@@ -147,7 +164,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Continue with logout even if API call fails
     }
     
-    // Tokens are in httpOnly cookies, cleared by backend
+    // Clear tokens
+    authApi.setToken(null);
+    localStorage.removeItem('access_token');
     setUser(null);
     
     // Clear CSRF token on logout
