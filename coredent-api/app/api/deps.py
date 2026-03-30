@@ -22,13 +22,29 @@ security = HTTPBearer()
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
     db: Union[AsyncSession, Session] = Depends(get_db),
+    request: Request = None,
 ) -> User:
     """
     Get current authenticated user from JWT token
+    Supports both Authorization header and httpOnly cookies
     """
-    token = credentials.credentials
+    token = None
+    
+    # Try Authorization header first
+    if credentials:
+        token = credentials.credentials
+    # Fallback to httpOnly cookie
+    elif request:
+        token = request.cookies.get("access_token")
+    
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
     # Decode token
     payload = decode_token(token)
