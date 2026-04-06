@@ -3,7 +3,7 @@ Online Booking Endpoints
 Public and admin endpoints for online booking
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, or_
 from datetime import datetime, date, time, timedelta
@@ -42,6 +42,7 @@ from app.schemas.booking import (
     OnlineBookingUpdate,
     OnlineBookingResponse,
     OnlineBookingListResponse,
+    OnlineBookingPublicResponse,
     WaitlistEntryCreate,
     WaitlistEntryUpdate,
     WaitlistEntryResponse,

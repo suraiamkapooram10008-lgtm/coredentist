@@ -11,10 +11,13 @@ from uuid import UUID
 
 from app.core.database import get_db
 from app.models.user import User, UserRole
+from app.models.patient import Patient
+from app.schemas.patient import PatientCreate, PatientUpdate, PatientResponse, PatientListItem
 from app.api.deps import get_current_user, get_current_practice_id, Pagination, verify_csrf, require_role
 from app.core.audit import log_audit_event
 from app.core.sanitization import sanitize_search_query, sanitize_phone
 from fastapi import Request
+from sqlalchemy.ext.asyncio import AsyncSession
 import re
 
 router = APIRouter()
