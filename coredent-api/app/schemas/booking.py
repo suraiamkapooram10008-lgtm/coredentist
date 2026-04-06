@@ -186,7 +186,7 @@ class OnlineBookingUpdate(BaseModel):
 
 
 class OnlineBookingResponse(OnlineBookingBase):
-    """Schema for online booking response"""
+    """Schema for online booking response (Admin/Staff only)"""
     id: uuid_lib.UUID
     booking_page_id: uuid_lib.UUID
     practice_id: uuid_lib.UUID
@@ -205,6 +205,20 @@ class OnlineBookingResponse(OnlineBookingBase):
     cancelled_by: Optional[str]
     created_at: datetime
     updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class OnlineBookingPublicResponse(BaseModel):
+    """Public-facing online booking response (No sensitive UUIDs)"""
+    confirmation_code: str
+    status: BookingStatus
+    first_name: str
+    last_name: str
+    requested_date: date
+    requested_time: time
+    message: str = "Booking request submitted successfully"
     
     class Config:
         from_attributes = True

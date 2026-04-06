@@ -34,12 +34,12 @@ class TokenRefreshRequest(BaseModel):
 
 
 class TokenData(BaseModel):
-    """Token payload data"""
+    """Token payload data (Hardened: No PHI)"""
     sub: str  # user_id
-    email: str
     role: UserRole
     practice_id: UUID
     type: str  # "access" or "refresh"
+    email: Optional[str] = None # No longer stored in JWT
 
 
 class ForgotPasswordRequest(BaseModel):

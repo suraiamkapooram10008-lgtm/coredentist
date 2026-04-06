@@ -41,7 +41,10 @@ async def list_labs(
     """
     List dental labs
     """
-    query = select(Lab).where(Lab.practice_id == current_user.practice_id)
+    query = select(Lab).where(
+        Lab.practice_id == current_user.practice_id,
+        Lab.is_deleted == False
+    )
     
     if is_active is not None:
         query = query.where(Lab.is_active == is_active)
@@ -106,7 +109,10 @@ async def list_lab_cases(
     """
     List lab cases
     """
-    query = select(LabCase).where(LabCase.practice_id == current_user.practice_id)
+    query = select(LabCase).where(
+        LabCase.practice_id == current_user.practice_id,
+        LabCase.is_deleted == False
+    )
     
     if status:
         query = query.where(LabCase.status == status)
@@ -154,6 +160,7 @@ async def get_lab_case(
         select(LabCase).where(
             LabCase.id == case_id,
             LabCase.practice_id == current_user.practice_id,
+            LabCase.is_deleted == False,
         )
     )
     case = result.scalar_one_or_none()
@@ -286,7 +293,9 @@ async def delete_lab_case(
             detail="Lab case not found",
         )
     
-    await db.delete(lab_case)
+    # HIPAA HARDENING: Use soft-delete to preserve clinical audit trail
+    lab_case.is_deleted = True
+    lab_case.deleted_at = datetime.now(timezone.utc)
     await db.commit()
     
     return {"message": "Lab case deleted successfully"}

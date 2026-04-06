@@ -85,6 +85,8 @@ class Lab(Base):
     # Status
     is_active = Column(Boolean, default=True)
     is_preferred = Column(Boolean, default=False)
+    is_deleted = Column(Boolean, default=False)  # HIPAA: Soft delete
+    deleted_at = Column(DateTime(timezone=True))  # HIPAA: Deletion timestamp
     notes = Column(Text)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -138,6 +140,10 @@ class LabCase(Base):
     tracking_number = Column(String(100))
     shipping_method = Column(String(50))
     shipping_cost = Column(Numeric(10, 2))
+    
+    # Status & Deletion (HIPAA Hardening)
+    is_deleted = Column(Boolean, default=False)
+    deleted_at = Column(DateTime(timezone=True))
     
     # Notes
     provider_notes = Column(Text)

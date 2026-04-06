@@ -312,7 +312,7 @@ async def get_public_booking_page(
 
 # Online Booking Endpoints
 
-@router.post("/public/{page_slug}/book", response_model=OnlineBookingResponse)
+@router.post("/public/{page_slug}/book", response_model=OnlineBookingPublicResponse)
 @limiter.limit("2/hour")
 async def create_online_booking(
     request: Request,

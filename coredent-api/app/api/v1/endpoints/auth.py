@@ -81,7 +81,6 @@ async def login(
     # Create tokens
     token_data = {
         "sub": str(user.id),
-        "email": user.email,
         "role": user.role.value,
         "practice_id": str(user.practice_id),
     }
@@ -233,7 +232,6 @@ async def refresh_token(
     # Create new tokens
     token_data = {
         "sub": str(user.id),
-        "email": user.email,
         "role": user.role.value,
         "practice_id": str(user.practice_id),
     }
@@ -328,7 +326,6 @@ async def reset_password(
     request: Request,
     reset_in: ResetPasswordRequest,
     db: AsyncSession = Depends(get_db),
-    _csrf: bool = Depends(verify_csrf),
 ) -> Any:
     """
     Reset password with token
