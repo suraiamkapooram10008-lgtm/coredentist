@@ -38,10 +38,11 @@ export interface User {
   role: UserRole;
   practiceId: string;
   practiceName: string;
+  practiceCountry: string; // The UI Switch: 'US' or 'IN'
   avatarUrl?: string;
 }
 
-export type UserRole = 'owner' | 'admin' | 'dentist' | 'front_desk';
+export type UserRole = 'owner' | 'admin' | 'dentist' | 'hygienist' | 'front_desk';
 
 export interface NotificationSummary {
   unreadCount: number;
@@ -64,6 +65,9 @@ export interface Patient {
   insuranceInfo?: InsuranceInfo;
   medicalAlerts: string[];
   status: 'active' | 'inactive';
+  abhaId?: string;
+  ssnLastFour?: string;
+  consentRecordedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

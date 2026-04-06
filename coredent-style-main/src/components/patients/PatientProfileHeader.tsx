@@ -28,9 +28,10 @@ interface PatientProfileHeaderProps {
   patient: PatientRecord;
   onEdit: () => void;
   onStatusChange: () => void;
+  region: string;
 }
 
-export const PatientProfileHeader = React.memo(({ patient, onEdit, onStatusChange }: PatientProfileHeaderProps) => {
+export const PatientProfileHeader = React.memo(({ patient, onEdit, onStatusChange, region }: PatientProfileHeaderProps) => {
   const navigate = useNavigate();
   const age = differenceInYears(new Date(), parseISO(patient.dateOfBirth));
 
@@ -53,6 +54,11 @@ export const PatientProfileHeader = React.memo(({ patient, onEdit, onStatusChang
             <Badge variant={patient.status === 'active' ? 'default' : 'secondary'}>
               {patient.status}
             </Badge>
+            {patient.abhaId && (
+              <Badge variant="outline" className="border-blue-500 text-blue-600 bg-blue-50/50">
+                ABHA: {patient.abhaId}
+              </Badge>
+            )}
           </div>
           <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
             <span>{age} years old</span>
@@ -60,6 +66,20 @@ export const PatientProfileHeader = React.memo(({ patient, onEdit, onStatusChang
             <span>{format(parseISO(patient.dateOfBirth), 'MMMM d, yyyy')}</span>
             <span>•</span>
             <span className="capitalize">{patient.gender}</span>
+            {patient.ssnLastFour && region === 'US' && (
+              <>
+                <span>•</span>
+                <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded border border-amber-200 text-amber-700">SSN: ***-**-{patient.ssnLastFour}</span>
+              </>
+            )}
+            {patient.abhaId && region === 'IN' && (
+              <>
+                <span>•</span>
+                <Badge variant="outline" className="border-blue-500 text-blue-600 bg-blue-50/50 hover:bg-blue-100/50">
+                  ABHA: {patient.abhaId}
+                </Badge>
+              </>
+            )}
           </div>
         </div>
       </div>

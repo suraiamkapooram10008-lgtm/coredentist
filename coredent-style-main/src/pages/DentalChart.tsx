@@ -3,17 +3,17 @@
 // Interactive dental charting interface
 // ============================================
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { DentalChartView } from '@/components/chart/DentalChartView';
 import { ToothDetailsPanel } from '@/components/chart/ToothDetailsPanel';
 import { AddProcedureDialog } from '@/components/chart/AddProcedureDialog';
+import { AIClinicalAssistant } from '@/components/chart/AIClinicalAssistant';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Search, User, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { dentalChartApi } from '@/services/dentalChartApi';
 import type { 
   DentalChart as DentalChartType, 
@@ -53,7 +53,7 @@ export default function DentalChart() {
     async function loadChart() {
       setIsLoading(true);
       try {
-        const data = await dentalChartApi.getChart(patientId);
+        const data = await dentalChartApi.getChart(patientId as string);
         setChart(data);
       } catch (error) {
         toast({
@@ -323,6 +323,12 @@ export default function DentalChart() {
               onUpdateProcedureStatus={handleUpdateProcedureStatus}
               onDeleteProcedure={handleDeleteProcedure}
             />
+            <div className="mt-6">
+              <AIClinicalAssistant onApplyFinding={(tooth, finding) => {
+                 setSelectedToothNumber(tooth);
+                 toast({ title: "AI Finding Applied", description: `Updated tooth #${tooth} with: ${finding}` });
+              }} />
+            </div>
           </div>
         </div>
       ) : (

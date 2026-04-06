@@ -39,6 +39,8 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 class ApiClient {
   private baseUrl: string;
   private token: string | null = null;
+  private isRefreshing = false;
+  private refreshPromise: Promise<string | null> | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
@@ -64,7 +66,8 @@ class ApiClient {
       ...options.headers,
     };
     
-    // Add Authorization header if token is available (for cross-origin deployment)
+    // CRIT-01/CRIT-06 FIX: Use Bearer token authentication for cross-origin deployment
+    // Tokens are stored in memory only (NOT localStorage, NOT cookies)
     if (this.token) {
       Object.assign(headers, {
         'Authorization': `Bearer ${this.token}`,
@@ -85,7 +88,8 @@ class ApiClient {
         ...options,
         headers,
         signal: controller.signal,
-        credentials: 'include', // SECURITY: Send cookies with request
+        // CRIT-01 FIX: Use same-origin credentials (CSRF cookie needed)
+        credentials: 'same-origin',
       });
       
       clearTimeout(timeoutId);
@@ -220,27 +224,50 @@ class ApiClient {
   }
 
   private async refreshAccessToken(): Promise<string | null> {
-    // SECURITY: Use httpOnly cookies - refresh token is sent automatically
-    try {
-      const response = await fetch(`${this.baseUrl}/auth/refresh`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getCsrfHeader(),
-        },
-        body: JSON.stringify({}), // Token from cookie
-        credentials: 'include', // SECURITY: Send cookies
-      });
-      
-      if (!response.ok) {
-        return null;
-      }
-      
-      // Tokens are in httpOnly cookies - no need to store them
-      return 'token_from_cookie';
-    } catch {
-      return null;
+    // EXPERT HARDENING: Use JWT Rotation to prevent clinical session drops
+    // We call the /auth/refresh endpoint which uses an HttpOnly cookie
+    if (this.isRefreshing) {
+      return this.refreshPromise;
     }
+
+    this.isRefreshing = true;
+    this.refreshPromise = (async () => {
+      try {
+        const response = await fetch(`${this.baseUrl}/auth/refresh`, {
+          method: 'POST',
+          headers: {
+             'Content-Type': 'application/json',
+             ...getCsrfHeader() // CSRF required for state-changing refresh
+          },
+          // CRIT-01: Must send include for HttpOnly refresh cookie
+          credentials: 'same-origin',
+          body: JSON.stringify({
+             // If we used Bearer for refresh, we'd pass it here
+             // But the backend hardened version (Round 10) uses httpOnly cookies.
+          })
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          this.token = result.access_token;
+          
+          // EXPERT: Update CSRF if backend rotated it
+          // getCsrfHeader will pick it up from cookie automatically
+          
+          return this.token;
+        }
+        
+        return null;
+      } catch (err) {
+        logger.error('Failed to rotate access token', err as Error);
+        return null;
+      } finally {
+        this.isRefreshing = false;
+        this.refreshPromise = null;
+      }
+    })();
+
+    return this.refreshPromise;
   }
 }
 

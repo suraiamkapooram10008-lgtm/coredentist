@@ -52,17 +52,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Restore token from localStorage if available
-      const savedToken = localStorage.getItem('access_token');
-      if (savedToken) {
-        authApi.setToken(savedToken);
-      }
-
-      // SECURITY: In production, tokens are in httpOnly cookies
-      // We just need to verify the session is valid by calling the API
-      if (import.meta.env.MODE === 'production') {
-        logger.debug('Production mode: Verifying session with API');
-      }
+      // CRIT-06 FIX: No localStorage token storage - use in-memory only
+      // Tokens are obtained from response body on login and stored in ApiClient memory
+      // On page reload, user must re-login (more secure for HIPAA compliance)
+      logger.debug('Session check: No persistent token storage (HIPAA compliant)');
 
       // Call API to verify session - cookies will be sent automatically
       try {
@@ -71,16 +64,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (response.success && response.data) {
           setUser(response.data);
         } else {
-          // Session invalid - tokens cleared by backend via httpOnly cookies
+          // Session invalid - clear CSRF token
           clearCsrfToken();
           authApi.setToken(null);
-          localStorage.removeItem('access_token');
         }
       } catch {
         // Session check failed - treat as logged out
         clearCsrfToken();
         authApi.setToken(null);
-        localStorage.removeItem('access_token');
       }
       
       setIsLoading(false);
@@ -98,10 +89,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (response.success && response.data) {
         const { csrf_token, access_token } = response.data;
         
-        // Store access token for cross-origin requests
+        // CRIT-06 FIX: Store token in ApiClient memory ONLY (NOT localStorage)
+        // This prevents XSS attacks from stealing tokens via localStorage access
         if (access_token) {
           authApi.setToken(access_token);
-          localStorage.setItem('access_token', access_token);
+          // NO localStorage.setItem - removed for HIPAA compliance
         }
         
         // Store CSRF token for request headers
@@ -111,7 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!userResponse.success || !userResponse.data) {
           clearCsrfToken();
           authApi.setToken(null);
-          localStorage.removeItem('access_token');
+          // NO localStorage.removeItem needed - not stored anymore
           toast({
             variant: 'destructive',
             title: 'Login Failed',
@@ -166,9 +158,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Continue with logout even if API call fails
     }
     
-    // Clear tokens
+    // CRIT-06 FIX: Clear in-memory tokens only (no localStorage needed)
     authApi.setToken(null);
-    localStorage.removeItem('access_token');
     setUser(null);
     
     // Clear CSRF token on logout

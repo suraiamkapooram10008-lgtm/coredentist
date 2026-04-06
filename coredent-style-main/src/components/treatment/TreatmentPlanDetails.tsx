@@ -26,7 +26,7 @@ import {
   FileText
 } from 'lucide-react';
 import { TreatmentTimeline } from './TreatmentTimeline';
-import { AddProcedureToPlanDialog } from './AddProcedureToPlayDialog';
+import { AddProcedureToPlanDialog } from './AddProcedureToPlanDialog';
 import type { TreatmentPlan, ProcedurePhase } from '@/types/treatmentPlan';
 import { STATUS_CONFIG, calculatePlanSummary } from '@/types/treatmentPlan';
 import { cn } from '@/lib/utils';

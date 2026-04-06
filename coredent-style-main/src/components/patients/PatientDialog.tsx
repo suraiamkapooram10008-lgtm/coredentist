@@ -60,6 +60,7 @@ interface PatientDialogProps {
   onOpenChange: (open: boolean) => void;
   patient?: PatientRecord | null;
   onSave: () => void;
+  region: string;
 }
 
 export function PatientDialog({
@@ -67,6 +68,7 @@ export function PatientDialog({
   onOpenChange,
   patient,
   onSave,
+  region,
 }: PatientDialogProps) {
   const [activeTab, setActiveTab] = useState('basic');
   const [isSaving, setIsSaving] = useState(false);
@@ -313,14 +315,33 @@ export function PatientDialog({
                     <Input
                       id="phone"
                       {...form.register('phone')}
-                      placeholder="(555) 123-4567"
+                      placeholder={region === 'IN' ? '+91 XXXX-XXXXXX' : '(555) 123-4567'}
                     />
-                    {form.formState.errors.phone && (
-                      <p className="text-sm text-destructive">
-                        {form.formState.errors.phone.message}
-                      </p>
-                    )}
                   </div>
+                </div>
+
+                <div className="space-y-4 pt-4 border-t">
+                  <h4 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Regional Identifiers</h4>
+                  {region === 'US' ? (
+                     <div className="space-y-2">
+                        <Label htmlFor="ssnLastFour">SSN (Last 4 Digits) *</Label>
+                        <Input
+                          id="ssnLastFour"
+                          maxLength={4}
+                          placeholder="1234"
+                        />
+                        <p className="text-xs text-muted-foreground">Required for US HIPAA clinical records.</p>
+                     </div>
+                  ) : (
+                     <div className="space-y-2">
+                        <Label htmlFor="abhaId">ABHA ID (India Health ID) *</Label>
+                        <Input
+                          id="abhaId"
+                          placeholder="XX-XXXX-XXXX-XXXX"
+                        />
+                        <p className="text-xs text-muted-foreground">National Digital Health Mission (ABDM) identifier.</p>
+                     </div>
+                  )}
                 </div>
               </TabsContent>
 

@@ -3,8 +3,9 @@
 // Comprehensive view of patient records
 // ============================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/auth-context';
 import { 
   Tabs, 
   TabsContent, 
@@ -26,15 +27,23 @@ import { PatientDialog } from '@/components/patients/PatientDialog';
 import { AddNoteDialog } from '@/components/patients/AddNoteDialog';
 import { AppointmentHistory } from '@/components/patients/AppointmentHistory';
 import { AttachmentsList } from '@/components/patients/AttachmentsList';
+import type { PatientRecord } from '@/types/patient';
 
 export default function PatientProfile() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
   
   // Dialog States
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isAddNoteDialogOpen, setIsAddNoteDialogOpen] = useState(false);
+
+  // Region Config (US vs INDIA)
+  const region = user?.practiceCountry || 'US';
+
+  // Memoized Fetcher
+  const fetchPatient = useCallback(() => patientsApi.getById(id!) as Promise<PatientRecord>, [id]);
 
   // API Hooks
   const {
@@ -43,7 +52,7 @@ export default function PatientProfile() {
     error,
     execute: loadPatient,
     setData: setPatient
-  } = useApiRequest(() => patientsApi.getById(id!), {
+  } = useApiRequest<PatientRecord>(fetchPatient, {
     errorMessage: 'Failed to load patient profile'
   });
 
@@ -51,7 +60,7 @@ export default function PatientProfile() {
     (status: 'active' | 'inactive') => patientsApi.update(id!, { status }),
     {
       successMessage: 'Patient status updated',
-      onSuccess: (updated) => setPatient(updated)
+      onSuccess: (updated) => setPatient(updated as PatientRecord)
     }
   );
 
@@ -104,9 +113,10 @@ export default function PatientProfile() {
         patient={patient} 
         onEdit={() => setIsEditDialogOpen(true)} 
         onStatusChange={handleStatusChange} 
+        region={region}
       />
 
-      {patient.medicalHistory.allergies.length > 0 && (
+      {patient.medicalHistory?.allergies?.length > 0 && (
         <Alert variant="destructive" className="bg-red-50 border-red-200">
           <AlertTriangle className="h-4 w-4 text-red-600" />
           <AlertTitle className="text-red-800 font-bold">Medical Alert: Allergies</AlertTitle>
@@ -133,6 +143,7 @@ export default function PatientProfile() {
           <PatientOverviewTab 
             patient={patient} 
             onAddNote={() => setIsAddNoteDialogOpen(true)} 
+            region={region}
           />
         </TabsContent>
 
@@ -148,23 +159,28 @@ export default function PatientProfile() {
         </TabsContent>
 
         <TabsContent value="files" className="mt-6">
-          <AttachmentsList attachments={patient.attachments} />
+          <AttachmentsList 
+            patientId={patient.id}
+            attachments={patient.attachments} 
+            onUpload={() => loadPatient()}
+            onDelete={() => loadPatient()}
+          />
         </TabsContent>
       </Tabs>
 
-      {/* Dialogs */}
       <PatientDialog 
         open={isEditDialogOpen} 
         onOpenChange={setIsEditDialogOpen} 
         patient={patient}
-        onSuccess={(updated) => setPatient(updated)}
+        onSave={() => loadPatient()}
+        region={region}
       />
 
       <AddNoteDialog 
         open={isAddNoteDialogOpen} 
         onOpenChange={setIsAddNoteDialogOpen} 
         patientId={patient.id}
-        onSuccess={() => loadPatient()}
+        onSave={() => loadPatient()}
       />
     </div>
   );

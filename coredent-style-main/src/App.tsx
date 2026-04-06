@@ -39,6 +39,14 @@ const Communications = lazy(() => import("./pages/Communications"));
 const Marketing = lazy(() => import("./pages/Marketing"));
 const Documents = lazy(() => import("./pages/Documents"));
 const Payments = lazy(() => import("./pages/Payments"));
+const PublicBooking = lazy(() => import("./pages/PublicBooking"));
+const BookingSuccess = lazy(() => import("./pages/BookingSuccess"));
+const RevenueLanding = lazy(() => import("./pages/RevenueLanding"));
+const BillingPortal = lazy(() => import("./pages/BillingPortal"));
+const ImagingHub = lazy(() => import("./pages/ImagingHub"));
+const EnterpriseHQ = lazy(() => import("./pages/EnterpriseHQ"));
+const ReferralHub = lazy(() => import("./pages/ReferralHub"));
+const LabLogistics = lazy(() => import("./pages/LabLogistics"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -70,6 +78,10 @@ const App = () => (
                 <Route path="/forgot-password" element={<ForgotPassword />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/accept-invitation" element={<AcceptInvitation />} />
+                
+                {/* Public Booking Portal */}
+                <Route path="/book/success" element={<BookingSuccess />} />
+                <Route path="/book/:slug" element={<PublicBooking />} />
                 
                 {/* Protected routes with AppShell */}
                 <Route
@@ -235,6 +247,66 @@ const App = () => (
                     <ProtectedRoute allowedRoles={['owner', 'admin']}>
                       <AppShell>
                         <Settings />
+                      </AppShell>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/revenue"
+                  element={
+                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
+                      <AppShell>
+                        <RevenueLanding />
+                      </AppShell>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/billing"
+                  element={
+                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
+                      <AppShell>
+                        <BillingPortal />
+                      </AppShell>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/imaging"
+                  element={
+                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist', 'hygienist']}>
+                      <AppShell>
+                        <ImagingHub />
+                      </AppShell>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/enterprise/hq"
+                  element={
+                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
+                      <AppShell>
+                        <EnterpriseHQ />
+                      </AppShell>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/referrals/hub"
+                  element={
+                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist', 'hygienist', 'front_desk']}>
+                      <AppShell>
+                        <ReferralHub />
+                      </AppShell>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/lab/logistics"
+                  element={
+                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist', 'hygienist', 'front_desk']}>
+                      <AppShell>
+                        <LabLogistics />
                       </AppShell>
                     </ProtectedRoute>
                   }

@@ -41,13 +41,15 @@
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
 
-    /* Success - Medical green */
+    /* Success - Medical green / Mint */
     --success: 142 76% 36%;
     --success-foreground: 0 0% 100%;
+    --success-accent: 142 76% 95%;
 
-    /* Warning - Amber */
+    /* Warning - Amber / Coral */
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 100%;
+    --warning-accent: 38 92% 95%;
 
     /* Borders and inputs */
     --border: 214 32% 91%;

@@ -24,6 +24,7 @@ import { Plus, Search, FileText } from 'lucide-react';
 import { TreatmentPlanCard } from '@/components/treatment/TreatmentPlanCard';
 import { TreatmentPlanDialog } from '@/components/treatment/TreatmentPlanDialog';
 import { TreatmentPlanDetails } from '@/components/treatment/TreatmentPlanDetails';
+import { TreatmentPlanVisualBuilder } from '@/components/treatment/TreatmentPlanVisualBuilder';
 import { treatmentPlanApi } from '@/services/treatmentPlanApi';
 import { triggerAutomation } from '@/services/automationApi';
 import type { TreatmentPlan, TreatmentStatus, ProcedurePhase } from '@/types/treatmentPlan';
@@ -43,6 +44,7 @@ export default function TreatmentPlans() {
   const [editingPlan, setEditingPlan] = useState<TreatmentPlan | null>(null);
   const [viewingPlan, setViewingPlan] = useState<TreatmentPlan | null>(null);
   const [deletingPlan, setDeletingPlan] = useState<TreatmentPlan | null>(null);
+  const [isVisualBuilderOpen, setIsVisualBuilderOpen] = useState(false);
 
   // Load plans with React Query
   const { data: plans = [], isLoading } = useQuery({
@@ -84,17 +86,21 @@ export default function TreatmentPlans() {
         procedures: [],
         createdBy: 'current-user',
       });
-      setPlans(prev => [newPlan, ...prev]);
+      queryClient.setQueryData(['treatment-plans'], (prev: TreatmentPlan[] | undefined) => 
+        prev ? [newPlan, ...prev] : [newPlan]
+      );
       toast({
         title: 'Plan created',
         description: `Treatment plan "${data.title}" has been created`,
       });
+      return newPlan;
     } catch (error) {
       toast({
         title: 'Error',
         description: 'Failed to create treatment plan',
         variant: 'destructive',
       });
+      return null;
     }
   };
 
@@ -110,7 +116,9 @@ export default function TreatmentPlans() {
     
     try {
       const updated = await treatmentPlanApi.updatePlan(editingPlan.id, data);
-      setPlans(prev => prev.map(p => p.id === updated.id ? updated : p));
+      queryClient.setQueryData(['treatment-plans'], (prev: TreatmentPlan[] | undefined) => 
+        prev?.map(p => p.id === updated.id ? updated : p)
+      );
       if (viewingPlan?.id === updated.id) {
         setViewingPlan(updated);
       }
@@ -146,7 +154,9 @@ export default function TreatmentPlans() {
     
     try {
       await treatmentPlanApi.deletePlan(deletingPlan.id);
-      setPlans(prev => prev.filter(p => p.id !== deletingPlan.id));
+      queryClient.setQueryData(['treatment-plans'], (prev: TreatmentPlan[] | undefined) => 
+        prev?.filter(p => p.id !== deletingPlan.id)
+      );
       if (viewingPlan?.id === deletingPlan.id) {
         setViewingPlan(null);
       }
@@ -188,7 +198,9 @@ export default function TreatmentPlans() {
         procedures: [...viewingPlan.procedures, newProcedure],
       };
       setViewingPlan(updatedPlan);
-      setPlans(prev => prev.map(p => p.id === updatedPlan.id ? updatedPlan : p));
+      queryClient.setQueryData(['treatment-plans'], (prev: TreatmentPlan[] | undefined) => 
+        prev?.map(p => p.id === updatedPlan.id ? updatedPlan : p)
+      );
       
       toast({
         title: 'Procedure added',
@@ -217,7 +229,9 @@ export default function TreatmentPlans() {
       const refreshedPlan = await treatmentPlanApi.getPlan(viewingPlan.id);
       if (refreshedPlan) {
         setViewingPlan(refreshedPlan);
-        setPlans(prev => prev.map(p => p.id === refreshedPlan.id ? refreshedPlan : p));
+        queryClient.setQueryData(['treatment-plans'], (prev: TreatmentPlan[] | undefined) => 
+          prev?.map(p => p.id === refreshedPlan.id ? refreshedPlan : p)
+        );
       }
       
       toast({
@@ -245,7 +259,9 @@ export default function TreatmentPlans() {
         procedures: viewingPlan.procedures.filter(p => p.id !== procedureId),
       };
       setViewingPlan(updatedPlan);
-      setPlans(prev => prev.map(p => p.id === updatedPlan.id ? updatedPlan : p));
+      queryClient.setQueryData(['treatment-plans'], (prev: TreatmentPlan[] | undefined) => 
+        prev?.map(p => p.id === updatedPlan.id ? updatedPlan : p)
+      );
       
       toast({
         title: 'Procedure removed',
@@ -335,18 +351,46 @@ export default function TreatmentPlans() {
         </div>
       )}
 
-      {/* Create/Edit Plan Dialog */}
+      {/* Create/Edit Plan Dialog - Replaced with simple creation first, then builder */}
       <TreatmentPlanDialog
-        open={isPlanDialogOpen || !!editingPlan}
+        open={isPlanDialogOpen}
+        onOpenChange={setIsPlanDialogOpen}
+        onSubmit={async (data) => {
+          const newPlan = await handleCreatePlan(data);
+          if (newPlan) {
+            setEditingPlan(newPlan);
+            setIsVisualBuilderOpen(true);
+            setIsPlanDialogOpen(false);
+          }
+        }}
+      />
+
+      {/* Fullscreen Visual Builder */}
+      <AlertDialog 
+        open={isVisualBuilderOpen || !!editingPlan} 
         onOpenChange={(open) => {
           if (!open) {
-            setIsPlanDialogOpen(false);
+            setIsVisualBuilderOpen(false);
             setEditingPlan(null);
           }
         }}
-        plan={editingPlan}
-        onSubmit={editingPlan ? handleUpdatePlan : handleCreatePlan}
-      />
+      >
+        <AlertDialogContent className="max-w-[95vw] w-[1400px] h-[90vh]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Treatment Plan Designer</AlertDialogTitle>
+          </AlertDialogHeader>
+          {editingPlan && (
+            <TreatmentPlanVisualBuilder
+              plan={editingPlan}
+              onUpdate={handleUpdatePlan}
+              onCancel={() => {
+                setIsVisualBuilderOpen(false);
+                setEditingPlan(null);
+              }}
+            />
+          )}
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* View Plan Details Sheet */}
       <TreatmentPlanDetails

@@ -33,21 +33,16 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { 
-  Search, 
-  Plus, 
-  Filter, 
   MoreHorizontal,
   Phone,
   Mail,
   Calendar,
   AlertTriangle,
   User,
-  FileText,
-  ChevronLeft,
-  ChevronRight,
+  Plus,
+  Search,
 } from 'lucide-react';
 import { format, differenceInYears, parseISO } from 'date-fns';
-import { cn } from '@/lib/utils';
 import { patientApi } from '@/services/patientApi';
 import { PatientDialog } from '@/components/patients/PatientDialog';
 import type { PatientListItem, PatientSearchParams } from '@/types/patient';
@@ -62,16 +57,14 @@ export default function PatientList() {
   const [patients, setPatients] = useState<PatientListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [totalPatients, setTotalPatients] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
   
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('active');
   const [alertFilter, setAlertFilter] = useState(false);
   const [sortBy, setSortBy] = useState<'name' | 'lastVisit' | 'nextAppointment'>('name');
-  const [currentPage, setCurrentPage] = useState(1);
   
-  // Dialog state
+  // Virtualization is optimized for large batches, pagination removed
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
   // Load patients
@@ -83,14 +76,12 @@ export default function PatientList() {
         status: statusFilter,
         hasMedicalAlert: alertFilter || undefined,
         sortBy,
-        page: currentPage,
-        limit: 50, // Increased limit for better scroll experience
+        limit: 200, // Large batch sizing for virtualized view
       };
       const result = await patientApi.getPatients(params);
       setPatients(result.data);
       setTotalPatients(result.total);
-      setTotalPages(result.totalPages);
-    } catch (error) {
+    } catch {
       toast({
         title: 'Error',
         description: 'Failed to load patients',
@@ -99,7 +90,7 @@ export default function PatientList() {
     } finally {
       setIsLoading(false);
     }
-  }, [searchQuery, statusFilter, alertFilter, sortBy, currentPage, toast]);
+  }, [searchQuery, statusFilter, alertFilter, sortBy, toast]);
 
   useEffect(() => {
     loadPatients();
@@ -115,7 +106,6 @@ export default function PatientList() {
   // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {
-      setCurrentPage(1);
       loadPatients();
     }, 300);
     return () => clearTimeout(timer);
@@ -124,14 +114,12 @@ export default function PatientList() {
   const handleStatusFilterChange = (value: string) => {
     if (value === 'all' || value === 'active' || value === 'inactive') {
       setStatusFilter(value);
-      setCurrentPage(1);
     }
   };
 
   const handleSortChange = (value: string) => {
     if (value === 'name' || value === 'lastVisit' || value === 'nextAppointment') {
       setSortBy(value);
-      setCurrentPage(1);
     }
   };
 
@@ -206,7 +194,7 @@ export default function PatientList() {
           <Button
             variant={alertFilter ? "default" : "outline"}
             size="icon"
-            onClick={() => { setAlertFilter(!alertFilter); setCurrentPage(1); }}
+            onClick={() => { setAlertFilter(!alertFilter); }}
             title="Show patients with medical alerts"
           >
             <AlertTriangle className="h-4 w-4" />
@@ -214,40 +202,45 @@ export default function PatientList() {
         </div>
       </div>
 
-      {/* Patient Table */}
+      {/* Patient Table - Virtualized */}
       <div 
         ref={parentRef}
-        className="border rounded-lg bg-card overflow-auto max-h-[600px] relative"
+        className="border rounded-lg bg-card overflow-auto max-h-[700px] relative scrollbar-thin"
       >
-        <Table>
-          <TableHeader className="sticky top-0 bg-card z-10 shadow-sm">
-            <TableRow>
-              <TableHead>Patient</TableHead>
-              <TableHead>Contact</TableHead>
-              <TableHead>Age</TableHead>
-              <TableHead>Last Visit</TableHead>
-              <TableHead>Next Appt</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="w-[50px]"></TableHead>
+        <Table className="table-fixed w-full">
+          <TableHeader className="sticky top-0 bg-card z-20 shadow-sm border-b">
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="w-[300px]">Patient</TableHead>
+              <TableHead className="w-[220px]">Contact</TableHead>
+              <TableHead className="w-[80px]">Age</TableHead>
+              <TableHead className="w-[140px]">Last Visit</TableHead>
+              <TableHead className="w-[140px]">Next Appt</TableHead>
+              <TableHead className="w-[100px]">Status</TableHead>
+              <TableHead className="w-[60px] text-right"></TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+          <TableBody 
+            className="relative"
+            style={{ 
+              height: `${rowVirtualizer.getTotalSize()}px`,
+            }}
+          >
             {isLoading ? (
-              Array.from({ length: 5 }).map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell><Skeleton className="h-10 w-48" /></TableCell>
-                  <TableCell><Skeleton className="h-10 w-40" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-12" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-24" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-24" /></TableCell>
-                  <TableCell><Skeleton className="h-6 w-16" /></TableCell>
-                  <TableCell><Skeleton className="h-8 w-8" /></TableCell>
+              Array.from({ length: 10 }).map((_, i) => (
+                <TableRow key={i} className="absolute w-full" style={{ top: i * 72 }}>
+                  <TableCell className="w-[300px]"><Skeleton className="h-10 w-48" /></TableCell>
+                  <TableCell className="w-[220px]"><Skeleton className="h-10 w-40" /></TableCell>
+                  <TableCell className="w-[80px]"><Skeleton className="h-6 w-12" /></TableCell>
+                  <TableCell className="w-[140px]"><Skeleton className="h-6 w-24" /></TableCell>
+                  <TableCell className="w-[140px]"><Skeleton className="h-6 w-24" /></TableCell>
+                  <TableCell className="w-[100px]"><Skeleton className="h-6 w-16" /></TableCell>
+                  <TableCell className="w-[60px]"><Skeleton className="h-8 w-8 ml-auto" /></TableCell>
                 </TableRow>
               ))
             ) : patients.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="h-32 text-center">
-                  <div className="flex flex-col items-center justify-center text-muted-foreground">
+              <TableRow className="absolute w-full h-[300px]">
+                <TableCell colSpan={7} className="h-full text-center">
+                  <div className="flex flex-col items-center justify-center text-muted-foreground w-full h-full">
                     <User className="h-12 w-12 mb-2 opacity-30" />
                     <p>No patients found</p>
                     <p className="text-sm">Try adjusting your search or filters</p>
@@ -257,53 +250,58 @@ export default function PatientList() {
             ) : (
               rowVirtualizer.getVirtualItems().map((virtualRow) => {
                 const patient = patients[virtualRow.index];
+                if (!patient) return null;
+
                 return (
                   <TableRow 
                     key={patient.id}
                     data-index={virtualRow.index}
                     ref={rowVirtualizer.measureElement}
-                    className="cursor-pointer hover:bg-muted/50 absolute top-0 left-0 w-full flex"
-                    style={{ transform: `translateY(${virtualRow.start}px)` }}
+                    className="cursor-pointer hover:bg-muted/50 absolute top-0 left-0 w-full flex items-center"
+                    style={{ 
+                      transform: `translateY(${virtualRow.start}px)`,
+                      height: `${virtualRow.size}px`
+                    }}
                     onClick={() => handleViewPatient(patient.id)}
                   >
-                    <TableCell className="flex-1">
+                    <TableCell className="w-[300px]">
                       <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                          <span className="text-sm font-medium text-primary">
+                        <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                          <span className="text-xs font-bold text-primary">
                             {patient.firstName[0]}{patient.lastName[0]}
                           </span>
                         </div>
-                        <div>
-                          <div className="font-medium flex items-center gap-2">
+                        <div className="min-w-0">
+                          <div className="font-semibold truncate flex items-center gap-2">
                             {patient.firstName} {patient.lastName}
                             {patient.hasMedicalAlerts && (
-                              <AlertTriangle className="h-4 w-4 text-destructive" />
+                              <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
                             )}
                           </div>
                           {patient.hasMedicalAlerts && (
-                            <div className="text-xs text-destructive">
+                            <div className="text-xs text-destructive truncate">
                               {patient.medicalAlerts.join(', ')}
                             </div>
                           )}
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell className="w-[200px]">
-                      <div className="text-sm space-y-1">
-                        <div className="flex items-center gap-1 text-muted-foreground">
-                          <Phone className="h-3 w-3" />
+                    <TableCell className="w-[220px]">
+                      <div className="text-sm space-y-0.5">
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <Phone className="h-3.5 w-3.5" />
                           {patient.phone}
                         </div>
-                        <div className="flex items-center gap-1 text-muted-foreground">
-                          <Mail className="h-3 w-3" />
-                          {patient.email}
+                        <div className="flex items-center gap-1.5 text-muted-foreground truncate">
+                          <Mail className="h-3.5 w-3.5" />
+                          <span className="truncate">{patient.email}</span>
                         </div>
                       </div>
                     </TableCell>
                     <TableCell className="w-[80px]">
-                      <span className="text-sm">{calculateAge(patient.dateOfBirth)}</span>
+                      <span className="text-sm font-medium">{calculateAge(patient.dateOfBirth)}</span>
                     </TableCell>
-                    <TableCell className="w-[120px]">
+                    <TableCell className="w-[140px]">
                       {patient.lastVisit ? (
                         <span className="text-sm">
                           {format(parseISO(patient.lastVisit), 'MMM d, yyyy')}
@@ -312,10 +310,10 @@ export default function PatientList() {
                         <span className="text-sm text-muted-foreground">Never</span>
                       )}
                     </TableCell>
-                    <TableCell className="w-[120px]">
+                    <TableCell className="w-[140px]">
                       {patient.nextAppointment ? (
-                        <div className="flex items-center gap-1 text-sm">
-                          <Calendar className="h-3 w-3 text-primary" />
+                        <div className="flex items-center gap-1.5 text-sm font-medium text-primary">
+                          <Calendar className="h-4 w-4" />
                           {format(parseISO(patient.nextAppointment), 'MMM d')}
                         </div>
                       ) : (
@@ -323,34 +321,30 @@ export default function PatientList() {
                       )}
                     </TableCell>
                     <TableCell className="w-[100px]">
-                      <Badge variant={patient.status === 'active' ? 'default' : 'secondary'}>
+                      <Badge variant={patient.status === 'active' ? 'default' : 'secondary'} className="capitalize">
                         {patient.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="w-[50px]">
+                    <TableCell className="w-[60px] text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="icon">
+                          <Button variant="ghost" size="icon" className="h-8 w-8">
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
+                        <DropdownMenuContent align="end" className="w-48">
                           <DropdownMenuItem onClick={(e) => { e.stopPropagation(); handleViewPatient(patient.id); }}>
                             <User className="h-4 w-4 mr-2" />
                             View Profile
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={(e) => { e.stopPropagation(); navigate('/schedule'); }}>
                             <Calendar className="h-4 w-4 mr-2" />
-                            Schedule Appointment
+                            Schedule
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={(e) => { e.stopPropagation(); window.location.href = `tel:${patient.phone}`; }}>
                             <Phone className="h-4 w-4 mr-2" />
-                            Call Patient
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); window.location.href = `mailto:${patient.email}`; }}>
-                            <Mail className="h-4 w-4 mr-2" />
-                            Send Email
+                            Call
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -361,35 +355,6 @@ export default function PatientList() {
             )}
           </TableBody>
         </Table>
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t">
-            <div className="text-sm text-muted-foreground">
-              Page {currentPage} of {totalPages}
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-              >
-                <ChevronLeft className="h-4 w-4" />
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-              >
-                Next
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Create Patient Dialog */}
@@ -397,6 +362,7 @@ export default function PatientList() {
         open={isCreateDialogOpen}
         onOpenChange={setIsCreateDialogOpen}
         onSave={handlePatientCreated}
+        region="US"
       />
     </div>
   );

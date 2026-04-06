@@ -1,18 +1,20 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Phone, Mail, MapPin, User, Plus, FileText } from 'lucide-react';
+import { Phone, Mail, MapPin, User, Plus, FileText, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { NotesTimeline } from '@/components/patients/NotesTimeline';
+import { format, parseISO } from 'date-fns';
 import type { PatientRecord } from '@/types/patient';
 
 interface PatientOverviewTabProps {
   patient: PatientRecord;
   onAddNote: () => void;
+  region: string;
 }
 
-export const PatientOverviewTab = React.memo(({ patient, onAddNote }: PatientOverviewTabProps) => {
+export const PatientOverviewTab = React.memo(({ patient, onAddNote, region }: PatientOverviewTabProps) => {
   const navigate = useNavigate();
 
   return (
@@ -36,7 +38,24 @@ export const PatientOverviewTab = React.memo(({ patient, onAddNote }: PatientOve
             <div>
               <div>{patient.address.street}</div>
               <div>{patient.address.city}, {patient.address.state} {patient.address.zipCode}</div>
+              <div className="text-xs text-muted-foreground mt-1 uppercase tracking-wider font-semibold">
+                {region === 'IN' ? 'Pincode' : 'Zip Code'}: {patient.address.zipCode}
+              </div>
             </div>
+          </div>
+          
+          <div className="border-t pt-4 mt-4">
+            {patient.consentRecordedAt ? (
+              <div className="flex items-center gap-3 text-green-600 text-sm font-medium">
+                <ShieldCheck className="h-4 w-4" />
+                <span>Privacy Data Consent: Recorded ({format(parseISO(patient.consentRecordedAt), 'MMM d, yyyy')})</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 text-amber-600 text-sm font-medium">
+                <ShieldAlert className="h-4 w-4" />
+                <span>Privacy Data Consent: Action Required (DPDP/HIPAA)</span>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
