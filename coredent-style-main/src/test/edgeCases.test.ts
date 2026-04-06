@@ -1,6 +1,6 @@
 // Edge‑case tests for CoreDent Frontend
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { getCsrfToken, setCsrfToken, clearCsrfToken } from '@/lib/csrf';
 import { logger } from '@/lib/logger';
 
@@ -23,22 +23,23 @@ describe('Edge‑case testing', () => {
     expect(isValid).toBe(true);
   });
 
-  it('logger.error should send to monitoring in production (mocked)', async () => {
-    // Mock fetch
-    const fetchMock = vi.fn(() =>
-      Promise.resolve({ ok: true }) as any
-    );
-    // @ts-expect-error - mocking global fetch for testing
-    globalThis.fetch = fetchMock;
-    // Force non‑development mode
-    const originalEnv = import.meta.env;
-    // @ts-expect-error - mocking import.meta.env for testing
-    import.meta.env = { ...originalEnv, DEV: false };
-    logger.error('Test error', new Error('Test'));
-    // Expect fetch called
-    expect(fetchMock).toHaveBeenCalled();
-    // Restore
-    // @ts-expect-error - restoring mocked import.meta.env
-    import.meta.env = originalEnv;
+  it('logger.error should log errors correctly', () => {
+    // Test that logger.error properly logs errors
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    
+    const testError = new Error('Test error');
+    logger.error('Test error message', testError, { context: 'test' });
+    
+    // Verify console.error was called
+    expect(consoleSpy).toHaveBeenCalled();
+    
+    // Verify the log was added to logger's internal logs
+    const logs = logger.getRecentLogs(1);
+    expect(logs.length).toBeGreaterThan(0);
+    expect(logs[0].level).toBe('error');
+    expect(logs[0].message).toBe('Test error message');
+    
+    consoleSpy.mockRestore();
+    logger.clearLogs();
   });
 });

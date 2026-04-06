@@ -54,3 +54,49 @@ CREATE TABLE IF NOT EXISTS "audit" (
 CREATE INDEX IF NOT EXISTS idx_user_email ON "user" (email);
 CREATE INDEX IF NOT EXISTS idx_patient_practice ON "patient" (practice_id);
 CREATE INDEX IF NOT EXISTS idx_appointment_practitioner ON "appointment" (practitioner_id);
+
+-- Password Reset Tokens (for HIPAA-compliant password resets)
+CREATE TABLE IF NOT EXISTS "password_reset_token" (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    token VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    is_used BOOLEAN DEFAULT FALSE,
+    used_at TIMESTAMP,
+    ip_address VARCHAR(45),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_token ON "password_reset_token"(token);
+CREATE INDEX IF NOT EXISTS idx_password_reset_user ON "password_reset_token"(user_id);
+CREATE INDEX IF NOT EXISTS idx_password_reset_active ON "password_reset_token"(is_used, expires_at);
+
+-- User Sessions (for JWT refresh token management)
+CREATE TABLE IF NOT EXISTS "session" (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    refresh_token VARCHAR(255) NOT NULL UNIQUE,
+    expires_at TIMESTAMP NOT NULL,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_user ON "session"(user_id);
+CREATE INDEX IF NOT EXISTS idx_session_refresh_token ON "session"(refresh_token);
+CREATE INDEX IF NOT EXISTS idx_session_expires ON "session"(expires_at);
+
+-- Audit Log (HIPAA compliance - track all access and modifications)
+CREATE TABLE IF NOT EXISTS "audit_log" (
+    id UUID PRIMARY KEY,
+    user_id UUID REFERENCES "user"(id),
+    action VARCHAR(255) NOT NULL,
+    entity VARCHAR(255),
+    entity_id UUID,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    details JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_user ON "audit_log"(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON "audit_log"(timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_entity ON "audit_log"(entity, entity_id);

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/contexts/AuthContext';
@@ -19,10 +19,15 @@ vi.mock('@/lib/analytics', () => ({
   trackLogout: vi.fn(),
 }));
 
-vi.mock('@/lib/csrf', () => ({
-  refreshCsrfToken: vi.fn(),
-  clearCsrfToken: vi.fn(),
-}));
+vi.mock('@/lib/csrf', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/csrf')>();
+  return {
+    ...actual,
+    refreshCsrfToken: vi.fn(),
+    clearCsrfToken: vi.fn(),
+    getCsrfHeader: vi.fn(() => ({})),
+  };
+});
 
 const createWrapper = () => {
   const queryClient = new QueryClient({

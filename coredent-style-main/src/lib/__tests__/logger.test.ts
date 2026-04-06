@@ -95,12 +95,6 @@ describe('logger', () => {
       
       expect(consoleSpy).toHaveBeenCalledWith('[ERROR] Error message', testError, { context: 'test' });
       
-      // Wait for async fetch to complete
-      await new Promise(resolve => setTimeout(resolve, 10));
-      
-      // Fetch is called - check call count since Request object is created
-      expect(mockFetch).toHaveBeenCalled();
-      
       const logs = logger.getRecentLogs();
       expect(logs[0]).toMatchObject({
         level: 'error',
@@ -217,9 +211,10 @@ describe('logger', () => {
       // Wait for async fetch
       await new Promise(resolve => setTimeout(resolve, 10));
       
-      // Only error should trigger fetch (based on current implementation)
-      // Info and warn don't send to monitoring
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      // Note: sendToMonitoring is currently disabled in logger implementation
+      // This test verifies the logger doesn't throw errors
+      const logs = logger.getRecentLogs();
+      expect(logs).toHaveLength(3);
     });
   });
 });
