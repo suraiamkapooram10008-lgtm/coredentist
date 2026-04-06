@@ -11,7 +11,7 @@ On your computer, run:
 python generate_secret_key.py
 ```
 
-**Copy the output** - you'll paste it in Step 4.
+**Copy the output** - you'llOCz-_hzd3-3 paste it in Step 4.
 
 ---
 
