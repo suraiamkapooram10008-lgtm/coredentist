@@ -28,18 +28,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
-    # CORS
-    CORS_ORIGINS: List[str] = [
-        "https://respectful-strength-production-ef28.up.railway.app",
-        "https://coredentist-production.up.railway.app"
-    ]
-    
-    @field_validator("CORS_ORIGINS", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v: Any) -> Any:
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v if v else []
+    # CORS - Read from environment variable, with Railway defaults
+    CORS_ORIGINS: List[str] = []
     
     @field_validator("SECRET_KEY")
     @classmethod
@@ -53,8 +43,10 @@ class Settings(BaseSettings):
             )
         return v
     
+    # Monitoring token for /metrics endpoint (SECURITY FIX)
+    MONITORING_TOKEN: str = ""
+    
     # Allowed hosts for production (SECURITY FIX: No wildcard)
-    # CRIT-04 FIX: Define field BEFORE validators that reference it
     ALLOWED_HOSTS: List[str] = []
     
     @field_validator("ALLOWED_HOSTS", mode="before")
@@ -127,6 +119,20 @@ class Settings(BaseSettings):
     PASSWORD_REQUIRE_SPECIAL: bool = True
     PASSWORD_EXPIRE_DAYS: int = 90  # HIPAA recommends password expiration
     
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins_default(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            origins = [origin.strip() for origin in v.split(",") if origin.strip()]
+            return origins if origins else []
+        if not v:
+            # Return Railway defaults if not set
+            return [
+                "https://respectful-strength-production-ef28.up.railway.app",
+                "https://coredentist-production.up.railway.app"
+            ]
+        return v
+
     class Config:
         env_file = ".env"
         case_sensitive = True

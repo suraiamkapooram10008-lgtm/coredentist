@@ -13,6 +13,7 @@ from app.core.database import get_db
 from app.models.user import User, UserRole
 from app.api.deps import get_current_user, get_current_practice_id, Pagination, verify_csrf, require_role
 from app.core.audit import log_audit_event
+from app.core.sanitization import sanitize_search_query, sanitize_phone
 from fastapi import Request
 import re
 
@@ -46,22 +47,26 @@ async def list_patients(
     
     # Apply search - Use parameterized queries to prevent SQL injection
     if query:
-        # Normalize search pattern
-        search_pattern = f"%{query}%"
-        filters = [
-            Patient.first_name.ilike(search_pattern),
-            Patient.last_name.ilike(search_pattern),
-            Patient.email.ilike(search_pattern),
-        ]
+        # HIGH-04 FIX: Sanitize search input
+        query = sanitize_search_query(query)
         
-        # Expert Hardening: Smart Phone Search (strip formatting)
-        clean_phone = re.sub(r"\D", "", query)
-        if clean_phone:
-            filters.append(Patient.phone.like(f"%{clean_phone}%"))
-        else:
-            filters.append(Patient.phone.ilike(search_pattern))
+        if query:
+            # Normalize search pattern
+            search_pattern = f"%{query}%"
+            filters = [
+                Patient.first_name.ilike(search_pattern),
+                Patient.last_name.ilike(search_pattern),
+                Patient.email.ilike(search_pattern),
+            ]
             
-        stmt = stmt.where(or_(*filters))
+            # Expert Hardening: Smart Phone Search (strip formatting)
+            clean_phone = re.sub(r"\D", "", query)
+            if clean_phone:
+                filters.append(Patient.phone.like(f"%{clean_phone}%"))
+            else:
+                filters.append(Patient.phone.ilike(search_pattern))
+                
+            stmt = stmt.where(or_(*filters))
     
     # Apply status filter
     if status_filter:

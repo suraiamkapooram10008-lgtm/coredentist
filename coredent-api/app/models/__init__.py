@@ -5,6 +5,7 @@ SQLAlchemy ORM models for all entities
 
 from app.core.base import Base
 from app.models.user import User
+from app.models.password_reset import PasswordResetToken
 from app.models.practice import Practice
 from app.models.patient import Patient
 from app.models.appointment import Appointment, AppointmentType, Chair
@@ -115,6 +116,7 @@ __all__ = [
     # Core
     "Base",
     "User",
+    "PasswordResetToken",
     "Practice",
     "Patient",
     # Appointments

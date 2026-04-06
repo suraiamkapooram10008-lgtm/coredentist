@@ -13,15 +13,15 @@ import { AuthContext, type AuthContextValue } from '@/contexts/auth-context';
 import { refreshCsrfToken, clearCsrfToken } from '@/lib/csrf';
 import { analytics, trackLogin, trackLogout } from '@/lib/analytics';
 
-// Development mode bypass - ONLY works in development builds, NEVER in production
-// SECURITY FIX: Check MODE instead of DEV, and add production runtime check
-const DEV_MODE = import.meta.env.MODE === 'development';
-const DEV_BYPASS_AUTH = import.meta.env.MODE === 'development' && import.meta.env.VITE_DEV_BYPASS_AUTH === 'true';
-
-// Production safety check - this will throw if somehow bypass is enabled in production
-if (import.meta.env.MODE === 'production' && import.meta.env.VITE_DEV_BYPASS_AUTH === 'true') {
-  console.error('SECURITY ERROR: Auth bypass cannot be enabled in production!');
-}
+  // Development mode bypass - ONLY works in development builds, NEVER in production
+  const DEV_MODE = import.meta.env.MODE === 'development';
+  const DEV_BYPASS_AUTH = import.meta.env.MODE === 'development' && import.meta.env.VITE_DEV_BYPASS_AUTH === 'true';
+  
+  // Production safety check - this will throw if somehow bypass is enabled in production
+  if (typeof window !== 'undefined' && import.meta.env.MODE === 'production' && import.meta.env.VITE_DEV_BYPASS_AUTH === 'true') {
+    console.error('SECURITY ERROR: Auth bypass cannot be enabled in production!');
+    throw new Error('Auth bypass enabled in production - this is a security violation');
+  }
 
 const DEV_USER: User = {
   id: 'dev-user-1',
@@ -64,9 +64,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (response.success && response.data) {
           setUser(response.data);
         } else {
-          // Session invalid - clear CSRF token
-          clearCsrfToken();
-          authApi.setToken(null);
+      // Session invalid - clear session
+      clearCsrfToken();
+      authApi.setToken(null);
+      setUser(null);
         }
       } catch {
         // Session check failed - treat as logged out

@@ -24,6 +24,7 @@ from app.core.config import settings
 from app.core.email import email_service
 from app.models.user import User
 from app.models.audit import Session as UserSession
+from app.models.password_reset import PasswordResetToken
 from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
@@ -213,7 +214,7 @@ async def refresh_token(
     )
     session = result.scalar_one_or_none()
     
-    if not session or session.expires_at < datetime.utcnow():
+    if not session or session.expires_at < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token expired or invalid",
@@ -241,7 +242,7 @@ async def refresh_token(
     
     # Update session with new refresh token
     session.refresh_token = new_refresh_token
-    session.expires_at = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    session.expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     await _await_if_needed(db.commit())
     
     return TokenResponse(
@@ -282,13 +283,31 @@ async def forgot_password(
     
     # Generate reset token
     from app.core.security import generate_password_reset_token
+    from datetime import datetime, timedelta
     reset_token = generate_password_reset_token()
     
-    # Store reset token in user record (with expiration)
-    from datetime import datetime, timedelta
-    user.password_reset_token = reset_token
-    user.password_reset_expires = datetime.utcnow() + timedelta(hours=24)  # 24 hour expiration
+    # Store reset token in separate table for security (with expiration)
+    # First, invalidate any existing tokens for this user
+    existing_tokens = await _await_if_needed(
+        db.execute(
+            select(PasswordResetToken).where(
+                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.is_used == False,
+                PasswordResetToken.expires_at > datetime.now(timezone.utc)
+            )
+        )
+    )
+    for token in existing_tokens.scalars().all():
+        token.is_used = True
     
+    # Create new reset token
+    password_reset = PasswordResetToken(
+        user_id=user.id,
+        token=reset_token,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+        ip_address=request.client.host if request.client else None,
+    )
+    db.add(password_reset)
     await _await_if_needed(db.commit())
     
     # Send password reset email
@@ -330,18 +349,33 @@ async def reset_password(
     """
     Reset password with token
     """
-    # Validate reset token
+    # Validate reset token using separate table
     from datetime import datetime
     
     result = await _await_if_needed(
         db.execute(
-            select(User).where(
-                User.password_reset_token == reset_in.token,
-                User.password_reset_expires > datetime.utcnow()
+            select(PasswordResetToken).where(
+                PasswordResetToken.token == reset_in.token,
+                PasswordResetToken.is_used == False,
+                PasswordResetToken.expires_at > datetime.now(timezone.utc)
             )
         )
     )
-    user = result.scalar_one_or_none()
+    password_reset = result.scalar_one_or_none()
+    
+    if not password_reset:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+    
+    # Get user from token
+    user_result = await _await_if_needed(
+        db.execute(
+            select(User).where(User.id == password_reset.user_id)
+        )
+    )
+    user = user_result.scalar_one_or_none()
     
     if not user:
         raise HTTPException(
@@ -359,9 +393,11 @@ async def reset_password(
     
     # Update user password
     user.password_hash = get_password_hash(reset_in.new_password)
-    user.password_reset_token = None
-    user.password_reset_expires = None
-    user.password_changed_at = datetime.utcnow()
+    user.password_changed_at = datetime.now(timezone.utc)
+    
+    # Mark reset token as used
+    password_reset.is_used = True
+    password_reset.used_at = datetime.now(timezone.utc)
     
     await _await_if_needed(db.commit())
     

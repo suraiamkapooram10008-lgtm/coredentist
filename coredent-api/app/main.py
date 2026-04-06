@@ -124,6 +124,55 @@ app.add_middleware(
     max_age=3600,  # Cache preflight for 1 hour
 )
 
+# HIGH-01 FIX: Audit Logging Middleware for HIPAA compliance
+if settings.AUDIT_LOG_ENABLED:
+    @app.middleware("http")
+    async def audit_logging_middleware(request: Request, call_next):
+        """Log all API requests for HIPAA audit trail"""
+        import time
+        from datetime import datetime, timezone
+        
+        start_time = time.time()
+        response = await call_next(request)
+        duration_ms = int((time.time() - start_time) * 1000)
+        
+        # Only log API requests (not health checks, metrics, docs)
+        if request.url.path.startswith("/api/"):
+            # Get user info if authenticated
+            user_id = None
+            practice_id = None
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                try:
+                    from app.core.security import decode_token
+                    token = auth_header[7:]
+                    payload = decode_token(token)
+                    if payload:
+                        user_id = payload.get("sub")
+                        practice_id = payload.get("practice_id")
+                except Exception:
+                    pass
+            
+            # Log the request
+            logger.info(
+                "API_REQUEST",
+                extra={
+                    "audit": True,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "query": str(request.query_params) if request.query_params else None,
+                    "status_code": response.status_code,
+                    "duration_ms": duration_ms,
+                    "user_id": user_id,
+                    "practice_id": practice_id,
+                    "ip_address": request.client.host if request.client else None,
+                    "user_agent": request.headers.get("user-agent"),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        
+        return response
+
 # Redis-backed rate limiting (if REDIS_URL is configured)
 if settings.REDIS_URL:
     try:
@@ -254,10 +303,10 @@ async def shutdown_event():
     print(f"👋 {settings.APP_NAME} shutting down")
 
 
-# Health check endpoint
+# HIGH-03 FIX: Health check endpoint - minimal info for monitoring, detailed info requires auth
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """Health check endpoint for monitoring"""
+    """Health check endpoint for monitoring - returns minimal info for security"""
     db_status = "unknown"
     try:
         from sqlalchemy import text
@@ -267,19 +316,41 @@ async def health_check():
     except Exception:
         db_status = "disconnected"
     
+    # Return minimal info for security (no version, no app name in production)
+    if settings.DEBUG:
+        return {
+            "status": "healthy" if db_status == "connected" else "degraded",
+            "app": settings.APP_NAME,
+            "version": settings.APP_VERSION,
+            "environment": settings.ENVIRONMENT,
+            "database": db_status,
+        }
+    
+    # Production: minimal response
     return {
         "status": "healthy" if db_status == "connected" else "degraded",
-        "app": settings.APP_NAME,
-        "version": settings.APP_VERSION,
-        "environment": settings.ENVIRONMENT,
         "database": db_status,
     }
 
 
-# Prometheus metrics endpoint
+# CRIT-04 FIX: Metrics endpoint protected - only accessible in debug mode or with secret key
 @app.get("/metrics", tags=["Monitoring"])
-async def metrics():
-    """Prometheus metrics endpoint"""
+async def metrics(request: Request):
+    """Prometheus metrics endpoint - PROTECTED"""
+    # In production, only allow access if a secret monitoring token is provided
+    if not settings.DEBUG:
+        monitoring_token = request.query_params.get("token")
+        secret_token = request.headers.get("X-Monitoring-Token")
+        
+        # Allow access only with valid token (set via env var MONITORING_TOKEN)
+        expected_token = settings.MONITORING_TOKEN
+        if not expected_token or (monitoring_token != expected_token and secret_token != expected_token):
+            from fastapi import HTTPException as HTTPExc
+            raise HTTPExc(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. Monitoring endpoint requires authentication.",
+            )
+    
     from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
     
     return PlainTextResponse(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)

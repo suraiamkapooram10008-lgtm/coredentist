@@ -44,8 +44,8 @@ class User(Base):
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
     is_active = Column(Boolean, default=True)
     last_login = Column(DateTime(timezone=True), nullable=True)
-    password_reset_token = Column(String(255), nullable=True)
-    password_reset_expires = Column(DateTime(timezone=True), nullable=True)
+    # Password reset tokens are now stored in separate table for security
+    # See PasswordResetToken model
     password_changed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -56,6 +56,7 @@ class User(Base):
     clinical_notes = relationship("ClinicalNote", back_populates="provider")
     treatment_plans = relationship("TreatmentPlan", back_populates="provider")
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
+    password_reset_tokens = relationship("PasswordResetToken", back_populates="user", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="user")
     images = relationship("PatientImage", back_populates="provider")
     online_bookings = relationship("OnlineBooking", back_populates="provider")
