@@ -40,6 +40,14 @@ class PaymentStatus(str, enum.Enum):
     REFUNDED = "refunded"
 
 
+class PaymentPlanStatus(str, enum.Enum):
+    """Payment plan status"""
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    DEFAULTED = "defaulted"
+    CANCELLED = "cancelled"
+
+
 class Invoice(Base):
     """Invoice model"""
     __tablename__ = "invoices"
@@ -106,3 +114,54 @@ class Payment(Base):
     
     def __repr__(self):
         return f"<Payment {self.id} - ${self.amount}>"
+
+
+class PaymentPlan(Base):
+    """Installment-based payment plan"""
+    __tablename__ = "payment_plans"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
+    patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
+    invoice_id = Column(UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=True)
+    
+    status = Column(Enum(PaymentPlanStatus), default=PaymentPlanStatus.ACTIVE)
+    total_amount = Column(Numeric(10, 2), nullable=False)
+    initial_deposit = Column(Numeric(10, 2), default=0)
+    interest_rate = Column(Numeric(5, 2), default=0)  # Annual percentage rate
+    
+    start_date = Column(Date, nullable=False)
+    notes = Column(Text)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    practice = relationship("Practice")
+    patient = relationship("Patient")
+    invoice = relationship("Invoice")
+    installments = relationship("PaymentPlanInstallment", back_populates="plan", cascade="all, delete-orphan")
+    
+    def __repr__(self):
+        return f"<PaymentPlan {self.id} - {self.status}>"
+
+
+class PaymentPlanInstallment(Base):
+    """Individual installment in a payment plan"""
+    __tablename__ = "payment_plan_installments"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_id = Column(UUID(as_uuid=True), ForeignKey("payment_plans.id"), nullable=False)
+    
+    amount = Column(Numeric(10, 2), nullable=False)
+    due_date = Column(Date, nullable=False)
+    paid_at = Column(DateTime(timezone=True))
+    status = Column(String(50), default="scheduled")  # scheduled, paid, overdue
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    plan = relationship("PaymentPlan", back_populates="installments")
+    
+    def __repr__(self):
+        return f"<Installment {self.id} - ${self.amount} - {self.status}>"

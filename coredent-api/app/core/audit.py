@@ -12,7 +12,7 @@ from app.models.user import User
 
 async def log_audit_event(
     db: AsyncSession,
-    user: User,
+    user: Optional[User],
     action: str,
     entity_type: str,
     entity_id: UUID,
@@ -30,7 +30,7 @@ async def log_audit_event(
         user_agent = request.headers.get("user-agent")
         
     audit_entry = AuditLog(
-        user_id=user.id,
+        user_id=user.id if user else None,
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,

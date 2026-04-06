@@ -4,23 +4,17 @@ CRUD operations for patients
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select, func, or_
 from typing import List, Any
 from uuid import UUID
 
 from app.core.database import get_db
-from app.models.user import User
-from app.models.patient import Patient
-from app.schemas.patient import (
-    PatientCreate,
-    PatientUpdate,
-    PatientResponse,
-    PatientListItem,
-)
-from app.api.deps import get_current_user, get_current_practice_id, Pagination, verify_csrf
+from app.models.user import User, UserRole
+from app.api.deps import get_current_user, get_current_practice_id, Pagination, verify_csrf, require_role
 from app.core.audit import log_audit_event
 from fastapi import Request
+import re
 
 router = APIRouter()
 
@@ -43,21 +37,31 @@ async def list_patients(
         db, current_user, "patient_list_viewed", "patient", None, request
     )
     await db.commit()
-    # Build query
-    stmt = select(Patient).where(Patient.practice_id == practice_id)
+    # Build query with eager loading to prevent N+1 for visit stats
+    stmt = (
+        select(Patient)
+        .where(Patient.practice_id == practice_id)
+        .options(selectinload(Patient.appointments))
+    )
     
     # Apply search - Use parameterized queries to prevent SQL injection
     if query:
-        # Escape special LIKE characters to prevent pattern injection
-        # and use bound parameters
+        # Normalize search pattern
         search_pattern = f"%{query}%"
-        search_filter = or_(
+        filters = [
             Patient.first_name.ilike(search_pattern),
             Patient.last_name.ilike(search_pattern),
             Patient.email.ilike(search_pattern),
-            Patient.phone.ilike(search_pattern),
-        )
-        stmt = stmt.where(search_filter)
+        ]
+        
+        # Expert Hardening: Smart Phone Search (strip formatting)
+        clean_phone = re.sub(r"\D", "", query)
+        if clean_phone:
+            filters.append(Patient.phone.like(f"%{clean_phone}%"))
+        else:
+            filters.append(Patient.phone.ilike(search_pattern))
+            
+        stmt = stmt.where(or_(*filters))
     
     # Apply status filter
     if status_filter:
@@ -83,8 +87,23 @@ async def create_patient(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
-    Create new patient
+    Create new patient (includes integrity check for duplicates)
     """
+    # Expert Integrity: Check for duplicate patient in the same practice
+    duplicate_query = select(Patient).where(
+        Patient.practice_id == practice_id,
+        or_(
+            Patient.email == patient_in.email,
+            Patient.phone == patient_in.phone
+        )
+    )
+    result = await db.execute(duplicate_query)
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A patient with this email or phone already exists in this practice. Please verify the record."
+        )
+
     # Create patient
     patient = Patient(
         practice_id=practice_id,
@@ -134,6 +153,13 @@ async def get_patient(
         db, current_user, "patient_viewed", "patient", patient.id, request
     )
     await db.commit()
+    
+    # EXPERT HARDENING: Adaptive PHI Visibility (Least Privilege)
+    # Front-Desk and Hygienists don't need access to specific insurance IDs/keys unless authorized.
+    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN, UserRole.DENTIST]:
+        # Redact the JSON content of insurance_info if present
+        if patient.insurance_info:
+             patient.insurance_info = {"status": "present", "redacted": True, "note": "Contact Admin for details"}
     
     return patient
 
@@ -188,7 +214,7 @@ async def delete_patient(
     request: Request,
     patient_id: UUID,
     practice_id: UUID = Depends(get_current_practice_id),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     _csrf: bool = Depends(verify_csrf),  # SECURITY FIX: CSRF protection
     db: AsyncSession = Depends(get_db),
 ) -> None:

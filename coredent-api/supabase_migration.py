@@ -136,12 +136,8 @@ async def setup_rls():
         ]
         
         for table in tables:
-            # SECURITY: Explicit whitelist enforcement
-            if table not in tables:
-                print(f"⚠️  Blocked untrusted table: {table}")
-                continue
-                
             try:
+                # Check if table exists
                 exists = await conn.fetchval(f"""
                     SELECT EXISTS (
                         SELECT FROM information_schema.tables 
@@ -151,14 +147,28 @@ async def setup_rls():
                 """, table)
                 
                 if exists:
-                    # Use proper identifier quoting
+                    # EXPERT HARDENING: Enable RLS and IMMEDIATELY apply Tenant-Isolation Policies
+                    # Without policies, enabling RLS blocks ALL access.
                     await conn.execute(f'ALTER TABLE "{table}" ENABLE ROW LEVEL SECURITY')
-                    print(f"✅ Enabled RLS on: {table}")
+                    
+                    # Policy for Practice Isolation
+                    # Assumption: Practice ID is passed via session variable or JWT claim
+                    policy_name = f"practice_isolation_{table}"
+                    await conn.execute(f'DROP POLICY IF EXISTS "{policy_name}" ON "{table}"')
+                    
+                    # This policy allows access only if practice_id matches (Tenant Isolation)
+                    # For Supabase/Postgres, we use the practice_id in the table
+                    await conn.execute(f"""
+                        CREATE POLICY "{policy_name}" ON "{table}"
+                        USING (practice_id::text = current_setting('app.current_practice_id', true))
+                        WITH CHECK (practice_id::text = current_setting('app.current_practice_id', true))
+                    """)
+                    
+                    print(f"✅ Enabled RLS and Tenant Policy on: {table}")
                 else:
                     print(f"⚠️  Table {table} doesn't exist yet")
-                    
             except Exception as e:
-                print(f"⚠️  Could not enable RLS on {table}: {e}")
+                print(f"⚠️  Could not secure table {table}: {e}")
         
         await conn.close()
         return True

@@ -100,6 +100,10 @@ class Referral(Base):
     referring_provider_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     referral_source_id = Column(UUID(as_uuid=True), ForeignKey("referral_sources.id"))
     
+    # Internal Enterprise Referrals
+    target_practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=True)
+    is_internal = Column(Boolean, default=False)
+    
     # Referral Information
     referral_type = Column(Enum(ReferralType), nullable=False)
     status = Column(Enum(ReferralStatus), default=ReferralStatus.PENDING)
@@ -143,6 +147,7 @@ class Referral(Base):
     practice = relationship("Practice", back_populates="referrals")
     patient = relationship("Patient", back_populates="referrals")
     referring_provider = relationship("User", foreign_keys=[referring_provider_id])
+    target_practice = relationship("Practice", foreign_keys=[target_practice_id])
     referral_source_obj = relationship("ReferralSource1", back_populates="referrals")
     communications = relationship("ReferralCommunication", back_populates="referral", cascade="all, delete-orphan")
     

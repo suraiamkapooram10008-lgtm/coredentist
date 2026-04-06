@@ -27,8 +27,9 @@ class PatientBase(BaseModel):
     phone: Optional[str] = None
     address_street: Optional[str] = None
     address_city: Optional[str] = None
-    address_state: Optional[str] = Field(None, max_length=2)
+    address_state: Optional[str] = Field(None, max_length=100)
     address_zip: Optional[str] = None
+    abha_id: Optional[str] = Field(None, max_length=20)
 
 
 class PatientCreate(PatientBase):
@@ -50,14 +51,18 @@ class PatientUpdate(BaseModel):
     phone: Optional[str] = None
     address_street: Optional[str] = None
     address_city: Optional[str] = None
-    address_state: Optional[str] = Field(None, max_length=2)
+    address_state: Optional[str] = Field(None, max_length=100)
     address_zip: Optional[str] = None
+    abha_id: Optional[str] = Field(None, max_length=20)
     emergency_contact: Optional[EmergencyContact] = None
     medical_alerts: Optional[List[str]] = None
     medical_history: Optional[Dict[str, Any]] = None
     dental_history: Optional[Dict[str, Any]] = None
     insurance_info: Optional[Dict[str, Any]] = None
     status: Optional[PatientStatus] = None
+    
+    class Config:
+        extra = "forbid"
 
 
 class PatientInDB(PatientBase):
@@ -69,6 +74,8 @@ class PatientInDB(PatientBase):
     medical_history: Dict[str, Any]
     dental_history: Dict[str, Any]
     insurance_info: Optional[Dict[str, Any]]
+    abha_id: Optional[str]
+    consent_recorded_at: Optional[datetime]
     status: PatientStatus
     created_at: datetime
     updated_at: datetime

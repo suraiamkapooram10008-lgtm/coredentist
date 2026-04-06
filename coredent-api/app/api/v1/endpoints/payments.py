@@ -12,10 +12,9 @@ import stripe as stripe_lib
 
 from app.core.database import get_db
 from app.core.config import settings
-from app.models.user import User
-from app.models.billing import Invoice, Payment, InvoiceStatus, PaymentStatus
-from app.models.patient import Patient
-from app.api.deps import get_current_user, verify_csrf
+from app.api.deps import get_current_user, require_role, verify_csrf
+from app.models.user import User, UserRole
+from app.core.audit import log_audit_event
 from app.schemas.payment import (
     PaymentIntentCreate,
     PaymentIntentResponse,
@@ -97,6 +96,13 @@ async def create_payment_intent(
             automatic_payment_methods={"enabled": True},
             description=f"Invoice #{invoice.invoice_number}",
         )
+        
+        # HIPAA: Log payment intent creation
+        await log_audit_event(
+            db, current_user, "create_payment_intent", "invoice", invoice.id, request,
+            {"amount": payment_amount}
+        )
+        await db.commit()
         
         return PaymentIntentResponse(
             client_secret=intent.client_secret,
@@ -226,7 +232,7 @@ async def refund_payment(
     request: Request,
     transaction_id: str,
     amount: Optional[float] = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -266,7 +272,15 @@ async def refund_payment(
         if amount:
             refund_params["amount"] = int(amount * 100)
         
+        
         refund = stripe_lib.Refund.create(**refund_params)
+        
+        # HIPAA: Log refund action
+        await log_audit_event(
+            db, current_user, "refund_payment", "payment", payment.id, request,
+            {"amount": amount or payment.amount, "transaction_id": transaction_id}
+        )
+        await db.commit()
         
         return {
             "refund_id": refund.id,

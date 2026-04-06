@@ -28,6 +28,11 @@ def run_migrations():
             logger.warning("DATABASE_URL not set - skipping migrations")
             return True
             
+        # CRIT-01 FIX: Railway uses postgres://, Alembic/SQLAlchemy often need postgresql://
+        # For Alembic (sync), we use postgresql://
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql://", 1)
+            
         logger.info("Running database migrations...")
         alembic_cfg = alembic.config.Config("alembic.ini")
         

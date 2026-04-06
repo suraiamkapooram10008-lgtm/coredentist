@@ -5,6 +5,7 @@ QuickBooks Online sync for invoicing and payments
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 from sqlalchemy import select
 from typing import Optional, Any
 from uuid import UUID
@@ -15,6 +16,7 @@ from app.core.config import settings
 from app.models.user import User, UserRole
 from app.models.billing import Invoice, Payment, InvoiceStatus
 from app.models.patient import Patient
+from app.core.audit import log_audit_event
 from app.api.deps import get_current_user, verify_csrf, require_role
 from app.schemas.accounting import (
     QuickBooksConnectRequest,
@@ -75,17 +77,25 @@ async def connect_quickbooks(
     )
 
 
-@router.post("/quickbooks/callback")
+@router.get("/quickbooks/callback")
 async def quickbooks_callback(
     request: Request,
     code: str,
     realmId: str,
+    state: str,
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
-    Handle QuickBooks OAuth callback.
+    Handle QuickBooks OAuth callback with State Verification.
     Exchange authorization code for access token.
     """
+    # Expert Hardening: Verify state matches current user's practice to prevent OAuth CSRF
+    if not state or state != str(current_user.practice_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid OAuth state. Potential cross-site request forgery detected."
+        )
     if not settings.QB_CLIENT_ID or not settings.QB_CLIENT_SECRET:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -143,10 +153,14 @@ async def sync_invoices_to_qb(
             detail="QuickBooks integration not configured",
         )
     
-    # Get invoices to sync
-    query = select(Invoice).where(
-        Invoice.practice_id == current_user.practice_id,
-        Invoice.status != InvoiceStatus.DRAFT,
+    # Get invoices to sync with patient details eager-loaded
+    query = (
+        select(Invoice)
+        .where(
+            Invoice.practice_id == current_user.practice_id,
+            Invoice.status != InvoiceStatus.DRAFT,
+        )
+        .options(joinedload(Invoice.patient))
     )
     
     if sync_data.from_date:
@@ -159,11 +173,8 @@ async def sync_invoices_to_qb(
     failed = []
     
     for invoice in invoices:
-        # Get patient for customer info
-        result = await db.execute(
-            select(Patient).where(Patient.id == invoice.patient_id)
-        )
-        patient = result.scalar_one_or_none()
+        # Optimization: Patient is already loaded via joinedload
+        patient = invoice.patient
         
         if not patient:
             failed.append({"id": str(invoice.id), "error": "Patient not found"})
@@ -205,6 +216,13 @@ async def sync_invoices_to_qb(
             "invoice_number": invoice.invoice_number,
             "qb_id": f"QB-{invoice.invoice_number}",  # Mock
         })
+    
+    # HIPAA: Log QuickBooks sync transmission
+    await log_audit_event(
+        db, current_user, "quickbooks_sync_invoices", "accounting", None, request,
+        {"count": len(synced)}
+    )
+    await db.commit()
     
     return QuickBooksSyncResponse(
         synced_count=len(synced),
@@ -263,6 +281,13 @@ async def sync_payments_to_qb(
             "id": str(payment.id),
             "qb_id": f"QB-PAY-{payment.id}",  # Mock
         })
+    
+    # HIPAA: Log QuickBooks sync transmission
+    await log_audit_event(
+        db, current_user, "quickbooks_sync_payments", "accounting", None, request,
+        {"count": len(synced)}
+    )
+    await db.commit()
     
     return QuickBooksSyncResponse(
         synced_count=len(synced),

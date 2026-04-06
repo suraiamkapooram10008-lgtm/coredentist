@@ -3,8 +3,9 @@ Treatment Planning Endpoints
 CRUD operations for treatment planning
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 from sqlalchemy import select, and_, func, or_
 from datetime import datetime, date
 from typing import List, Optional, Any
@@ -12,8 +13,9 @@ import json
 import uuid as uuid_lib
 
 from app.core.database import get_db
-from app.api.deps import get_current_user
-from app.models.user import User
+from app.api.deps import get_current_user, verify_csrf, require_role
+from app.models.user import User, UserRole
+from app.core.audit import log_audit_event
 from app.models.treatment import (
     TreatmentPlan,
     TreatmentPhase,
@@ -59,7 +61,6 @@ from app.schemas.treatment import (
     VisualBuilderConfig,
     VisualBuilderResponse,
 )
-from app.api.deps import verify_csrf
 
 router = APIRouter()
 
@@ -73,13 +74,21 @@ async def list_treatment_plans(
     provider_id: Optional[str] = Query(None, description="Filter by provider"),
     start_date: Optional[date] = Query(None, description="Start date"),
     end_date: Optional[date] = Query(None, description="End date"),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
     List treatment plans for the current practice
     """
-    query = select(TreatmentPlan).where(TreatmentPlan.practice_id == current_user.practice_id)
+    query = (
+        select(TreatmentPlan)
+        .where(TreatmentPlan.practice_id == current_user.practice_id)
+        .options(
+            joinedload(TreatmentPlan.patient),
+            joinedload(TreatmentPlan.provider)
+        )
+    )
     
     if patient_id:
         query = query.where(TreatmentPlan.patient_id == patient_id)
@@ -101,6 +110,12 @@ async def list_treatment_plans(
     result = await db.execute(query)
     plans = result.scalars().all()
     
+    # HIPAA: Log treatment plan list access
+    await log_audit_event(
+        db, current_user, "list_treatment_plans", "treatment_plan", None, request
+    )
+    await db.commit()
+    
     return TreatmentPlanListResponse(
         plans=plans,
         count=len(plans),
@@ -111,6 +126,7 @@ async def list_treatment_plans(
 async def list_patient_treatment_plans(
     patient_id: str,
     status: Optional[TreatmentPlanStatus] = Query(None, description="Filter by status"),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -132,9 +148,16 @@ async def list_patient_treatment_plans(
             detail="Patient not found",
         )
     
-    query = select(TreatmentPlan).where(
-        TreatmentPlan.patient_id == patient_id,
-        TreatmentPlan.practice_id == current_user.practice_id,
+    query = (
+        select(TreatmentPlan)
+        .where(
+            TreatmentPlan.patient_id == patient_id,
+            TreatmentPlan.practice_id == current_user.practice_id,
+        )
+        .options(
+            joinedload(TreatmentPlan.patient),
+            joinedload(TreatmentPlan.provider)
+        )
     )
     
     if status:
@@ -145,6 +168,12 @@ async def list_patient_treatment_plans(
     result = await db.execute(query)
     plans = result.scalars().all()
     
+    # HIPAA: Log patient treatment plan list access
+    await log_audit_event(
+        db, current_user, "list_patient_treatment_plans", "patient", patient_id, request
+    )
+    await db.commit()
+    
     return TreatmentPlanListResponse(
         plans=plans,
         count=len(plans),
@@ -153,7 +182,8 @@ async def list_patient_treatment_plans(
 @router.post("/plans/", response_model=TreatmentPlanResponse)
 async def create_treatment_plan(
     plan_data: TreatmentPlanCreate,
-    current_user: User = Depends(get_current_user),
+    request: Request = None,
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -199,12 +229,19 @@ async def create_treatment_plan(
     await db.commit()
     await db.refresh(plan)
     
+    # HIPAA: Log treatment plan creation
+    await log_audit_event(
+        db, current_user, "create_treatment_plan", "treatment_plan", plan.id, request
+    )
+    await db.commit()
+    
     return plan
 
 
 @router.get("/plans/{plan_id}", response_model=TreatmentPlanResponse)
 async def get_treatment_plan(
     plan_id: str,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -225,6 +262,12 @@ async def get_treatment_plan(
             detail="Treatment plan not found",
         )
     
+    # HIPAA: Log treatment plan access
+    await log_audit_event(
+        db, current_user, "view_treatment_plan", "treatment_plan", plan.id, request
+    )
+    await db.commit()
+    
     return plan
 
 
@@ -232,7 +275,7 @@ async def get_treatment_plan(
 async def update_treatment_plan(
     plan_id: str,
     plan_data: TreatmentPlanUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -275,7 +318,7 @@ async def update_treatment_plan(
 @router.delete("/plans/{plan_id}")
 async def delete_treatment_plan(
     plan_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -345,7 +388,7 @@ async def list_treatment_phases(
 async def create_treatment_phase(
     plan_id: str,
     phase_data: TreatmentPhaseCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -383,7 +426,7 @@ async def create_treatment_phase(
 async def update_treatment_phase(
     phase_id: str,
     phase_data: TreatmentPhaseUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -483,7 +526,7 @@ async def list_treatment_procedures(
 async def create_treatment_procedure(
     plan_id: str,
     procedure_data: TreatmentProcedureCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -538,7 +581,7 @@ async def create_treatment_procedure(
 async def update_treatment_procedure(
     procedure_id: str,
     procedure_data: TreatmentProcedureUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -587,7 +630,7 @@ async def update_treatment_procedure(
 @router.delete("/procedures/{procedure_id}")
 async def delete_treatment_procedure(
     procedure_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -681,7 +724,7 @@ async def list_procedure_library(
 @router.post("/library/", response_model=ProcedureLibraryResponse)
 async def create_procedure_library_entry(
     procedure_data: ProcedureLibraryCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -719,7 +762,7 @@ async def create_procedure_library_entry(
 async def update_procedure_library_entry(
     procedure_id: str,
     procedure_data: ProcedureLibraryUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:

@@ -3,7 +3,7 @@ Insurance Endpoints
 CRUD operations for insurance management
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from datetime import datetime, date
@@ -11,9 +11,8 @@ from typing import List, Optional, Any
 import json
 
 from app.core.database import get_db
-from app.api.deps import get_current_user
-from app.core.edi import submit_dental_claim
-from app.models.user import User
+from app.models.user import User, UserRole
+from app.api.deps import get_current_user, require_role, verify_csrf
 from app.models.insurance import (
     InsuranceCarrier,
     PatientInsurance,
@@ -110,7 +109,7 @@ async def get_carrier(
 @router.post("/carriers/", response_model=InsuranceCarrierResponse)
 async def create_carrier(
     carrier_data: InsuranceCarrierCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -141,7 +140,7 @@ async def create_carrier(
 async def update_carrier(
     carrier_id: str,
     carrier_data: InsuranceCarrierUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -175,6 +174,7 @@ async def update_carrier(
 async def list_patient_insurance(
     patient_id: str,
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -205,6 +205,12 @@ async def list_patient_insurance(
     
     result = await db.execute(query)
     insurances = result.scalars().all()
+    
+    # HIPAA: Log patient insurance access
+    await log_audit_event(
+        db, current_user, "list_patient_insurance", "patient", patient_id, request
+    )
+    await db.commit()
     
     return PatientInsuranceListResponse(
         insurances=insurances,
@@ -359,6 +365,7 @@ async def list_claims(
     patient_id: Optional[str] = Query(None, description="Filter by patient"),
     start_date: Optional[date] = Query(None, description="Start date"),
     end_date: Optional[date] = Query(None, description="End date"),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -383,6 +390,12 @@ async def list_claims(
     
     result = await db.execute(query)
     claims = result.scalars().all()
+    
+    # HIPAA: Log claim list access
+    await log_audit_event(
+        db, current_user, "list_insurance_claims", "insurance_claim", None, request
+    )
+    await db.commit()
     
     return InsuranceClaimListResponse(
         claims=claims,
@@ -501,6 +514,7 @@ async def update_claim(
 @router.post("/claims/{claim_id}/submit")
 async def submit_claim(
     claim_id: str,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
@@ -598,6 +612,12 @@ async def submit_claim(
     
     await db.commit()
     
+    # HIPAA: Log claim submission
+    await log_audit_event(
+        db, current_user, "submit_insurance_claim", "insurance_claim", claim.id, request
+    )
+    await db.commit()
+    
     return {"message": "Claim submitted successfully", "claim_number": claim.claim_number}
 
 
@@ -609,6 +629,7 @@ async def list_eligibility(
     patient_id: Optional[str] = Query(None, description="Filter by patient"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> Any:
     """
     List eligibility records for the current practice
@@ -629,6 +650,13 @@ async def list_eligibility(
         patient = result.scalar_one_or_none()
         if patient:
             filtered.append(e)
+            
+    # HIPAA: Log eligibility access
+    await log_audit_event(
+        db, current_user, "list_eligibility", "eligibility", None, request
+    )
+    await db.commit()
+    
     return EligibilityListResponse(
         eligibilities=filtered,
         count=len(filtered),
@@ -640,6 +668,7 @@ async def list_eobs(
     claim_id: Optional[str] = Query(None, description="Filter by claim"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> Any:
     """
     List Explanation of Benefits for the current practice
@@ -661,6 +690,13 @@ async def list_eobs(
         claim = result.scalar_one_or_none()
         if claim:
             filtered.append(eob)
+            
+    # HIPAA: Log EOB access
+    await log_audit_event(
+        db, current_user, "list_eobs", "eob", None, request
+    )
+    await db.commit()
+    
     return ExplanationOfBenefitsListResponse(
         eobs=filtered,
         count=len(filtered),
@@ -672,6 +708,7 @@ async def list_pre_authorizations(
     status: Optional[str] = Query(None, description="Filter by status"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> Any:
     """
     List pre-authorizations
@@ -700,6 +737,12 @@ async def list_pre_authorizations(
         )
         if result.scalar_one_or_none():
             filtered_pre_auths.append(pre_auth)
+            
+    # HIPAA: Log pre-auth access
+    await log_audit_event(
+        db, current_user, "list_pre_authorizations", "pre_authorization", None, request
+    )
+    await db.commit()
     
     return PreAuthorizationListResponse(
         pre_authorizations=filtered_pre_auths,

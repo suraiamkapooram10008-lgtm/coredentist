@@ -21,6 +21,8 @@ class UserRole(str, enum.Enum):
     DENTIST = "dentist"
     HYGIENIST = "hygienist"
     FRONT_DESK = "front_desk"
+    GROUP_OWNER = "group_owner"
+    GROUP_ADMIN = "group_admin"
 
 
 class User(Base):

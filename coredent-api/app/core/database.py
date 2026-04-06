@@ -10,9 +10,12 @@ from sqlalchemy.pool import NullPool
 from app.core.config import settings
 from app.core.base import Base
 
-engine_url = settings.DATABASE_URL
-if engine_url.startswith("postgresql://"):
-    engine_url = engine_url.replace("postgresql://", "postgresql+asyncpg://")
+engine_url = settings.DATABASE_URL or ""
+# CRIT-01 FIX: Railway uses postgres://, SQLAlchemy async requires postgresql+asyncpg://
+if engine_url.startswith("postgres://"):
+    engine_url = engine_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif engine_url.startswith("postgresql://"):
+    engine_url = engine_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 engine_kwargs = {
     "echo": settings.DEBUG,

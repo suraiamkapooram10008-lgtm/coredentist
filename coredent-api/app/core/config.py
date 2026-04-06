@@ -41,13 +41,6 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in v.split(",")]
         return v if v else []
     
-    @field_validator("ALLOWED_HOSTS", mode="before")
-    @classmethod
-    def parse_allowed_hosts(cls, v: Any) -> Any:
-        if isinstance(v, str):
-            return [host.strip() for host in v.split(",")]
-        return v if v else []
-    
     @field_validator("SECRET_KEY")
     @classmethod
     def validate_secret_key(cls, v: str) -> str:
@@ -61,7 +54,15 @@ class Settings(BaseSettings):
         return v
     
     # Allowed hosts for production (SECURITY FIX: No wildcard)
+    # CRIT-04 FIX: Define field BEFORE validators that reference it
     ALLOWED_HOSTS: List[str] = []
+    
+    @field_validator("ALLOWED_HOSTS", mode="before")
+    @classmethod
+    def parse_allowed_hosts(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return [host.strip() for host in v.split(",") if host.strip()]
+        return v if v else []
     
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 100

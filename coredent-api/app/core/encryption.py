@@ -35,13 +35,19 @@ class FieldEncryption:
             
         Returns:
             Encrypted string (base64 encoded)
+            
+        Raises:
+            RuntimeError: If encryption is not configured (CRIT-05 fix)
         """
         if not plaintext:
             return plaintext
         
         if not self.cipher:
-            logger.warning("Encryption not available - storing plaintext")
-            return plaintext
+            # CRIT-05 FIX: Raise error instead of storing plaintext silently
+            raise RuntimeError(
+                "CRITICAL: ENCRYPTION_KEY must be configured in production. "
+                "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            )
         
         try:
             return self.cipher.encrypt(plaintext.encode()).decode()
@@ -58,13 +64,19 @@ class FieldEncryption:
             
         Returns:
             Decrypted plaintext string
+            
+        Raises:
+            RuntimeError: If encryption is not configured (CRIT-05 fix)
         """
         if not ciphertext:
             return ciphertext
         
         if not self.cipher:
-            logger.warning("Encryption not available - returning as-is")
-            return ciphertext
+            # CRIT-05 FIX: Raise error instead of returning ciphertext silently
+            raise RuntimeError(
+                "CRITICAL: ENCRYPTION_KEY must be configured in production. "
+                "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+            )
         
         try:
             return self.cipher.decrypt(ciphertext.encode()).decode()

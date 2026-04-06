@@ -8,14 +8,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional, Any
 from uuid import UUID
+from datetime import datetime, timedelta, timezone
 import requests
 import json
+import secrets
+import string
 
 from app.core.database import get_db
 from app.core.config import settings
 from app.models.user import User
 from app.models.insurance import PatientInsurance, InsuranceClaim, ClaimStatus
 from app.models.patient import Patient
+from app.core.audit import log_audit_event
 from app.api.deps import get_current_user, verify_csrf
 from app.schemas.edi import (
     EligibilityCheckRequest,
@@ -26,6 +30,11 @@ from app.schemas.edi import (
 )
 
 router = APIRouter()
+
+
+def generate_confirmation_code() -> str:
+    """Generate a unique confirmation code"""
+    return ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(12))
 
 
 def _get_dxc_headers() -> dict:
@@ -134,10 +143,21 @@ async def check_eligibility(
             )
             
     except requests.RequestException as e:
+        # HIPAA: Log failed eligibility check (still an access attempt)
+        await log_audit_event(
+            db, current_user, "check_eligibility_failed", "patient", patient.id, request, {"error": str(e)}
+        )
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Unable to verify eligibility: {str(e)}",
         )
+    
+    # HIPAA: Log successful eligibility check
+    await log_audit_event(
+        db, current_user, "check_eligibility_success", "patient", patient.id, request
+    )
+    await db.commit()
 
 
 @router.post("/claims/submit", response_model=ClaimSubmitResponse)
@@ -161,10 +181,11 @@ async def submit_claim(
             detail="Claims submission service not configured",
         )
     
-    # Get patient and insurance
+    # Expert Hardening: Strictly verify insurance ownership to prevent 'Pivot ID Injection'
     result = await db.execute(
-        select(PatientInsurance).where(
+        select(PatientInsurance).join(Patient).where(
             PatientInsurance.id == claim_data.patient_insurance_id,
+            Patient.practice_id == current_user.practice_id,
         )
     )
     insurance = result.scalar_one_or_none()
@@ -172,7 +193,25 @@ async def submit_claim(
     if not insurance:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Patient insurance not found",
+            detail="Valid patient insurance not found for your practice",
+        )
+    
+    # Expert Hardening: Anti-Fraud Idempotency (Prevent Duplicate Submission)
+    # Check if we submitted this exact procedure list for this patient in last 5 mins
+    idempotency_window = datetime.now(timezone.utc) - timedelta(minutes=5)
+    result = await db.execute(
+        select(InsuranceClaim).where(
+            InsuranceClaim.patient_id == claim_data.patient_id,
+            InsuranceClaim.practice_id == current_user.practice_id,
+            InsuranceClaim.created_at >= idempotency_window,
+        )
+    )
+    recent_claims = result.scalars().all()
+    # (Simplified procedure check: just check for ANY claim for this patient in last 5 min)
+    if recent_claims:
+         raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A claim for this patient was recently submitted. Please wait 5 minutes to prevent duplicate billing."
         )
     
     # Get patient
@@ -228,20 +267,27 @@ async def submit_claim(
         if response.status_code in (200, 201):
             data = response.json()
             
-            # Create claim record in database
             claim = InsuranceClaim(
+                practice_id=current_user.practice_id,
                 patient_id=patient.id,
                 patient_insurance_id=insurance.id,
-                claim_number=data.get("claimId", ""),
-                status=InsuranceClaimStatus.SUBMITTED,
-                total_amount=claim_data.total_amount,
-                submitted_amount=claim_data.total_amount,
+                carrier_id=insurance.carrier_id,
+                claim_number=data.get("claimId", generate_confirmation_code()),
+                status=ClaimStatus.SUBMITTED,
+                billed_amount=claim_data.total_amount,
                 service_date=claim_data.service_date,
-                diagnosis_codes=claim_data.diagnosis_codes,
+                diagnosis_codes=json.dumps(claim_data.diagnosis_codes) if claim_data.diagnosis_codes else "[]",
+                procedure_codes=json.dumps(procedures),
             )
             db.add(claim)
             await db.commit()
             await db.refresh(claim)
+            
+            # HIPAA: Log successful claim submission
+            await log_audit_event(
+                db, current_user, "submit_claim_success", "insurance_claim", claim.id, request
+            )
+            await db.commit()
             
             return ClaimSubmitResponse(
                 claim_id=str(claim.id),
@@ -257,6 +303,11 @@ async def submit_claim(
             )
             
     except requests.RequestException as e:
+        # HIPAA: Log failed claim submission
+        await log_audit_event(
+            db, current_user, "submit_claim_failed", "patient", patient.id, request, {"error": str(e)}
+        )
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Unable to submit claim: {str(e)}",
@@ -305,6 +356,12 @@ async def get_claim_status(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized",
         )
+    
+    # HIPAA: Log claim status read (PHI read)
+    await log_audit_event(
+        db, current_user, "view_claim_status", "insurance_claim", claim.id, request
+    )
+    await db.commit()
     
     # Query DentalXChange for status
     try:

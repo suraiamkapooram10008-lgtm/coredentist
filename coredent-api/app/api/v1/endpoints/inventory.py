@@ -3,16 +3,17 @@ Inventory Endpoints
 CRUD operations for inventory management
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Any
 import json
 
 from app.core.database import get_db
-from app.api.deps import get_current_user
-from app.models.user import User
+from app.api.deps import get_current_user, require_role
+from app.models.user import User, UserRole
+from app.core.audit import log_audit_event
 from app.models.inventory import (
     InventoryItem,
     InventoryTransaction,
@@ -36,6 +37,7 @@ async def list_inventory_items(
     category: Optional[InventoryCategory] = Query(None, description="Filter by category"),
     search: Optional[str] = Query(None, description="Search by name or SKU"),
     low_stock: Optional[bool] = Query(None, description="Filter low stock items"),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -64,12 +66,19 @@ async def list_inventory_items(
     if low_stock:
         items = [item for item in items if item.is_low_stock]
     
+    # Audit Logging (Practice Management)
+    await log_audit_event(
+        db, current_user, "list_inventory", "inventory", None, request
+    )
+    await db.commit()
+    
     return {"items": items, "count": len(items)}
 
 
 @router.get("/items/{item_id}")
 async def get_inventory_item(
     item_id: str,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -90,13 +99,19 @@ async def get_inventory_item(
             detail="Inventory item not found",
         )
     
+    # Audit Logging
+    await log_audit_event(
+        db, current_user, "view_inventory_item", "inventory_item", item.id, request
+    )
+    await db.commit()
+    
     return item
 
 
 @router.post("/items/")
 async def create_inventory_item(
     item_data: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -118,7 +133,7 @@ async def create_inventory_item(
 async def update_inventory_item(
     item_id: str,
     item_data: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -151,7 +166,7 @@ async def update_inventory_item(
 @router.delete("/items/{item_id}")
 async def delete_inventory_item(
     item_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -218,8 +233,9 @@ async def list_inventory_transactions(
 
 @router.post("/transactions/")
 async def create_inventory_transaction(
+    request: Request,
     transaction_data: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -282,6 +298,12 @@ async def create_inventory_transaction(
         )
         db.add(alert)
     
+    # Audit Logging (Critical Stock Transaction)
+    await log_audit_event(
+        db, current_user, "inventory_adjustment", "inventory_transaction", transaction.item_id, request,
+        {"type": transaction_type, "qty": quantity}
+    )
+    
     await db.commit()
     await db.refresh(transaction)
     
@@ -315,13 +337,19 @@ async def list_suppliers(
     result = await db.execute(query)
     suppliers = result.scalars().all()
     
+    # HIPAA: Log supplier list access
+    await log_audit_event(
+        db, current_user, "list_suppliers", "inventory", None, request
+    )
+    await db.commit()
+    
     return {"suppliers": suppliers, "count": len(suppliers)}
 
 
 @router.post("/suppliers/")
 async def create_supplier(
     supplier_data: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -376,7 +404,7 @@ async def list_inventory_alerts(
 @router.post("/alerts/{alert_id}/resolve")
 async def resolve_inventory_alert(
     alert_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -398,7 +426,7 @@ async def resolve_inventory_alert(
         )
     
     alert.is_resolved = True
-    alert.resolved_at = datetime.utcnow()
+    alert.resolved_at = datetime.now(timezone.utc)
     alert.resolved_by = current_user.id
     
     await db.commit()

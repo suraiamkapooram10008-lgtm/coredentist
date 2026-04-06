@@ -8,26 +8,31 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.exceptions import RequestValidationError
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
 from app.core.database import engine
+from app.core.limiter import limiter
 from app.api.v1.api import api_router
 from app.models import Base
 
 import logging
 import logging.config
 import json
+import re
+import traceback
 from datetime import datetime
 from pythonjsonlogger import jsonlogger
+from typing import Any, Dict
 
 if settings.ENVIRONMENT == "production":
     class CustomJsonFormatter(jsonlogger.JsonFormatter):
         def add_fields(self, record, message, extra):
             super().add_fields(record, message, extra)
-            record['timestamp'] = datetime.utcnow().isoformat()
+            from datetime import timezone
+            record['timestamp'] = datetime.now(timezone.utc).isoformat()
             record['level'] = record.levelname
             record['service'] = settings.APP_NAME
     
@@ -76,7 +81,6 @@ app = FastAPI(
 )
 
 # Initialize rate limiter with default limits
-limiter = Limiter(key_func=get_remote_address, default_limits=[f"{settings.RATE_LIMIT_PER_MINUTE}/minute"])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -93,6 +97,15 @@ if not settings.DEBUG:
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        # NEW: Content Security Policy to prevent XSS and exfiltration
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: https://public.blob.vercel-storage.com; "
+            "connect-src 'self' https://sentry.io;"
+        )
         return response
 
 # CORS Middleware - Restrict to specific methods and headers
@@ -152,20 +165,56 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+# PHI Scrubbing Patterns (Expanded for clinical coverage)
+PHI_KEYS = {
+    "first_name", "last_name", "email", "phone", "dob", "address", 
+    "ssn", "insurance_id", "license", "account_number", "card_number"
+}
+
+def redact_phi(data: Any) -> Any:
+    """Recursively scrub common PHI patterns from a dictionary or list."""
+    if isinstance(data, dict):
+        return {
+            k: "[REDACTED]" if k.lower() in PHI_KEYS else redact_phi(v)
+            for k, v in data.items()
+        }
+    elif isinstance(data, list):
+        return [redact_phi(item) for item in data]
+    return data
+
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    """Handle unexpected errors - never expose details in production"""
+    """Handle unexpected errors - never expose details in production + scrub PHI from logs."""
     
-    # Log full error internally with request context
-    import logging
-    logger = logging.getLogger(__name__)
+    # Scrub PHI from request info for internal logging
+    client_host = request.client.host if request.client else "unknown"
+    method = request.method
+    path = request.url.path
+    url = str(request.url)
+    
+    # Redact URL if it contains PHI patterns (e.g. patients?name=John)
+    for key in PHI_KEYS:
+        url = re.sub(rf"({key}=)[^&]*", r"\1[REDACTED]", url, flags=re.IGNORECASE)
+    
+    # Try to scrub the request body if it's JSON
+    body_display = "[NOT_JSON_OR_NOT_LOADED]"
+    try:
+        # Note: Be careful with large bodies, but for PHI fields we usually have JSON
+        body = await request.json()
+        body_display = str(redact_phi(body))
+    except Exception:
+        pass
+
+    # Log full error internally with SANITIZED request context
     logger.error(
-        f"Unhandled exception: {exc}",
-        exc_info=True,
+        f"Unhandled exception: {method} {url} from {client_host}\n"
+        f"Body: {body_display}\n"
+        f"Error: {str(exc)}\n"
+        f"Traceback: {traceback.format_exc()}",
         extra={
-            "path": request.url.path,
-            "method": request.method,
-            "client": request.client.host if request.client else None,
+            "path": path,
+            "method": method,
+            "client": client_host,
         }
     )
     

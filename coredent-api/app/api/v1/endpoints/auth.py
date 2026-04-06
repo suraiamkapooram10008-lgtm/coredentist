@@ -8,7 +8,7 @@ import inspect
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.core.database import get_db
@@ -55,7 +55,8 @@ async def login(
     request: Request,
     credentials: LoginRequest,
     db: AsyncSession = Depends(get_db),
-    # _csrf: bool = Depends(verify_csrf),  # TEMPORARILY DISABLED for testing
+    # NOTE: CSRF is NOT required on login because user doesn't have a session yet.
+    # CSRF protection applies to state-changing endpoints AFTER authentication.
 ) -> Any:
     """
     Login with email and password
@@ -88,24 +89,24 @@ async def login(
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
 
-    # Store refresh token in database
-    session = UserSession(
-        user_id=user.id,
-        refresh_token=refresh_token,
-        expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-    )
-    db.add(session)
-
     # Update last login
     await _await_if_needed(
         db.execute(
             update(User)
             .where(User.id == user.id)
-            .values(last_login=datetime.utcnow())
+            .values(last_login=datetime.now(timezone.utc))
         )
     )
+    
+    # Store refresh token in database
+    session = UserSession(
+        user_id=user.id,
+        refresh_token=refresh_token,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    db.add(session)
 
     await _await_if_needed(db.commit())
 
@@ -114,8 +115,10 @@ async def login(
     from app.core.security import generate_csrf_token
     csrf_token = generate_csrf_token()
     
-    # For cross-origin deployment, return tokens in response body
-    # Frontend will store in localStorage since httpOnly cookies don't work cross-origin
+    # CRIT-01/CRIT-03 FIX: Use Bearer token auth strategy for cross-origin deployment.
+    # httpOnly cookies don't work cross-origin unless domains share a parent domain.
+    # For Railway deployment with separate frontend/backend domains, use Authorization header.
+    # Tokens are returned in response body - frontend stores in memory (NOT localStorage).
     response = JSONResponse(content={
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -125,35 +128,15 @@ async def login(
         "message": "Login successful",
     })
     
-    # Set httpOnly, Secure cookies for access token
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,        # JavaScript cannot access - prevents XSS token theft
-        secure=True,  # HTTPS only (Railway provides HTTPS)
-        samesite="none",    # Allow cross-origin (frontend on different domain)
-        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # 15 minutes
-        path="/"
-    )
-    
-    # Set httpOnly, Secure cookies for refresh token
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,  # 7 days
-        path="/"
-    )
-    
-    # Set CSRF cookie
+    # Set CSRF cookie (httpOnly for security, Lax SameSite for cross-origin safety)
+    # CRIT-03 FIX: Changed samesite from "none" to "lax" to prevent CSRF attacks
+    # while still allowing safe cross-origin navigation
     response.set_cookie(
         key="csrf_token",
         value=csrf_token,
         httponly=True,
         secure=True,
-        samesite="none",
+        samesite="lax",    # FIX: Prevent CSRF - only sent on safe cross-origin requests
         max_age=86400,  # 24 hours
         path="/"
     )
@@ -164,19 +147,24 @@ async def login(
 @router.post("/logout")
 async def logout(
     request: Request,
-    refresh_token: str = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
     """
     Logout and invalidate refresh token
+    CRIT-01 FIX: Uses Authorization header for auth, no cookie cleanup needed
     """
-    # Try to get refresh_token from cookie if not provided
-    if not refresh_token:
-        refresh_token = request.cookies.get("refresh_token")
+    # Try to get refresh_token from request body
+    body = await request.body()
+    try:
+        import json
+        body_data = json.loads(body) if body else {}
+        refresh_token = body_data.get("refresh_token")
+    except json.JSONDecodeError:
+        refresh_token = None
     
-    # Delete session
+    # Delete session if refresh token provided
     if refresh_token:
         result = await _await_if_needed(
             db.execute(
@@ -192,11 +180,9 @@ async def logout(
             await _await_if_needed(db.delete(session))
             await _await_if_needed(db.commit())
     
-    # Clear httpOnly cookies
+    # Clear CSRF cookie only (no token cookies to clear with Bearer auth)
     from fastapi.responses import JSONResponse
     response = JSONResponse(content={"message": "Successfully logged out"})
-    response.delete_cookie(key="access_token", path="/")
-    response.delete_cookie(key="refresh_token", path="/")
     response.delete_cookie(key="csrf_token", path="/")
     
     return response
@@ -353,7 +339,7 @@ async def reset_password(
     result = await _await_if_needed(
         db.execute(
             select(User).where(
-                User.password_reset_token == request.reset_token,
+                User.password_reset_token == reset_in.token,
                 User.password_reset_expires > datetime.utcnow()
             )
         )
@@ -367,7 +353,7 @@ async def reset_password(
         )
     
     # Validate password strength
-    is_valid, error_message = validate_password_strength(request.new_password)
+    is_valid, error_message = validate_password_strength(reset_in.new_password)
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -375,7 +361,7 @@ async def reset_password(
         )
     
     # Update user password
-    user.password_hash = get_password_hash(request.new_password)
+    user.password_hash = get_password_hash(reset_in.new_password)
     user.password_reset_token = None
     user.password_reset_expires = None
     user.password_changed_at = datetime.utcnow()

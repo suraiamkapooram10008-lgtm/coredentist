@@ -3,7 +3,7 @@ Practice Model
 Represents dental practices/clinics
 """
 
-from sqlalchemy import Column, String, DateTime, JSON
+from sqlalchemy import Column, String, DateTime, JSON, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -12,18 +12,40 @@ import uuid
 from app.core.base import Base
 
 
+class PracticeGroup(Base):
+    """Enterprise-level practice group/DSO model"""
+    __tablename__ = "practice_groups"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), nullable=False)
+    address_street = Column(String(255))
+    address_city = Column(String(100))
+    address_state = Column(String(100))
+    address_zip = Column(String(20))
+    country = Column(String(2), default="US")
+    logo_url = Column(String)
+    settings = Column(JSON, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    practices = relationship("Practice", back_populates="group")
+
+
 class Practice(Base):
     """Practice/Clinic model"""
     __tablename__ = "practices"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("practice_groups.id"), nullable=True)
     email = Column(String(255))
     phone = Column(String(20))
     address_street = Column(String(255))
     address_city = Column(String(100))
-    address_state = Column(String(2))
-    address_zip = Column(String(10))
+    address_state = Column(String(100)) # Expanded for Global compatibility
+    address_zip = Column(String(20))
+    country = Column(String(2), default="US") # Region Switch: US, IN, etc.
     timezone = Column(String(50), default="America/New_York")
     currency = Column(String(3), default="USD")
     logo_url = Column(String)
@@ -32,6 +54,7 @@ class Practice(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
+    group = relationship("PracticeGroup", back_populates="practices")
     users = relationship("User", back_populates="practice")
     patients = relationship("Patient", back_populates="practice")
     appointments = relationship("Appointment", back_populates="practice")

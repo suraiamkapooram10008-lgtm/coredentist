@@ -47,11 +47,15 @@ class Patient(Base):
     email = Column(String(255), index=True)  # Already has index
     phone = Column(String(20), index=True)  # Added index for phone lookups
     
-    # Address
+    # Address (Expanded for Global/India Portability)
     address_street = Column(String(255))
     address_city = Column(String(100))
-    address_state = Column(String(2))
-    address_zip = Column(String(10))
+    address_state = Column(String(100)) # Expanded from 2 chars for Indian states
+    address_zip = Column(String(20))
+    
+    # Global Identifiers
+    abha_id = Column(String(20), index=True) # India's ABHA ID
+    ssn_last_four = Column(String(4)) # US PHI (Standardized)
     
     # Emergency Contact
     emergency_contact = Column(JSON)  # {name, relationship, phone}
@@ -66,6 +70,9 @@ class Patient(Base):
     
     # Status
     status = Column(Enum(PatientStatus), default=PatientStatus.ACTIVE)
+    
+    # Global Compliance (India DPDP / US HIPAA)
+    consent_recorded_at = Column(DateTime(timezone=True))
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())

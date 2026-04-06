@@ -11,8 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Optimize layer caching: Copy and install requirements separately
-# When building from root, requirements.txt is in coredent-api/
-COPY coredent-api/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Final stage
@@ -28,8 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 
-# Copy application code (from coredent-api directory)
-COPY coredent-api/ .
+# Copy application code
+COPY . .
 
 # Ensure alembic.ini is in the correct location
 RUN cp /app/alembic.ini /app/alembic.ini 2>/dev/null || true

@@ -14,9 +14,11 @@ import secrets
 import string
 
 from app.core.database import get_db
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_role
+from app.models.user import User, UserRole
 from app.core.email import email_service
-from app.models.user import User
+from app.core.limiter import limiter
+from app.core.audit import log_audit_event
 from app.models.booking import (
     BookingPage,
     OnlineBooking,
@@ -81,8 +83,9 @@ def generate_verification_code() -> str:
 
 @router.get("/pages/", response_model=BookingPageListResponse)
 async def list_booking_pages(
+    request: Request,
     status: Optional[BookingPageStatus] = Query(None, description="Filter by status"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
@@ -310,7 +313,9 @@ async def get_public_booking_page(
 # Online Booking Endpoints
 
 @router.post("/public/{page_slug}/book", response_model=OnlineBookingResponse)
+@limiter.limit("2/hour")
 async def create_online_booking(
+    request: Request,
     page_slug: str,
     booking_data: OnlineBookingCreate,
     db: AsyncSession = Depends(get_db),
@@ -331,6 +336,28 @@ async def create_online_booking(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Booking page not found or inactive",
+        )
+    
+    # EXPERT HARDENING: Anti-Spam / Ghost Booking Prevention
+    # Check if this email or phone already has a pending booking in the last 24 hours
+    cooldown_window = datetime.now() - timedelta(hours=24)
+    duplicate_check = await db.execute(
+        select(OnlineBooking).where(
+            and_(
+                OnlineBooking.practice_id == page.practice_id,
+                or_(
+                    OnlineBooking.email == booking_data.email,
+                    OnlineBooking.phone == booking_data.phone
+                ),
+                OnlineBooking.status == BookingStatus.PENDING,
+                OnlineBooking.submitted_at >= cooldown_window
+            )
+        )
+    )
+    if duplicate_check.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="A booking request from this email or phone is already pending. Please wait for confirmation or contact the office."
         )
     
     # Validate booking window
@@ -395,11 +422,12 @@ async def create_online_booking(
 
 @router.get("/bookings/", response_model=OnlineBookingListResponse)
 async def list_online_bookings(
+    request: Request,
     status: Optional[BookingStatus] = Query(None, description="Filter by status"),
     start_date: Optional[date] = Query(None, description="Start date"),
     end_date: Optional[date] = Query(None, description="End date"),
     is_new_patient: Optional[bool] = Query(None, description="Filter by new patient"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
@@ -424,6 +452,12 @@ async def list_online_bookings(
     result = await db.execute(query)
     bookings = result.scalars().all()
     
+    # HIPAA: Log online booking list access
+    await log_audit_event(
+        db, current_user, "list_online_bookings", "online_booking", None, request
+    )
+    await db.commit()
+    
     return OnlineBookingListResponse(
         bookings=bookings,
         count=len(bookings),
@@ -432,8 +466,9 @@ async def list_online_bookings(
 
 @router.get("/bookings/{booking_id}", response_model=OnlineBookingResponse)
 async def get_online_booking(
+    request: Request,
     booking_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
@@ -452,6 +487,12 @@ async def get_online_booking(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Booking not found",
         )
+    
+    # HIPAA: Log online booking access
+    await log_audit_event(
+        db, current_user, "view_online_booking", "online_booking", booking.id, request
+    )
+    await db.commit()
     
     return booking
 
@@ -600,7 +641,9 @@ async def confirm_booking(
 # Availability Endpoints
 
 @router.post("/public/{page_slug}/availability", response_model=AvailabilityResponse)
+@limiter.limit("10/minute")
 async def get_availability(
+    request: Request,
     page_slug: str,
     availability_request: AvailabilityRequest,
     db: AsyncSession = Depends(get_db),
@@ -687,7 +730,9 @@ async def get_availability(
 # Waitlist Endpoints
 
 @router.post("/public/{page_slug}/waitlist", response_model=WaitlistEntryResponse)
+@limiter.limit("5/hour")
 async def add_to_waitlist(
+    request: Request,
     page_slug: str,
     waitlist_data: WaitlistEntryCreate,
     db: AsyncSession = Depends(get_db),

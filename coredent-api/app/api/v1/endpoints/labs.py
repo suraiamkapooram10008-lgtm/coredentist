@@ -3,16 +3,17 @@ Lab Endpoints
 CRUD operations for lab case management
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Any
 import uuid
 
 from app.core.database import get_db
-from app.api.deps import get_current_user
-from app.models.user import User
+from app.api.deps import get_current_user, require_role
+from app.models.user import User, UserRole
+from app.core.audit import log_audit_event
 from app.models.patient import Patient
 from app.models.lab import (
     Lab,
@@ -58,13 +59,19 @@ async def list_labs(
     result = await db.execute(query)
     labs = result.scalars().all()
     
+    # HIPAA: Log lab vendor list access
+    await log_audit_event(
+        db, current_user, "list_labs", "lab", None, request
+    )
+    await db.commit()
+    
     return {"labs": labs, "count": len(labs)}
 
 
 @router.post("/vendors/")
 async def create_lab(
     lab_data: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -86,6 +93,7 @@ async def create_lab(
 
 @router.get("/cases/")
 async def list_lab_cases(
+    request: Request,
     status: Optional[LabCaseStatus] = Query(None, description="Filter by status"),
     case_type: Optional[LabCaseType] = Query(None, description="Filter by type"),
     lab_id: Optional[str] = Query(None, description="Filter by lab"),
@@ -123,11 +131,18 @@ async def list_lab_cases(
     result = await db.execute(query)
     cases = result.scalars().all()
     
+    # HIPAA: Log lab cases list access
+    await log_audit_event(
+        db, current_user, "list_lab_cases", "lab_case", None, request
+    )
+    await db.commit()
+    
     return {"cases": cases, "count": len(cases)}
 
 
 @router.get("/cases/{case_id}")
 async def get_lab_case(
+    request: Request,
     case_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -148,6 +163,12 @@ async def get_lab_case(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Lab case not found",
         )
+    
+    # HIPAA: Log lab case access
+    await log_audit_event(
+        db, current_user, "view_lab_case", "lab_case", case.id, request
+    )
+    await db.commit()
     
     return case
 
@@ -232,7 +253,7 @@ async def update_lab_case(
     
     # Auto-update timestamps based on status
     if case_data.get("status") == LabCaseStatus.SHIPPED and not lab_case.delivered_date:
-        lab_case.delivered_date = datetime.utcnow()
+        lab_case.delivered_date = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(lab_case)
@@ -242,8 +263,9 @@ async def update_lab_case(
 
 @router.delete("/cases/{case_id}")
 async def delete_lab_case(
+    request: Request,
     case_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -278,6 +300,7 @@ async def list_lab_invoices(
     lab_id: Optional[str] = Query(None, description="Filter by lab"),
     start_date: Optional[datetime] = Query(None, description="Start date"),
     end_date: Optional[datetime] = Query(None, description="End date"),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -303,11 +326,18 @@ async def list_lab_invoices(
     result = await db.execute(query)
     invoices = result.scalars().all()
     
+    # HIPAA: Log lab invoices list access
+    await log_audit_event(
+        db, current_user, "list_lab_invoices", "lab_invoice", None, request
+    )
+    await db.commit()
+    
     return {"invoices": invoices, "count": len(invoices)}
 
 
 @router.get("/invoices/{invoice_id}")
 async def get_lab_invoice(
+    request: Request,
     invoice_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -329,6 +359,12 @@ async def get_lab_invoice(
             detail="Lab invoice not found",
         )
     
+    # HIPAA: Log lab invoice access
+    await log_audit_event(
+        db, current_user, "view_lab_invoice", "lab_invoice", invoice.id, request
+    )
+    await db.commit()
+    
     return invoice
 
 
@@ -336,9 +372,10 @@ async def get_lab_invoice(
 
 @router.get("/reports/summary")
 async def get_lab_summary(
+    request: Request,
     start_date: Optional[datetime] = Query(None, description="Start date"),
     end_date: Optional[datetime] = Query(None, description="End date"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
@@ -364,6 +401,12 @@ async def get_lab_summary(
     # Calculate costs
     total_cost = sum(float(c.case_cost or 0) for c in cases)
     total_charged = sum(float(c.patient_charge or 0) for c in cases)
+    
+    # HIPAA: Log lab summary access
+    await log_audit_event(
+        db, current_user, "view_lab_summary", "lab_report", None, request
+    )
+    await db.commit()
     
     return {
         "total_cases": total,

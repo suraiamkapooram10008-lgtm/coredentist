@@ -3,18 +3,19 @@ Referral Endpoints
 CRUD operations for referral management
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, case
+from sqlalchemy.orm import selectinload
 from datetime import datetime
 from typing import List, Optional, Any
 from pydantic import BaseModel
 import uuid
 
 from app.core.database import get_db
-from app.api.deps import get_current_user
-from app.core.email import email_service
-from app.models.user import User
+from app.api.deps import get_current_user, require_role, verify_csrf
+from app.models.user import User, UserRole
+from app.core.audit import log_audit_event
 from app.models.patient import Patient
 from app.models.referral import (
     ReferralSource1,
@@ -69,7 +70,7 @@ async def list_referral_sources(
 @router.post("/sources/")
 async def create_referral_source(
     source_data: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -97,13 +98,18 @@ async def list_referrals(
     source_id: Optional[str] = Query(None, description="Filter by source"),
     start_date: Optional[datetime] = Query(None, description="Start date"),
     end_date: Optional[datetime] = Query(None, description="End date"),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
     List referrals
     """
-    query = select(Referral).where(Referral.practice_id == current_user.practice_id)
+    query = (
+        select(Referral)
+        .where(Referral.practice_id == current_user.practice_id)
+        .options(selectinload(Referral.patient))
+    )
     
     if status:
         query = query.where(Referral.status == status)
@@ -128,11 +134,18 @@ async def list_referrals(
     result = await db.execute(query)
     referrals = result.scalars().all()
     
+    # HIPAA: Log referrals list access
+    await log_audit_event(
+        db, current_user, "list_referrals", "referral", None, request
+    )
+    await db.commit()
+    
     return {"referrals": referrals, "count": len(referrals)}
 
 
 @router.get("/{referral_id}")
 async def get_referral(
+    request: Request,
     referral_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -153,6 +166,12 @@ async def get_referral(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Referral not found",
         )
+    
+    # HIPAA: Log referral access
+    await log_audit_event(
+        db, current_user, "view_referral", "referral", referral.id, request
+    )
+    await db.commit()
     
     return referral
 
@@ -269,7 +288,9 @@ async def delete_referral(
             detail="Referral not found",
         )
     
-    await db.delete(referral)
+    # HIPAA Hardening: Soft-delete only to preserve audit trail
+    referral.is_deleted = True
+    referral.deleted_at = datetime.utcnow()
     await db.commit()
     
     return {"message": "Referral deleted successfully"}
@@ -353,42 +374,51 @@ async def add_referral_communication(
 
 @router.get("/reports/summary")
 async def get_referral_summary(
+    request: Request,
     start_date: Optional[datetime] = Query(None, description="Start date"),
     end_date: Optional[datetime] = Query(None, description="End date"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
     Get referral summary statistics
     """
-    query = select(Referral).where(Referral.practice_id == current_user.practice_id)
+    # Calculate stats via SQL Aggregates (Scalability Fix)
+    stats_stmt = select(
+        func.count(Referral.id).label('total'),
+        func.sum(case((Referral.status == ReferralStatus.COMPLETED, 1), else_=0)).label('completed'),
+        func.sum(case((Referral.status == ReferralStatus.PENDING, 1), else_=0)).label('pending'),
+        func.sum(case((Referral.status == ReferralStatus.CANCELLED, 1), else_=0)).label('cancelled'),
+        func.sum(case((Referral.status == ReferralStatus.NO_SHOW, 1), else_=0)).label('no_shows'),
+        func.sum(Referral.referral_fee).label('total_fees'),
+        func.sum(case((Referral.referral_received == True, Referral.referral_fee), else_=0)).label('collected_fees')
+    ).where(Referral.practice_id == current_user.practice_id)
     
     if start_date:
-        query = query.where(Referral.referral_date >= start_date)
-    
+        stats_stmt = stats_stmt.where(Referral.referral_date >= start_date)
     if end_date:
-        query = query.where(Referral.referral_date <= end_date)
+        stats_stmt = stats_stmt.where(Referral.referral_date <= end_date)
+        
+    res = await db.execute(stats_stmt)
+    stats = res.one()
     
-    result = await db.execute(query)
-    referrals = result.scalars().all()
+    total = stats.total or 0
+    completed = stats.completed or 0
+    total_fees = float(stats.total_fees or 0)
+    collected_fees = float(stats.collected_fees or 0)
     
-    # Calculate stats
-    total = len(referrals)
-    completed = sum(1 for r in referrals if r.status == ReferralStatus.COMPLETED)
-    pending = sum(1 for r in referrals if r.status == ReferralStatus.PENDING)
-    cancelled = sum(1 for r in referrals if r.status == ReferralStatus.CANCELLED)
-    no_shows = sum(1 for r in referrals if r.status == ReferralStatus.NO_SHOW)
-    
-    # Calculate revenue
-    total_fees = sum(float(r.referral_fee or 0) for r in referrals)
-    collected_fees = sum(float(r.referral_fee or 0) for r in referrals if r.referral_received)
+    # HIPAA: Log referral summary access
+    await log_audit_event(
+        db, current_user, "view_referral_summary", "referral_report", None, request
+    )
+    await db.commit()
     
     return {
         "total_referrals": total,
         "completed": completed,
-        "pending": pending,
-        "cancelled": cancelled,
-        "no_shows": no_shows,
+        "pending": stats.pending or 0,
+        "cancelled": stats.cancelled or 0,
+        "no_shows": stats.no_shows or 0,
         "completion_rate": round(completed / total * 100, 2) if total > 0 else 0,
         "total_fees": total_fees,
         "collected_fees": collected_fees,

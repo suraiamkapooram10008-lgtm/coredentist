@@ -13,12 +13,16 @@ import uuid as uuid_lib
 import os
 import logging
 from pathlib import Path
+from fastapi.responses import FileResponse, RedirectResponse
+
+from app.utils.storage import storage
 
 from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.core.email import email_service
+from app.core.audit import log_audit_event
 from app.core.config import settings
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.imaging import PatientImage, ImageSeries, ImageTemplate, ImageType, ImageCategory
 from app.models.patient import Patient
 from app.schemas.imaging import (
@@ -41,15 +45,14 @@ from app.schemas.imaging import (
     ImageShareRequest,
     ImageShareResponse,
 )
-from app.api.deps import verify_csrf
+from app.api.deps import verify_csrf, require_role
+from fastapi import Request
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Configure upload directory (use S3 in production)
-UPLOAD_DIR = Path("uploads/images")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# UPLOAD_DIR handled by storage utility
 
 
 # Patient Image Endpoints
@@ -64,6 +67,7 @@ async def list_patient_images(
     end_date: Optional[datetime] = Query(None, description="End date"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> Any:
     """
     List patient images
@@ -108,6 +112,16 @@ async def list_patient_images(
     result = await db.execute(query)
     images = result.scalars().all()
     
+    # Generate temporary pre-signed URLs for each image
+    for image in images:
+        image.url = storage.get_url(image.file_path)
+    
+    # HIPAA: Log list images access
+    await log_audit_event(
+        db, current_user, "list_patient_images", "patient", patient_id, request
+    )
+    await db.commit()
+    
     return PatientImageListResponse(
         images=images,
         count=len(images),
@@ -126,6 +140,7 @@ async def upload_image(
     notes: Optional[str] = Query(None),
     device_name: Optional[str] = Query(None),
     device_serial: Optional[str] = Query(None),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
@@ -202,32 +217,13 @@ async def upload_image(
     safe_filename = ''.join(c if c in safe_chars else '_' for c in original_filename)
     
     # Generate unique filename to prevent overwrites and path traversal
-    unique_filename = f"{uuid_lib.uuid4()}{file_extension}"
-    file_path = UPLOAD_DIR / patient_id / unique_filename
+    unique_filename = f"{patient_id}/{uuid_lib.uuid4()}{file_extension}"
     
-    # SECURITY: Verify path doesn't escape upload directory
-    try:
-        file_path = file_path.resolve()
-        upload_dir_resolved = UPLOAD_DIR.resolve()
-        if not str(file_path).startswith(str(upload_dir_resolved)):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid file path",
-            )
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid file path",
-        )
-    
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # ATOMIC TRANSACTION: Ensure file system and database stay in sync
+    # ATOMIC TRANSACTION: Ensure storage and database stay in sync
     try:
         async with db.begin():
-            # Save file
-            with open(file_path, "wb") as f:
-                f.write(content)
+            # Save using storage abstraction (Local/S3)
+            storage_path = storage.upload(content, unique_filename, file.content_type)
             
             # Create database record
             image = PatientImage(
@@ -238,7 +234,7 @@ async def upload_image(
                 category=category,
                 tooth_number=tooth_number,
                 file_name=safe_filename,  # Use sanitized filename
-                file_path=str(file_path),
+                file_path=storage_path,
                 file_size=file_size,
                 mime_type=file.content_type,
                 title=title,
@@ -252,9 +248,10 @@ async def upload_image(
             db.add(image)
             # No need for manual commit - db.begin() handles it on success
     except Exception as e:
-        # Cleanup file if database operation fails
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        # DB rollback is automatic via 'async with db.begin()'
+        # File removal for failed DB is harder with S3, but critical for Local
+        if storage_path.startswith("uploads"): # Local cleanup
+            storage.delete(storage_path)
         logger.error(f"Failed to upload image: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -268,6 +265,7 @@ async def upload_image(
 
 @router.get("/images/{image_id}", response_model=PatientImageResponse)
 async def get_image(
+    request: Request,
     image_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -289,6 +287,15 @@ async def get_image(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Image not found",
         )
+    
+    # Generate dynamic pre-signed URL
+    image.url = storage.get_url(image.file_path)
+    
+    # HIPAA: Log image access (PHI read)
+    await log_audit_event(
+        db, current_user, "view_image", "patient_image", image.id, request
+    )
+    await db.commit()
     
     return image
 
@@ -332,7 +339,7 @@ async def update_image(
 @router.delete("/images/{image_id}")
 async def delete_image(
     image_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -364,6 +371,7 @@ async def delete_image(
 
 @router.get("/images/{image_id}/download")
 async def download_image(
+    request: Request,
     image_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -386,15 +394,112 @@ async def download_image(
             detail="Image not found",
         )
     
-    # In production, return pre-signed S3 URL
-    # For now, return file path
-    from fastapi.responses import FileResponse
+    # HIPAA: Log image download (PHI read)
+    await log_audit_event(
+        db, current_user, "download_image", "patient_image", image.id, request
+    )
+    await db.commit()
     
+    # Generate presigned URL and redirect
+    url = storage.get_url(image.file_path)
+    
+    if url.startswith("http"):
+        return RedirectResponse(url=url)
+    
+    # Local fallback
     if not os.path.exists(image.file_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Image file not found",
         )
+    
+    return FileResponse(
+        path=image.file_path,
+        filename=image.file_name,
+        media_type=image.mime_type,
+    )
+
+
+# PUBLIC / EXTERNAL ACCESS (Token-Gated)
+
+@router.get("/public/images/{image_id}", response_model=PatientImageResponse)
+async def get_public_image(
+    image_id: str,
+    token: str = Query(..., description="Secure share token"),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+) -> Any:
+    """
+    Get image metadata for external referral (Token-Gated)
+    SECURITY: No current_user dependency. Verified by cryptographic token.
+    """
+    # EXPERT: Verify token existence and affinity
+    result = await db.execute(
+        select(PatientImage).where(
+            PatientImage.id == image_id,
+            PatientImage.share_token == token,
+            PatientImage.is_deleted == False,
+        )
+    )
+    image = result.scalar_one_or_none()
+    
+    if not image:
+        # Generic error to prevent token enumeration
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Valid sharing link not found or expired"
+        )
+    
+    # Audit Public Access
+    await log_audit_event(
+        db, None, "public_image_viewed", "patient_image", image.id, request,
+        {"source": "public_link", "token_used": token[:8] + "..."}
+    )
+    await db.commit()
+    
+    # Generate dynamic pre-signed URL
+    image.url = storage.get_url(image.file_path)
+    
+    return image
+
+
+@router.get("/public/images/{image_id}/download")
+async def download_public_image(
+    image_id: str,
+    token: str = Query(..., description="Secure share token"),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+) -> Any:
+    """
+    Download image for external referral (Token-Gated)
+    """
+    result = await db.execute(
+        select(PatientImage).where(
+            PatientImage.id == image_id,
+            PatientImage.share_token == token,
+            PatientImage.is_deleted == False,
+        )
+    )
+    image = result.scalar_one_or_none()
+    
+    if not image:
+        raise HTTPException(status_code=404, detail="Valid sharing link not found")
+    
+    # Audit Public Download
+    await log_audit_event(
+        db, None, "public_image_downloaded", "patient_image", image.id, request,
+        {"source": "public_link"}
+    )
+    await db.commit()
+
+    # Generate presigned URL and redirect
+    url = storage.get_url(image.file_path)
+    
+    if url.startswith("http"):
+        return RedirectResponse(url=url)
+
+    if not os.path.exists(image.file_path):
+        raise HTTPException(status_code=404, detail="File missing")
     
     return FileResponse(
         path=image.file_path,
@@ -449,6 +554,7 @@ async def share_image(
     share_data: ImageShareRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
     """
@@ -494,6 +600,15 @@ async def share_image(
         # Store token in image metadata (in production, store in dedicated table)
         image.share_token = token
     
+    # HIPAA: Log image sharing action (PHI external transmission)
+    await log_audit_event(
+        db, current_user, "share_image", "patient_image", image.id, request,
+        {
+            "share_with_patient": share_data.share_with_patient,
+            "share_with_referral": share_data.share_with_referral,
+            "referral_email": share_data.referral_email
+        }
+    )
     await db.commit()
     
     # Send email to referral if provided
@@ -710,7 +825,7 @@ async def list_templates(
 @router.post("/templates/", response_model=ImageTemplateResponse)
 async def create_template(
     template_data: ImageTemplateCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -739,7 +854,7 @@ async def create_template(
 async def update_template(
     template_id: str,
     template_data: ImageTemplateUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:

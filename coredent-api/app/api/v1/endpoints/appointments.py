@@ -3,17 +3,18 @@ Appointment Endpoints
 CRUD operations for appointments
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select, and_, or_
 from datetime import datetime, timedelta
 from typing import List, Optional, Any, Union
 import asyncio
 
 from app.core.database import get_db
-from app.api.deps import get_current_user
-from app.models.user import User
+from app.models.user import User, UserRole
+from app.api.deps import get_current_user, require_role, verify_csrf
+from app.core.audit import log_audit_event
 from app.models.appointment import Appointment, AppointmentStatus, AppointmentTypeEnum, Chair
 from app.models.patient import Patient
 from app.schemas.appointment import (
@@ -43,14 +44,23 @@ async def list_appointments(
     status: Optional[AppointmentStatus] = Query(None, description="Filter by status"),
     provider_id: Optional[str] = Query(None, description="Filter by provider"),
     patient_id: Optional[str] = Query(None, description="Filter by patient"),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
     List appointments with optional filters
     """
-    # Build query
-    query = select(Appointment).where(Appointment.practice_id == current_user.practice_id)
+    # PERFORMANCE: Use selectinload to prevent N+1 queries for related PHI data
+    query = (
+        select(Appointment)
+        .where(Appointment.practice_id == current_user.practice_id)
+        .options(
+            selectinload(Appointment.patient),
+            selectinload(Appointment.provider),
+            selectinload(Appointment.chair)
+        )
+    )
     
     # Apply filters
     if start_date:
@@ -70,6 +80,12 @@ async def list_appointments(
     result = await _execute(db, query)
     appointments = result.scalars().all()
     
+    # HIPAA: Log calendar/appointment list access
+    await log_audit_event(
+        db, current_user, "list_appointments", "appointment", None, request
+    )
+    await db.commit()
+    
     return AppointmentListResponse(
         appointments=appointments,
         count=len(appointments),
@@ -79,6 +95,7 @@ async def list_appointments(
 @router.get("/{appointment_id}", response_model=AppointmentResponse)
 async def get_appointment(
     appointment_id: str,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -98,6 +115,12 @@ async def get_appointment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Appointment not found",
         )
+    
+    # HIPAA: Log appointment access
+    await log_audit_event(
+        db, current_user, "view_appointment", "appointment", appointment.id, request
+    )
+    await db.commit()
     
     return appointment
 
@@ -127,6 +150,34 @@ async def create_appointment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Patient not found",
         )
+    
+    # Expert Hardening: Verify chair belongs to practice
+    if appointment_data.chair_id:
+        chair_check = await db.execute(
+            select(Chair).where(
+                Chair.id == appointment_data.chair_id,
+                Chair.practice_id == current_user.practice_id
+            )
+        )
+        if not chair_check.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid chair selection for your practice"
+            )
+
+    # Expert Hardening: Verify provider belongs to practice
+    if appointment_data.provider_id:
+        provider_check = await db.execute(
+            select(User).where(
+                User.id == appointment_data.provider_id,
+                User.practice_id == current_user.practice_id
+            )
+        )
+        if not provider_check.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid provider selection for your practice"
+            )
     
     # Check for scheduling conflicts
     conflict_query = select(Appointment).where(
@@ -241,7 +292,7 @@ async def update_appointment(
 @router.delete("/{appointment_id}")
 async def delete_appointment(
     appointment_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:

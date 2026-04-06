@@ -18,6 +18,9 @@ from app.models.billing import Invoice, Payment, PaymentStatus
 from app.models.treatment import TreatmentPlan, TreatmentPlanStatus
 from app.schemas.reports import DashboardMetricsResponse
 from app.core.audit import log_audit_event
+from app.api.deps import require_role
+from app.models.user import UserRole
+from sqlalchemy import case
 
 router = APIRouter()
 
@@ -26,7 +29,7 @@ async def get_dashboard_metrics(
     request: Request,
     from_date: date = Query(..., alias="from"),
     to_date: date = Query(..., alias="to"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
@@ -34,96 +37,121 @@ async def get_dashboard_metrics(
     """
     practice_id = current_user.practice_id
     
-    # HIPAA Audit Logging
+    # HIPAA Audit Logging (Standardized Utility)
     await log_audit_event(
-        db=db,
-        user_id=str(current_user.id),
-        action="read",
-        entity_type="reports",
-        entity_id="dashboard",
-        changes={"from": str(from_date), "to": str(to_date)},
-        ip_address=request.client.host,
-        user_agent=request.headers.get("user-agent"),
+        db, current_user, "dashboard_report_viewed", "report", "dashboard", request,
+        {"from": str(from_date), "to": str(to_date)}
     )
+    await db.commit()
 
-    # 1. Appointment Metrics
-    appt_query = select(Appointment).where(
+    # 1. Appointment Metrics (SQL-Level Aggregation for Scalability)
+    metrics_stmt = select(
+        func.count(Appointment.id).label('total'),
+        func.sum(case((Appointment.status == AppointmentStatus.COMPLETED, 1), else_=0)).label('completed'),
+        func.sum(case((Appointment.status == AppointmentStatus.CANCELLED, 1), else_=0)).label('cancelled'),
+        func.sum(case((Appointment.status == AppointmentStatus.NO_SHOW, 1), else_=0)).label('no_show'),
+        func.sum(case((Appointment.status == AppointmentStatus.SCHEDULED, 1), else_=0)).label('scheduled')
+    ).where(
         and_(
             Appointment.practice_id == practice_id,
             func.date(Appointment.start_time) >= from_date,
             func.date(Appointment.start_time) <= to_date
         )
     )
-    appt_result = await db.execute(appt_query)
-    appts = appt_result.scalars().all()
+    res = await db.execute(metrics_stmt)
+    apps_metrics = res.one()
     
-    total_appts = len(appts)
-    completed = sum(1 for a in appts if a.status == AppointmentStatus.COMPLETED)
-    cancelled = sum(1 for a in appts if a.status == AppointmentStatus.CANCELLED)
-    no_show = sum(1 for a in appts if a.status == AppointmentStatus.NO_SHOW)
-    scheduled = sum(1 for a in appts if a.status == AppointmentStatus.SCHEDULED)
+    total_appts = apps_metrics.total or 0
+    completed = apps_metrics.completed or 0
+    cancelled = apps_metrics.cancelled or 0
+    no_show = apps_metrics.no_show or 0
+    scheduled = apps_metrics.scheduled or 0
     
     completion_rate = (completed / total_appts * 100) if total_appts > 0 else 0
     no_show_rate = (no_show / total_appts * 100) if total_appts > 0 else 0
     
-    # Appointment by Type (mocking colors for now)
-    types_count = {}
-    for a in appts:
-        types_count[a.appointment_type.value] = types_count.get(a.appointment_type.value, 0) + 1
+    # 1.5 Appointment by Type & Day (SQL-Level Aggregation)
+    type_stmt = select(
+        Appointment.appointment_type,
+        func.count(Appointment.id).label('count')
+    ).where(
+        and_(
+            Appointment.practice_id == practice_id,
+            func.date(Appointment.start_time) >= from_date,
+            func.date(Appointment.start_time) <= to_date
+        )
+    ).group_by(Appointment.appointment_type)
     
+    type_res = await db.execute(type_stmt)
     by_type = [
         {"type": t.replace('_', ' ').capitalize(), "count": c, "color": "#3B82F6"} 
-        for t, c in types_count.items()
+        for t, c in type_res.all()
     ]
     
-    # Appointment by Day
-    days_count = {}
+    day_stmt = select(
+        func.date(Appointment.start_time).label('day'),
+        func.count(Appointment.id).label('count')
+    ).where(
+        and_(
+            Appointment.practice_id == practice_id,
+            func.date(Appointment.start_time) >= from_date,
+            func.date(Appointment.start_time) <= to_date
+        )
+    ).group_by(func.date(Appointment.start_time))
+    
+    day_res = await db.execute(day_stmt)
+    days_data = {str(d): c for d, c in day_res.all()}
+    
+    # Fill in gaps for all days in range
+    by_day = []
     curr = from_date
     while curr <= to_date:
-        days_count[curr.strftime('%Y-%m-%d')] = 0
+        d_str = str(curr)
+        by_day.append({"day": d_str, "count": days_data.get(d_str, 0)})
         curr += timedelta(days=1)
-        
-    for a in appts:
-        d_str = a.start_time.strftime('%Y-%m-%d')
-        if d_str in days_count:
-            days_count[d_str] += 1
-            
-    by_day = [{"day": d, "count": c} for d, c in days_count.items()]
 
-    # 2. Revenue Metrics
-    invoice_query = select(Invoice).where(
+    # 2. Revenue Metrics (SQL-Level Aggregation)
+    revenue_stmt = select(
+        func.sum(Invoice.total).label('revenue'),
+        func.sum(Invoice.amount_paid).label('collected'),
+        func.sum(Invoice.balance_due).label('outstanding')
+    ).where(
         and_(
             Invoice.practice_id == practice_id,
             func.date(Invoice.created_at) >= from_date,
             func.date(Invoice.created_at) <= to_date
         )
     )
-    inv_result = await db.execute(invoice_query)
-    invoices = inv_result.scalars().all()
+    rev_res = await db.execute(revenue_stmt)
+    rev_metrics = rev_res.one()
     
-    total_revenue = sum(float(i.total) for i in invoices)
-    total_collected = sum(i.amount_paid for i in invoices)
-    total_outstanding = sum(i.balance_due for i in invoices)
+    total_revenue = float(rev_metrics.revenue or 0)
+    total_collected = float(rev_metrics.collected or 0)
+    total_outstanding = float(rev_metrics.outstanding or 0)
     avg_per_visit = (total_revenue / completed) if completed > 0 else 0
 
     # byMonth aggregation
     # (Simplified: just grouping by current range)
     by_month = [] # Logic for multi-month can be added if range is large
 
-    # 3. Treatment Acceptance
-    plan_query = select(TreatmentPlan).where(
+    # 3. Treatment Acceptance (SQL-Level Aggregation)
+    plan_stmt = select(
+        func.count(TreatmentPlan.id).label('proposed'),
+        func.sum(case((TreatmentPlan.status.in_([TreatmentPlanStatus.ACCEPTED, TreatmentPlanStatus.IN_PROGRESS, TreatmentPlanStatus.COMPLETED]), 1)), else_=0).label('accepted'),
+        func.sum(case((TreatmentPlan.status == TreatmentPlanStatus.COMPLETED, 1)), else_=0).label('completed_plans')
+    ).where(
         and_(
             TreatmentPlan.practice_id == practice_id,
             func.date(TreatmentPlan.created_date) >= from_date,
             func.date(TreatmentPlan.created_date) <= to_date
         )
     )
-    plan_result = await db.execute(plan_query)
-    plans = plan_result.scalars().all()
+    plan_res = await db.execute(plan_stmt)
+    plan_metrics = plan_res.one()
     
-    proposed = len(plans)
-    accepted = sum(1 for p in plans if p.status in [TreatmentPlanStatus.ACCEPTED, TreatmentPlanStatus.IN_PROGRESS, TreatmentPlanStatus.COMPLETED])
-    completed_plans = sum(1 for p in plans if p.status == TreatmentPlanStatus.COMPLETED)
+    proposed = plan_metrics.proposed or 0
+    accepted = plan_metrics.accepted or 0
+    completed_plans = plan_metrics.completed_plans or 0
     
     acceptance_rate = (accepted / proposed * 100) if proposed > 0 else 0
     plan_completion_rate = (completed_plans / accepted * 100) if accepted > 0 else 0

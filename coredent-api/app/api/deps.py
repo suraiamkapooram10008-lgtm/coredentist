@@ -6,7 +6,7 @@ Reusable dependencies for FastAPI endpoints
 from fastapi import Depends, HTTPException, status, Header, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select
 from typing import Optional, Union
 import asyncio
@@ -70,8 +70,15 @@ async def get_current_user(
             detail="Invalid token payload",
         )
     
-    # Support both async and sync SQLAlchemy sessions (tests use sync sessions)
-    query = db.execute(select(User).where(User.id == UUID(user_id)))
+    # EXPERT HARDENING: Eager load Practice to verify Multi-Tenant status
+    # This prevents users from deactivated practices from accessing the API.
+    query_stmt = (
+        select(User)
+        .options(selectinload(User.practice))
+        .where(User.id == UUID(user_id))
+    )
+    
+    query = db.execute(query_stmt)
     if asyncio.iscoroutine(query):
         query = await query
     user = query.scalar_one_or_none()
@@ -82,10 +89,19 @@ async def get_current_user(
             detail="User not found",
         )
     
+    # Check User Status
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive",
+        )
+    
+    # CRIT-05 FIX: Verify Practice Status (Tenant Leash)
+    # If the practice is deactivated, no user from that practice can access the API.
+    if not user.practice or not user.practice.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Practice account is suspended or inactive. Please contact support.",
         )
     
     return user

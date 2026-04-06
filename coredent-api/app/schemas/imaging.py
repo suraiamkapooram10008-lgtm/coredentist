@@ -66,6 +66,7 @@ class PatientImageResponse(PatientImageBase):
     provider_id: Optional[UUID]
     file_name: str
     file_path: str
+    url: Optional[str] = None
     file_size: Optional[int]
     mime_type: Optional[str]
     width: Optional[int]
