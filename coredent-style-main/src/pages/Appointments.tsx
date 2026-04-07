@@ -11,6 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Table, 
   TableBody, 
@@ -30,13 +33,25 @@ import {
   AlertCircle,
   Edit,
   Trash2,
-  Send
+  Send,
+  Loader2
 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import {
+  useAppointments,
+  useAppointmentStats,
+  useAppointmentTypes,
+  useCreateAppointment,
+  useUpdateAppointment,
+  useDeleteAppointment,
+  useSendAppointmentReminder,
+} from "@/hooks/useAppointments";
+import type { Appointment } from "@/services/appointmentsApi";
 
 // Lazy load calendar and form components for tests
 const AppointmentCalendar = ({ appointments, onAppointmentClick }: { 
-  appointments?: any[]; 
-  onAppointmentClick?: (apt: any) => void 
+  appointments?: Appointment[]; 
+  onAppointmentClick?: (apt: Appointment) => void 
 }) => (
   <div data-testid="appointment-calendar">
     <div>Calendar View</div>
@@ -53,35 +68,142 @@ const AppointmentCalendar = ({ appointments, onAppointmentClick }: {
   </div>
 );
 
-const AppointmentForm = ({ onSubmit, onCancel, appointment }: { 
-  onSubmit?: (data: any) => void; 
+const AppointmentForm = ({ 
+  onSubmit, 
+  onCancel, 
+  appointment,
+  appointmentTypes 
+}: { 
+  onSubmit?: (data: Partial<Appointment>) => void; 
   onCancel?: () => void;
-  appointment?: any;
-}) => (
-  <div data-testid="appointment-form">
-    <h3>{appointment ? 'Edit Appointment' : 'New Appointment'}</h3>
-    <button onClick={() => onSubmit?.({ patientName: 'Test Patient', time: '10:00 AM' })}>
-      Save
-    </button>
-    <button onClick={onCancel}>Cancel</button>
-  </div>
-);
+  appointment?: Appointment | null;
+  appointmentTypes?: { id: string; name: string; duration: number }[];
+}) => {
+  const [formData, setFormData] = useState<Partial<Appointment>>(
+    appointment || { patient: '', patientName: '', time: '', duration: '30', type: '', dentist: '', status: 'Pending' }
+  );
+
+  return (
+    <div data-testid="appointment-form" className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="patient">Patient Name</Label>
+        <Input
+          id="patient"
+          value={formData.patient || ''}
+          onChange={(e) => setFormData({ ...formData, patient: e.target.value, patientName: e.target.value })}
+          placeholder="Enter patient name"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="time">Time</Label>
+        <Input
+          id="time"
+          value={formData.time || ''}
+          onChange={(e) => setFormData({ ...formData, time: e.target.value })}
+          placeholder="e.g., 9:00 AM"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="duration">Duration (minutes)</Label>
+        <Input
+          id="duration"
+          type="number"
+          value={formData.duration || '30'}
+          onChange={(e) => setFormData({ ...formData, duration: `${e.target.value} min` })}
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="type">Appointment Type</Label>
+        <Select value={formData.type || ''} onValueChange={(value) => setFormData({ ...formData, type: value })}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select type" />
+          </SelectTrigger>
+          <SelectContent>
+            {appointmentTypes?.map((type) => (
+              <SelectItem key={type.id} value={type.name}>{type.name} ({type.duration} min)</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="dentist">Dentist</Label>
+        <Input
+          id="dentist"
+          value={formData.dentist || ''}
+          onChange={(e) => setFormData({ ...formData, dentist: e.target.value })}
+          placeholder="e.g., Dr. Wilson"
+        />
+      </div>
+      <div className="flex gap-2 justify-end">
+        <Button variant="outline" onClick={onCancel}>Cancel</Button>
+        <Button onClick={() => onSubmit?.(formData)}>
+          {appointment ? 'Update' : 'Create'} Appointment
+        </Button>
+      </div>
+    </div>
+  );
+};
 
 export default function Appointments() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [showForm, setShowForm] = useState(false);
   const [showCalendar, setShowCalendar] = useState(true);
-  const [selectedAppointment, setSelectedAppointment] = useState<any>(null);
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
 
-  const appointments = [
-    { id: "1", patient: "John Smith", patientName: "John Smith", time: "9:00 AM", duration: "30 min", type: "Checkup", dentist: "Dr. Wilson", status: "Confirmed" },
-    { id: "2", patient: "Jane Doe", patientName: "Jane Doe", time: "9:30 AM", duration: "60 min", type: "Cleaning", dentist: "Dr. Brown", status: "Confirmed" },
-    { id: "3", patient: "Bob Johnson", patientName: "Bob Johnson", time: "10:30 AM", duration: "45 min", type: "Crown", dentist: "Dr. Wilson", status: "Pending" },
-    { id: "4", patient: "Mary Wilson", patientName: "Mary Wilson", time: "11:15 AM", duration: "30 min", type: "Follow-up", dentist: "Dr. Brown", status: "Confirmed" },
-    { id: "5", patient: "Tom Davis", patientName: "Tom Davis", time: "2:00 PM", duration: "30 min", type: "Extraction", dentist: "Dr. Wilson", status: "Confirmed" },
-  ];
+  // Fetch data from API using React Query hooks
+  const { data: appointmentsData, isLoading: appointmentsLoading } = useAppointments({
+    date: selectedDate,
+    search: searchTerm || undefined,
+  });
+  const { data: statsData, isLoading: statsLoading } = useAppointmentStats();
+  const { data: typesData } = useAppointmentTypes();
+
+  const appointments = appointmentsData?.data?.appointments ?? [];
+  const stats = statsData?.data;
+  const appointmentTypes = typesData?.data?.types ?? [];
+
+  const createMutation = useCreateAppointment({
+    onSuccess: () => {
+      toast({ title: "Success", description: "Appointment created successfully" });
+      setShowForm(false);
+      setSelectedAppointment(null);
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to create appointment", variant: "destructive" });
+    },
+  });
+
+  const updateMutation = useUpdateAppointment({
+    onSuccess: () => {
+      toast({ title: "Success", description: "Appointment updated successfully" });
+      setShowForm(false);
+      setSelectedAppointment(null);
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update appointment", variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useDeleteAppointment({
+    onSuccess: () => {
+      toast({ title: "Success", description: "Appointment deleted successfully" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to delete appointment", variant: "destructive" });
+    },
+  });
+
+  const reminderMutation = useSendAppointmentReminder({
+    onSuccess: () => {
+      toast({ title: "Success", description: "Reminder sent successfully" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to send reminder", variant: "destructive" });
+    },
+  });
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -100,7 +222,7 @@ export default function Appointments() {
     overscan: 5,
   });
 
-  const handleAppointmentClick = (apt: any) => {
+  const handleAppointmentClick = (apt: Appointment) => {
     setSelectedAppointment(apt);
     setShowForm(true);
   };
@@ -110,15 +232,28 @@ export default function Appointments() {
     setShowForm(true);
   };
 
-  const handleFormSubmit = (data: any) => {
+  const handleFormSubmit = (data: Partial<Appointment>) => {
     logger.info('Appointment form submitted', { data });
-    setShowForm(false);
-    setSelectedAppointment(null);
+    if (selectedAppointment?.id) {
+      updateMutation.mutate({ id: selectedAppointment.id, data });
+    } else {
+      createMutation.mutate(data as Omit<Appointment, 'id'>);
+    }
   };
 
   const handleFormCancel = () => {
     setShowForm(false);
     setSelectedAppointment(null);
+  };
+
+  const handleDelete = (id: string) => {
+    if (window.confirm('Are you sure you want to delete this appointment?')) {
+      deleteMutation.mutate(id);
+    }
+  };
+
+  const handleSendReminder = (id: string) => {
+    reminderMutation.mutate(id);
   };
 
   // Show calendar if enabled
@@ -146,9 +281,7 @@ export default function Appointments() {
         <div className="flex gap-2">
           <Button 
             data-testid="filter-button"
-            onClick={() => {
-              // Toggle to show filtered view (just for test)
-            }}
+            onClick={() => setShowCalendar(!showCalendar)}
             variant="outline"
           >
             Filter by Date
@@ -156,7 +289,7 @@ export default function Appointments() {
         </div>
 
         {/* Empty State for Tests */}
-        {appointments.length === 0 && (
+        {appointments.length === 0 && !appointmentsLoading && (
           <div data-testid="empty-appointments" className="text-center py-8">
             No appointments scheduled
           </div>
@@ -164,11 +297,24 @@ export default function Appointments() {
 
         {/* Appointment Form Modal */}
         {showForm && (
-          <AppointmentForm 
-            appointment={selectedAppointment}
-            onSubmit={handleFormSubmit}
-            onCancel={handleFormCancel}
-          />
+          <Dialog open={showForm} onOpenChange={setShowForm}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>
+                  {selectedAppointment ? 'Edit Appointment' : 'New Appointment'}
+                </DialogTitle>
+                <DialogDescription>
+                  {selectedAppointment ? 'Update the appointment details' : 'Create a new appointment'}
+                </DialogDescription>
+              </DialogHeader>
+              <AppointmentForm 
+                appointment={selectedAppointment}
+                appointmentTypes={appointmentTypes}
+                onSubmit={handleFormSubmit}
+                onCancel={handleFormCancel}
+              />
+            </DialogContent>
+          </Dialog>
         )}
 
         {/* Summary Cards */}
@@ -179,8 +325,14 @@ export default function Appointments() {
               <Calendar className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">12</div>
-              <p className="text-xs text-muted-foreground">scheduled today</p>
+              {statsLoading ? (
+                <div className="h-8 w-12 animate-pulse rounded bg-muted" />
+              ) : (
+                <>
+                  <div className="text-2xl font-bold">{stats?.todayAppointments ?? 0}</div>
+                  <p className="text-xs text-muted-foreground">scheduled today</p>
+                </>
+              )}
             </CardContent>
           </Card>
           <Card>
@@ -189,8 +341,14 @@ export default function Appointments() {
               <CheckCircle className="h-4 w-4 text-green-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-500">8</div>
-              <p className="text-xs text-muted-foreground">confirmed</p>
+              {statsLoading ? (
+                <div className="h-8 w-12 animate-pulse rounded bg-muted" />
+              ) : (
+                <>
+                  <div className="text-2xl font-bold text-green-500">{stats?.confirmed ?? 0}</div>
+                  <p className="text-xs text-muted-foreground">confirmed</p>
+                </>
+              )}
             </CardContent>
           </Card>
           <Card>
@@ -199,8 +357,14 @@ export default function Appointments() {
               <AlertCircle className="h-4 w-4 text-yellow-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-yellow-500">3</div>
-              <p className="text-xs text-muted-foreground">awaiting confirmation</p>
+              {statsLoading ? (
+                <div className="h-8 w-12 animate-pulse rounded bg-muted" />
+              ) : (
+                <>
+                  <div className="text-2xl font-bold text-yellow-500">{stats?.pending ?? 0}</div>
+                  <p className="text-xs text-muted-foreground">awaiting confirmation</p>
+                </>
+              )}
             </CardContent>
           </Card>
           <Card>
@@ -209,8 +373,14 @@ export default function Appointments() {
               <XCircle className="h-4 w-4 text-red-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-red-500">1</div>
-              <p className="text-xs text-muted-foreground">cancelled today</p>
+              {statsLoading ? (
+                <div className="h-8 w-12 animate-pulse rounded bg-muted" />
+              ) : (
+                <>
+                  <div className="text-2xl font-bold text-red-500">{stats?.cancelled ?? 0}</div>
+                  <p className="text-xs text-muted-foreground">cancelled today</p>
+                </>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -219,7 +389,7 @@ export default function Appointments() {
         <div data-testid="error-message" style={{ display: 'none' }}>Error occurred</div>
         
         {/* Show empty state for tests */}
-        {appointments.length === 0 && (
+        {appointments.length === 0 && !appointmentsLoading && (
           <div data-testid="empty-state">No appointments</div>
         )}
       </div>
@@ -233,7 +403,7 @@ export default function Appointments() {
           <h1 className="text-3xl font-bold">Appointments</h1>
           <p className="text-muted-foreground">Manage all patient appointments</p>
         </div>
-        <Button>
+        <Button onClick={handleNewAppointment}>
           <Plus className="mr-2 h-4 w-4" />
           New Appointment
         </Button>
@@ -247,8 +417,14 @@ export default function Appointments() {
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">12</div>
-            <p className="text-xs text-muted-foreground">scheduled today</p>
+            {statsLoading ? (
+              <div className="h-8 w-12 animate-pulse rounded bg-muted" />
+            ) : (
+              <>
+                <div className="text-2xl font-bold">{stats?.todayAppointments ?? 0}</div>
+                <p className="text-xs text-muted-foreground">scheduled today</p>
+              </>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -257,8 +433,14 @@ export default function Appointments() {
             <CheckCircle className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-500">8</div>
-            <p className="text-xs text-muted-foreground">confirmed</p>
+            {statsLoading ? (
+              <div className="h-8 w-12 animate-pulse rounded bg-muted" />
+            ) : (
+              <>
+                <div className="text-2xl font-bold text-green-500">{stats?.confirmed ?? 0}</div>
+                <p className="text-xs text-muted-foreground">confirmed</p>
+              </>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -267,8 +449,14 @@ export default function Appointments() {
             <AlertCircle className="h-4 w-4 text-yellow-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-yellow-500">3</div>
-            <p className="text-xs text-muted-foreground">awaiting confirmation</p>
+            {statsLoading ? (
+              <div className="h-8 w-12 animate-pulse rounded bg-muted" />
+            ) : (
+              <>
+                <div className="text-2xl font-bold text-yellow-500">{stats?.pending ?? 0}</div>
+                <p className="text-xs text-muted-foreground">awaiting confirmation</p>
+              </>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -277,8 +465,14 @@ export default function Appointments() {
             <XCircle className="h-4 w-4 text-red-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-500">1</div>
-            <p className="text-xs text-muted-foreground">cancelled today</p>
+            {statsLoading ? (
+              <div className="h-8 w-12 animate-pulse rounded bg-muted" />
+            ) : (
+              <>
+                <div className="text-2xl font-bold text-red-500">{stats?.cancelled ?? 0}</div>
+                <p className="text-xs text-muted-foreground">cancelled today</p>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -313,70 +507,80 @@ export default function Appointments() {
         <TabsContent value="list">
           <Card>
             <CardContent className="p-0">
-              <div 
-                ref={parentRef}
-                className="overflow-auto max-h-[600px] relative"
-              >
-                <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Time</TableHead>
-                    <TableHead>Patient</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Dentist</TableHead>
-                    <TableHead>Duration</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
-                  {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-                    const apt = appointments[virtualRow.index];
-                    return (
-                      <TableRow 
-                        key={apt.id}
-                        data-index={virtualRow.index}
-                        ref={rowVirtualizer.measureElement}
-                      >
-                        <TableCell className="font-medium flex-1">
-                          <div className="flex items-center gap-2">
-                            <Clock className="h-4 w-4 text-muted-foreground" />
-                            {apt.time}
-                          </div>
-                        </TableCell>
-                        <TableCell className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <User className="h-4 w-4 text-muted-foreground" />
-                            {apt.patient}
-                          </div>
-                        </TableCell>
-                        <TableCell className="w-[120px]"><Badge variant="outline">{apt.type}</Badge></TableCell>
-                        <TableCell className="flex-1">{apt.dentist}</TableCell>
-                        <TableCell className="w-[100px]">{apt.duration}</TableCell>
-                        <TableCell className="w-[120px]">
-                          <Badge className={getStatusColor(apt.status)}>
-                            {apt.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="w-[150px]">
-                          <div className="flex gap-2">
-                            <Button size="sm" variant="ghost">
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button size="sm" variant="ghost">
-                              <Send className="h-4 w-4" />
-                            </Button>
-                            <Button size="sm" variant="ghost">
-                              <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
+              {appointmentsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : appointments.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No appointments found
+                </div>
+              ) : (
+                <div 
+                  ref={parentRef}
+                  className="overflow-auto max-h-[600px] relative"
+                >
+                  <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Time</TableHead>
+                      <TableHead>Patient</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Dentist</TableHead>
+                      <TableHead>Duration</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+                    {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                      const apt = appointments[virtualRow.index];
+                      return (
+                        <TableRow 
+                          key={apt.id}
+                          data-index={virtualRow.index}
+                          ref={rowVirtualizer.measureElement}
+                        >
+                          <TableCell className="font-medium flex-1">
+                            <div className="flex items-center gap-2">
+                              <Clock className="h-4 w-4 text-muted-foreground" />
+                              {apt.time}
+                            </div>
+                          </TableCell>
+                          <TableCell className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <User className="h-4 w-4 text-muted-foreground" />
+                              {apt.patient}
+                            </div>
+                          </TableCell>
+                          <TableCell className="w-[120px]"><Badge variant="outline">{apt.type}</Badge></TableCell>
+                          <TableCell className="flex-1">{apt.dentist}</TableCell>
+                          <TableCell className="w-[100px]">{apt.duration}</TableCell>
+                          <TableCell className="w-[120px]">
+                            <Badge className={getStatusColor(apt.status)}>
+                              {apt.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="w-[150px]">
+                            <div className="flex gap-2">
+                              <Button size="sm" variant="ghost" onClick={() => handleAppointmentClick(apt)}>
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => handleSendReminder(apt.id)}>
+                                <Send className="h-4 w-4" />
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => handleDelete(apt.id)}>
+                                <Trash2 className="h-4 w-4 text-red-500" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -387,18 +591,28 @@ export default function Appointments() {
               <CardTitle>Timeline View</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {appointments.map((apt) => (
-                  <div key={apt.id} className="flex gap-4 p-3 border rounded-lg" data-testid={`appointment-apt-${apt.id}`}>
-                    <div className="w-20 font-medium">{apt.time}</div>
-                    <div className="flex-1">
-                      <p className="font-medium">{apt.patient}</p>
-                      <p className="text-sm text-muted-foreground">{apt.type} - {apt.dentist}</p>
+              {appointmentsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : appointments.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No appointments found
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {appointments.map((apt) => (
+                    <div key={apt.id} className="flex gap-4 p-3 border rounded-lg" data-testid={`appointment-apt-${apt.id}`}>
+                      <div className="w-20 font-medium">{apt.time}</div>
+                      <div className="flex-1">
+                        <p className="font-medium">{apt.patient}</p>
+                        <p className="text-sm text-muted-foreground">{apt.type} - {apt.dentist}</p>
+                      </div>
+                      <Badge className={getStatusColor(apt.status)}>{apt.status}</Badge>
                     </div>
-                    <Badge className={getStatusColor(apt.status)}>{apt.status}</Badge>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -415,36 +629,44 @@ export default function Appointments() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="border rounded-lg p-4">
-                  <h4 className="font-medium">Checkup</h4>
-                  <p className="text-sm text-muted-foreground">30 minutes</p>
+              {appointmentTypes.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No appointment types configured
                 </div>
-                <div className="border rounded-lg p-4">
-                  <h4 className="font-medium">Cleaning</h4>
-                  <p className="text-sm text-muted-foreground">60 minutes</p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {appointmentTypes.map((type) => (
+                    <div key={type.id} className="border rounded-lg p-4">
+                      <h4 className="font-medium">{type.name}</h4>
+                      <p className="text-sm text-muted-foreground">{type.duration} minutes</p>
+                    </div>
+                  ))}
                 </div>
-                <div className="border rounded-lg p-4">
-                  <h4 className="font-medium">Crown</h4>
-                  <p className="text-sm text-muted-foreground">60 minutes</p>
-                </div>
-                <div className="border rounded-lg p-4">
-                  <h4 className="font-medium">Extraction</h4>
-                  <p className="text-sm text-muted-foreground">45 minutes</p>
-                </div>
-                <div className="border rounded-lg p-4">
-                  <h4 className="font-medium">Root Canal</h4>
-                  <p className="text-sm text-muted-foreground">90 minutes</p>
-                </div>
-                <div className="border rounded-lg p-4">
-                  <h4 className="font-medium">Whitening</h4>
-                  <p className="text-sm text-muted-foreground">60 minutes</p>
-                </div>
-              </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Appointment Form Dialog */}
+      <Dialog open={showForm} onOpenChange={setShowForm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {selectedAppointment ? 'Edit Appointment' : 'New Appointment'}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedAppointment ? 'Update the appointment details' : 'Create a new appointment'}
+            </DialogDescription>
+          </DialogHeader>
+          <AppointmentForm 
+            appointment={selectedAppointment}
+            appointmentTypes={appointmentTypes}
+            onSubmit={handleFormSubmit}
+            onCancel={handleFormCancel}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
