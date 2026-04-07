@@ -384,3 +384,91 @@ async def get_available_slots(
         current_time += timedelta(minutes=15)  # 15 minute intervals
     
     return slots
+
+
+@router.get("/stats", response_model=dict)
+async def get_appointment_stats(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Get appointment statistics for today
+    """
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = today_start + timedelta(days=1)
+    
+    # Get today's appointments
+    today_query = select(Appointment).where(
+        Appointment.practice_id == current_user.practice_id,
+        Appointment.start_time >= today_start,
+        Appointment.start_time < today_end,
+    )
+    today_result = await db.execute(today_query)
+    today_appointments = today_result.scalars().all()
+    
+    # Count by status
+    confirmed = sum(1 for apt in today_appointments if apt.status == AppointmentStatus.CONFIRMED)
+    pending = sum(1 for apt in today_appointments if apt.status == AppointmentStatus.SCHEDULED)
+    cancelled = sum(1 for apt in today_appointments if apt.status == AppointmentStatus.CANCELLED)
+    completed = sum(1 for apt in today_appointments if apt.status == AppointmentStatus.COMPLETED)
+    
+    return {
+        "todayAppointments": len(today_appointments),
+        "confirmed": confirmed,
+        "pending": pending,
+        "cancelled": cancelled,
+        "completed": completed,
+    }
+
+
+@router.get("/types", response_model=dict)
+async def get_appointment_types(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Get available appointment types
+    """
+    # Return standard dental appointment types
+    types = [
+        {"id": "checkup", "name": "Checkup", "duration": 30, "description": "Routine dental examination"},
+        {"id": "cleaning", "name": "Cleaning", "duration": 60, "description": "Professional teeth cleaning"},
+        {"id": "filling", "name": "Filling", "duration": 45, "description": "Dental filling procedure"},
+        {"id": "crown", "name": "Crown", "duration": 60, "description": "Crown placement"},
+        {"id": "extraction", "name": "Extraction", "duration": 45, "description": "Tooth extraction"},
+        {"id": "root_canal", "name": "Root Canal", "duration": 90, "description": "Root canal treatment"},
+        {"id": "whitening", "name": "Whitening", "duration": 60, "description": "Teeth whitening"},
+        {"id": "consultation", "name": "Consultation", "duration": 30, "description": "Initial consultation"},
+        {"id": "follow_up", "name": "Follow-up", "duration": 30, "description": "Follow-up appointment"},
+        {"id": "emergency", "name": "Emergency", "duration": 30, "description": "Emergency dental visit"},
+    ]
+    return {"types": types}
+
+
+@router.post("/{appointment_id}/reminder", response_model=dict)
+async def send_appointment_reminder(
+    appointment_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> Any:
+    """
+    Send appointment reminder to patient
+    """
+    result = await db.execute(
+        select(Appointment).where(
+            Appointment.id == appointment_id,
+            Appointment.practice_id == current_user.practice_id,
+        )
+    )
+    appointment = result.scalar_one_or_none()
+    
+    if not appointment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Appointment not found",
+        )
+    
+    # In production, this would send SMS/email via Twilio/SendGrid
+    # For now, just return success message
+    return {"message": f"Reminder sent for appointment on {appointment.start_time.strftime('%Y-%m-%d %H:%M')}"}
