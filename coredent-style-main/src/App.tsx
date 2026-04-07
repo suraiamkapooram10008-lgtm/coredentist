@@ -252,6 +252,17 @@ const App = () => (
                   }
                 />
                 <Route
+                  path="/settings/*"
+                  element={
+                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
+                      <AppShell>
+                        <Settings />
+                      </AppShell>
+                    </ProtectedRoute>
+                  }
+                />
+                {/* Revenue - Admin access */}
+                <Route
                   path="/revenue"
                   element={
                     <ProtectedRoute allowedRoles={['owner', 'admin']}>
@@ -261,8 +272,9 @@ const App = () => (
                     </ProtectedRoute>
                   }
                 />
+                {/* Billing Portal - Admin access */}
                 <Route
-                  path="/billing"
+                  path="/billing-portal"
                   element={
                     <ProtectedRoute allowedRoles={['owner', 'admin']}>
                       <AppShell>
@@ -271,8 +283,9 @@ const App = () => (
                     </ProtectedRoute>
                   }
                 />
+                {/* Imaging Hub - Dentist and Hygienist */}
                 <Route
-                  path="/imaging"
+                  path="/imaging-hub"
                   element={
                     <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist', 'hygienist']}>
                       <AppShell>
@@ -281,6 +294,7 @@ const App = () => (
                     </ProtectedRoute>
                   }
                 />
+                {/* Enterprise HQ - Owner and Admin */}
                 <Route
                   path="/enterprise/hq"
                   element={
@@ -291,6 +305,7 @@ const App = () => (
                     </ProtectedRoute>
                   }
                 />
+                {/* Referral Hub - Multiple roles */}
                 <Route
                   path="/referrals/hub"
                   element={
@@ -301,22 +316,13 @@ const App = () => (
                     </ProtectedRoute>
                   }
                 />
+                {/* Lab Logistics - Multiple roles */}
                 <Route
                   path="/lab/logistics"
                   element={
                     <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist', 'hygienist', 'front_desk']}>
                       <AppShell>
                         <LabLogistics />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/settings/*"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
-                      <AppShell>
-                        <Settings />
                       </AppShell>
                     </ProtectedRoute>
                   }
@@ -342,7 +348,7 @@ const App = () => (
                     </ProtectedRoute>
                   }
                 />
-                {/* Imaging */}
+                {/* Imaging Management - Admin and Dentist */}
                 <Route
                   path="/imaging"
                   element={
