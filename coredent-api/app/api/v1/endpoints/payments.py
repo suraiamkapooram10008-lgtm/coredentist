@@ -31,6 +31,7 @@ from app.schemas.payment import (
     RazorpayRefundResponse,
     RazorpayWebhookEvent,
 )
+from app.schemas.common import APIResponse
 
 router = APIRouter()
 
@@ -218,23 +219,21 @@ async def stripe_webhook(
                 db.add(payment)
                 await db.commit()
     
-    return {"status": "success"}
+    return APIResponse(success=True, message="Webhook processed successfully")
 
 
-@router.get("/methods")
+@router.get("/methods", response_model=APIResponse)
 async def list_payment_methods(
     current_user: User = Depends(get_current_user),
 ) -> Any:
     """
     List available payment methods for the practice.
     """
-    # Return available payment method types
-    return {
-        "methods": [
-            {"type": "card", "enabled": bool(settings.STRIPE_API_KEY)},
-            {"type": "bank_transfer", "enabled": False},
-        ]
-    }
+    methods = [
+        {"type": "card", "enabled": bool(settings.STRIPE_API_KEY)},
+        {"type": "bank_transfer", "enabled": False},
+    ]
+    return APIResponse(success=True, data={"methods": methods})
 
 
 @router.post("/refund")
@@ -292,11 +291,14 @@ async def refund_payment(
         )
         await db.commit()
         
-        return {
-            "refund_id": refund.id,
-            "amount": float(refund.amount / 100),
-            "status": refund.status,
-        }
+        return APIResponse(
+            success=True,
+            data={
+                "refund_id": refund.id,
+                "amount": float(refund.amount / 100),
+                "status": refund.status,
+            }
+        )
         
     except stripe_lib.error.StripeError as e:
         raise HTTPException(
@@ -644,4 +646,4 @@ async def razorpay_webhook(
                 db.add(payment_record)
                 await db.commit()
     
-    return {"status": "success"}
+    return APIResponse(success=True, message="Razorpay webhook processed successfully")
