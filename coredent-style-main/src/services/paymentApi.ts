@@ -1,6 +1,6 @@
 /**
  * Payment API Service
- * Stripe integration for processing payments
+ * Stripe (US) and Razorpay (India - UPI/Paytm/PhonePe) integration
  * 
  * Design decisions:
  * - Uses React Query for server state management
@@ -88,6 +88,104 @@ export const getPaymentStatus = async (
   invoiceId: string
 ): Promise<ApiResponse<{ status: string; last_payment_id?: string }>> => {
   return apiClient.get<{ status: string; last_payment_id?: string }>(`/payments/status/${invoiceId}`);
+};
+
+// ============================================
+// Razorpay Types (Indian Market - UPI/Paytm/PhonePe)
+// ============================================
+
+export interface RazorpayOrderCreate {
+  invoice_id: string;
+  amount?: number;
+  currency?: string;
+  receipt?: string;
+}
+
+export interface RazorpayOrderResponse {
+  order_id: string;
+  amount: number;
+  currency: string;
+  receipt: string;
+  key_id: string;
+  status: string;
+}
+
+export interface RazorpayPaymentVerify {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+  invoice_id: string;
+}
+
+export interface RazorpayPaymentResponse {
+  payment_id: string;
+  order_id: string;
+  amount: number;
+  currency: string;
+  status: string;
+  method: string; // upi, card, netbanking, wallet
+}
+
+export interface RazorpayRefundRequest {
+  payment_id: string;
+  amount?: number;
+}
+
+export interface RazorpayRefundResponse {
+  refund_id: string;
+  amount: number;
+  status: string;
+}
+
+// ============================================
+// Razorpay API Functions
+// ============================================
+
+/**
+ * Create a Razorpay Order for Indian payments
+ * Supports: UPI (GPay, PhonePe, Paytm), Cards, Net Banking, Wallets
+ */
+export const createRazorpayOrder = async (
+  data: RazorpayOrderCreate
+): Promise<ApiResponse<RazorpayOrderResponse>> => {
+  return apiClient.post<RazorpayOrderResponse>('/payments/razorpay/create-order', data);
+};
+
+/**
+ * Verify a Razorpay payment signature and update invoice
+ */
+export const verifyRazorpayPayment = async (
+  data: RazorpayPaymentVerify
+): Promise<ApiResponse<RazorpayPaymentResponse>> => {
+  return apiClient.post<RazorpayPaymentResponse>('/payments/razorpay/verify-payment', data);
+};
+
+/**
+ * Process a refund for a Razorpay payment
+ */
+export const refundRazorpayPayment = async (
+  data: RazorpayRefundRequest
+): Promise<ApiResponse<RazorpayRefundResponse>> => {
+  return apiClient.post<RazorpayRefundResponse>('/payments/razorpay/refund', data);
+};
+
+/**
+ * Load Razorpay SDK script dynamically
+ */
+export const loadRazorpayScript = (): Promise<boolean> => {
+  return new Promise((resolve) => {
+    if (document.getElementById('razorpay-sdk')) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.id = 'razorpay-sdk';
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
 };
 
 // ============================================

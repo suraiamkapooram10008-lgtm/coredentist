@@ -86,9 +86,14 @@ class Settings(BaseSettings):
     # Sentry (Optional)
     SENTRY_DSN: str = ""
     
-    # Stripe Payments (Optional)
+    # Stripe Payments (Optional - US Market)
     STRIPE_API_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
+    
+    # Razorpay Payments (Optional - Indian Market)
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
     
     # Insurance EDI - DentalXChange (Optional)
     DXC_API_KEY: str = ""
