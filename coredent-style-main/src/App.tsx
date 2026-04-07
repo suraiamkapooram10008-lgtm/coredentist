@@ -9,7 +9,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { CookieConsent } from "@/components/CookieConsent";
 import { PageLoader } from "@/components/ui/spinner";
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect } from "react";
 
 // Lazy load pages for performance
 const Login = lazy(() => import("./pages/Login"));
@@ -62,7 +62,24 @@ const queryClient = new QueryClient({
   },
 });
 
-const App = () => (
+const App = () => {
+  // Register service worker for offline mode
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker
+          .register("/sw.js")
+          .then((registration) => {
+            console.log("SW registered:", registration.scope);
+          })
+          .catch((error) => {
+            console.log("SW registration failed:", error);
+          });
+      });
+    }
+  }, []);
+
+  return (
   <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -481,6 +498,7 @@ const App = () => (
       </TooltipProvider>
     </QueryClientProvider>
   </ErrorBoundary>
-);
+  );
+};
 
 export default App;
