@@ -45,6 +45,12 @@ import {
   type RazorpayPaymentVerify 
 } from "@/services/paymentApi";
 import { useToast } from "@/hooks/use-toast";
+import {
+  usePaymentStats,
+  useTransactions,
+  useRecurringPlans,
+  useTerminals,
+} from "@/hooks/usePayments";
 
 // Razorpay response type
 interface RazorpayResponse {
@@ -64,8 +70,18 @@ export default function Payments() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [patientName, setPatientName] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<"stripe" | "razorpay">("razorpay");
   const { toast } = useToast();
+
+  // Fetch data from API using React Query hooks
+  const { data: statsData, isLoading: statsLoading } = usePaymentStats();
+  const { data: transactionsData, isLoading: transactionsLoading } = useTransactions({ search: searchTerm || undefined });
+  const { data: recurringData, isLoading: recurringLoading } = useRecurringPlans();
+  const { data: terminalsData, isLoading: terminalsLoading } = useTerminals();
+
+  const stats = statsData?.data;
+  const transactions = transactionsData?.data?.transactions ?? [];
+  const recurringPlans = recurringData?.data?.plans ?? [];
+  const terminals = terminalsData?.data?.terminals ?? [];
 
   // Load Razorpay SDK on mount
   useEffect(() => {
@@ -168,7 +184,7 @@ export default function Payments() {
         razorpay.open();
       } else {
         toast({
-          title: "Payment Gateway Unavailable",
+          title: "Payment Gateway UNAVAILABLE",
           description: "Razorpay SDK not loaded. Please refresh the page.",
           variant: "destructive",
         });
@@ -188,24 +204,21 @@ export default function Payments() {
     }
   }, [paymentAmount, patientName, toast]);
 
-  const transactions = [
-    { id: "1", patient: "John Smith", amount: 250.00, type: "Payment", method: "Visa ****4242", status: "Completed", date: "Feb 12, 2026" },
-    { id: "2", patient: "Jane Doe", amount: 150.00, type: "Payment", method: "Mastercard ****5555", status: "Completed", date: "Feb 11, 2026" },
-    { id: "3", patient: "Bob Johnson", amount: 85.00, type: "Refund", method: "Visa ****4242", status: "Completed", date: "Feb 10, 2026" },
-    { id: "4", patient: "Mary Wilson", amount: 500.00, type: "Recurring", method: "Amex ****1234", status: "Pending", date: "Feb 15, 2026" },
-  ];
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
 
-  const recurringPlans = [
-    { id: "1", patient: "Mary Wilson", plan: "Monthly Payment", amount: 500.00, frequency: "Monthly", nextDate: "Feb 15, 2026", status: "Active" },
-    { id: "2", patient: "John Smith", plan: "Treatment Plan", amount: 250.00, frequency: "Bi-weekly", nextDate: "Feb 20, 2026", status: "Active" },
-    { id: "3", patient: "Jane Doe", plan: "Membership Plan", amount: 49.00, frequency: "Monthly", nextDate: "Mar 1, 2026", status: "Active" },
-  ];
-
-  const terminals = [
-    { id: "1", name: "Front Desk Terminal", location: "Reception", status: "Online", lastTransaction: "10 mins ago" },
-    { id: "2", name: "Operatory 1", location: "Room 1", status: "Online", lastTransaction: "25 mins ago" },
-    { id: "3", name: "Operatory 2", location: "Room 2", status: "Offline", lastTransaction: "2 hours ago" },
-  ];
+  const formatUSD = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(amount);
+  };
 
   return (
     <div className="container mx-auto py-6 space-y-6">
@@ -238,8 +251,18 @@ export default function Payments() {
             <DollarSign className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-500">$2,450</div>
-            <p className="text-xs text-muted-foreground">12 transactions</p>
+            {statsLoading ? (
+              <div className="h-8 w-24 animate-pulse rounded bg-muted" />
+            ) : (
+              <>
+                <div className="text-2xl font-bold text-green-500">
+                  {formatUSD(stats?.todayRevenue ?? 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {stats?.todayTransactions ?? 0} transactions
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -248,8 +271,18 @@ export default function Payments() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">$28,500</div>
-            <p className="text-xs text-muted-foreground">+12% from last month</p>
+            {statsLoading ? (
+              <div className="h-8 w-24 animate-pulse rounded bg-muted" />
+            ) : (
+              <>
+                <div className="text-2xl font-bold">
+                  {formatUSD(stats?.monthRevenue ?? 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {stats?.monthGrowth ? `+${stats.monthGrowth}% from last month` : 'No data'}
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -258,8 +291,18 @@ export default function Payments() {
             <Clock className="h-4 w-4 text-yellow-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-yellow-500">$1,250</div>
-            <p className="text-xs text-muted-foreground">3 pending</p>
+            {statsLoading ? (
+              <div className="h-8 w-24 animate-pulse rounded bg-muted" />
+            ) : (
+              <>
+                <div className="text-2xl font-bold text-yellow-500">
+                  {formatUSD(stats?.pendingPayments ?? 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {stats?.pendingCount ?? 0} pending
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -268,8 +311,16 @@ export default function Payments() {
             <RefreshCw className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-blue-500">$5,840</div>
-            <p className="text-xs text-muted-foreground">monthly recurring</p>
+            {statsLoading ? (
+              <div className="h-8 w-24 animate-pulse rounded bg-muted" />
+            ) : (
+              <>
+                <div className="text-2xl font-bold text-blue-500">
+                  {formatUSD(stats?.recurringRevenue ?? 0)}
+                </div>
+                <p className="text-xs text-muted-foreground">monthly recurring</p>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -300,34 +351,44 @@ export default function Payments() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Patient</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Payment Method</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {transactions.map((txn) => (
-                    <TableRow key={txn.id}>
-                      <TableCell className="font-medium">{txn.patient}</TableCell>
-                      <TableCell>${txn.amount.toFixed(2)}</TableCell>
-                      <TableCell><Badge variant="outline">{txn.type}</Badge></TableCell>
-                      <TableCell className="text-muted-foreground">{txn.method}</TableCell>
-                      <TableCell>
-                        <Badge className={txn.status === 'Completed' ? 'bg-green-500' : 'bg-yellow-500'}>
-                          {txn.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{txn.date}</TableCell>
+              {transactionsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : transactions.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No transactions found
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Patient</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Payment Method</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Date</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {transactions.map((txn) => (
+                      <TableRow key={txn.id}>
+                        <TableCell className="font-medium">{txn.patient}</TableCell>
+                        <TableCell>{formatUSD(txn.amount)}</TableCell>
+                        <TableCell><Badge variant="outline">{txn.type}</Badge></TableCell>
+                        <TableCell className="text-muted-foreground">{txn.method}</TableCell>
+                        <TableCell>
+                          <Badge className={txn.status === 'Completed' ? 'bg-green-500' : txn.status === 'Failed' ? 'bg-red-500' : 'bg-yellow-500'}>
+                            {txn.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{txn.date}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -344,58 +405,88 @@ export default function Payments() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Patient</TableHead>
-                    <TableHead>Plan</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Frequency</TableHead>
-                    <TableHead>Next Date</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {recurringPlans.map((plan) => (
-                    <TableRow key={plan.id}>
-                      <TableCell className="font-medium">{plan.patient}</TableCell>
-                      <TableCell>{plan.plan}</TableCell>
-                      <TableCell>${plan.amount.toFixed(2)}</TableCell>
-                      <TableCell><Badge variant="outline">{plan.frequency}</Badge></TableCell>
-                      <TableCell>{plan.nextDate}</TableCell>
-                      <TableCell>
-                        <Badge className="bg-green-500">{plan.status}</Badge>
-                      </TableCell>
+              {recurringLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : recurringPlans.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No recurring billing plans found
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Patient</TableHead>
+                      <TableHead>Plan</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Frequency</TableHead>
+                      <TableHead>Next Date</TableHead>
+                      <TableHead>Status</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {recurringPlans.map((plan) => (
+                      <TableRow key={plan.id}>
+                        <TableCell className="font-medium">{plan.patient}</TableCell>
+                        <TableCell>{plan.plan}</TableCell>
+                        <TableCell>{formatUSD(plan.amount)}</TableCell>
+                        <TableCell><Badge variant="outline">{plan.frequency}</Badge></TableCell>
+                        <TableCell>{plan.nextDate}</TableCell>
+                        <TableCell>
+                          <Badge className={plan.status === 'Active' ? 'bg-green-500' : plan.status === 'Cancelled' ? 'bg-red-500' : 'bg-yellow-500'}>
+                            {plan.status}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
 
         <TabsContent value="terminals">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {terminals.map((terminal) => (
-              <Card key={terminal.id}>
-                <CardHeader>
-                  <div className="flex justify-between items-center">
-                    <CardTitle className="text-lg">{terminal.name}</CardTitle>
-                    <Badge className={terminal.status === 'Online' ? 'bg-green-500' : 'bg-red-500'}>
-                      {terminal.status}
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">{terminal.location}</p>
-                  <p className="text-sm text-muted-foreground mt-1">Last: {terminal.lastTransaction}</p>
-                  <div className="mt-4 flex gap-2">
-                    <Button size="sm" variant="outline">Test</Button>
-                    <Button size="sm" variant="outline">Settings</Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+            {terminalsLoading ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <Card key={i}>
+                  <CardHeader>
+                    <div className="h-6 w-32 animate-pulse rounded bg-muted" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="h-4 w-24 animate-pulse rounded bg-muted" />
+                    <div className="h-4 w-32 animate-pulse rounded bg-muted mt-2" />
+                  </CardContent>
+                </Card>
+              ))
+            ) : terminals.length === 0 ? (
+              <div className="col-span-3 text-center py-8 text-muted-foreground">
+                No payment terminals found
+              </div>
+            ) : (
+              terminals.map((terminal) => (
+                <Card key={terminal.id}>
+                  <CardHeader>
+                    <div className="flex justify-between items-center">
+                      <CardTitle className="text-lg">{terminal.name}</CardTitle>
+                      <Badge className={terminal.status === 'Online' ? 'bg-green-500' : 'bg-red-500'}>
+                        {terminal.status}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground">{terminal.location}</p>
+                    <p className="text-sm text-muted-foreground mt-1">Last: {terminal.lastTransaction}</p>
+                    <div className="mt-4 flex gap-2">
+                      <Button size="sm" variant="outline">Test</Button>
+                      <Button size="sm" variant="outline">Settings</Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
           </div>
         </TabsContent>
 

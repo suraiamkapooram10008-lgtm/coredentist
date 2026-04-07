@@ -19,6 +19,10 @@ import {
   listPaymentMethods,
   refundPayment,
   getPaymentStatus,
+  getPaymentStats,
+  listTransactions,
+  listRecurringPlans,
+  listTerminals,
   type PaymentIntentCreate,
 } from '@/services/paymentApi';
 
@@ -92,24 +96,69 @@ export const useRefundPayment = (options?: {
   });
 };
 
-/**
- * Hook to get payment status for an invoice
- * 
- * Usage:
- * ```tsx
- * const { data, refetch } = usePaymentStatus('invoice-123');
- * ```
- */
-export const usePaymentStatus = (invoiceId: string) => {
-  return useQuery({
-    queryKey: ['paymentStatus', invoiceId],
-    queryFn: () => getPaymentStatus(invoiceId),
-    enabled: !!invoiceId,
-    staleTime: 30 * 1000, // 30 seconds for payment status
-    refetchInterval: (query) => {
-      // Poll every 5 seconds if payment is pending
-      const status = query.state.data?.data?.status;
-      return status === 'pending' ? 5000 : false;
-    },
-  });
-};
+  /**
+   * Hook to get payment status for an invoice
+   * 
+   * Usage:
+   * ```tsx
+   * const { data, refetch } = usePaymentStatus('invoice-123');
+   * ```
+   */
+  export const usePaymentStatus = (invoiceId: string) => {
+    return useQuery({
+      queryKey: ['paymentStatus', invoiceId],
+      queryFn: () => getPaymentStatus(invoiceId),
+      enabled: !!invoiceId,
+      staleTime: 30 * 1000, // 30 seconds for payment status
+      refetchInterval: (query) => {
+        // Poll every 5 seconds if payment is pending
+        const status = query.state.data?.data?.status;
+        return status === 'pending' ? 5000 : false;
+      },
+    });
+  };
+
+  /**
+   * Hook to get payment statistics for dashboard
+   */
+  export const usePaymentStats = () => {
+    return useQuery({
+      queryKey: ['paymentStats'],
+      queryFn: () => getPaymentStats(),
+      staleTime: 60 * 1000, // 1 minute
+    });
+  };
+
+  /**
+   * Hook to list transactions
+   */
+  export const useTransactions = (params?: { search?: string; page?: number; limit?: number }) => {
+    return useQuery({
+      queryKey: ['transactions', params],
+      queryFn: () => listTransactions(params),
+      staleTime: 30 * 1000, // 30 seconds
+    });
+  };
+
+  /**
+   * Hook to list recurring billing plans
+   */
+  export const useRecurringPlans = () => {
+    return useQuery({
+      queryKey: ['recurringPlans'],
+      queryFn: () => listRecurringPlans(),
+      staleTime: 60 * 1000, // 1 minute
+    });
+  };
+
+  /**
+   * Hook to list payment terminals
+   */
+  export const useTerminals = () => {
+    return useQuery({
+      queryKey: ['terminals'],
+      queryFn: () => listTerminals(),
+      staleTime: 30 * 1000, // 30 seconds
+      refetchInterval: 30000, // Refetch every 30 seconds to check terminal status
+    });
+  };

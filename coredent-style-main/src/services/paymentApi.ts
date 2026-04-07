@@ -189,6 +189,86 @@ export const loadRazorpayScript = (): Promise<boolean> => {
 };
 
 // ============================================
+// Transaction Types
+// ============================================
+
+export interface Transaction {
+  id: string;
+  patient: string;
+  amount: number;
+  type: 'Payment' | 'Refund' | 'Recurring';
+  method: string;
+  status: 'Completed' | 'Pending' | 'Failed';
+  date: string;
+}
+
+export interface RecurringPlan {
+  id: string;
+  patient: string;
+  plan: string;
+  amount: number;
+  frequency: string;
+  nextDate: string;
+  status: 'Active' | 'Paused' | 'Cancelled';
+}
+
+export interface PaymentTerminal {
+  id: string;
+  name: string;
+  location: string;
+  status: 'Online' | 'Offline';
+  lastTransaction: string;
+}
+
+export interface PaymentStats {
+  todayRevenue: number;
+  todayTransactions: number;
+  monthRevenue: number;
+  monthGrowth: number;
+  pendingPayments: number;
+  pendingCount: number;
+  recurringRevenue: number;
+}
+
+// ============================================
+// Additional API Functions
+// ============================================
+
+/**
+ * Get payment statistics for dashboard
+ */
+export const getPaymentStats = async (): Promise<ApiResponse<PaymentStats>> => {
+  return apiClient.get<PaymentStats>('/payments/stats');
+};
+
+/**
+ * List transactions with optional filters
+ */
+export const listTransactions = async (
+  params?: { search?: string; page?: number; limit?: number }
+): Promise<ApiResponse<{ transactions: Transaction[]; total: number }>> => {
+  const queryParams = new URLSearchParams();
+  if (params?.search) queryParams.append('search', params.search);
+  if (params?.page) queryParams.append('page', params.page.toString());
+  if (params?.limit) queryParams.append('limit', params.limit.toString());
+  return apiClient.get<{ transactions: Transaction[]; total: number }>(`/payments/transactions?${queryParams}`);
+};
+
+/**
+ * List recurring billing plans
+ */
+export const listRecurringPlans = async (): Promise<ApiResponse<{ plans: RecurringPlan[] }>> => {
+  return apiClient.get<{ plans: RecurringPlan[] }>('/payments/recurring-plans');
+};
+
+/**
+ * List payment terminals
+ */
+export const listTerminals = async (): Promise<ApiResponse<{ terminals: PaymentTerminal[] }>> => {
+  return apiClient.get<{ terminals: PaymentTerminal[] }>('/payments/terminals');
+};
+
+// ============================================
 // React Query Hooks (to be created in hooks folder)
 // ============================================
 
