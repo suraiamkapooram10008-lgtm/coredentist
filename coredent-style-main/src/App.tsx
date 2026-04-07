@@ -48,6 +48,7 @@ const ImagingHub = lazy(() => import("./pages/ImagingHub"));
 const EnterpriseHQ = lazy(() => import("./pages/EnterpriseHQ"));
 const ReferralHub = lazy(() => import("./pages/ReferralHub"));
 const LabLogistics = lazy(() => import("./pages/LabLogistics"));
+const Subscriptions = lazy(() => import("./pages/Subscriptions"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -486,6 +487,17 @@ const App = () => {
                     <ProtectedRoute allowedRoles={['owner', 'admin', 'front_desk']}>
                       <AppShell>
                         <Payments />
+                      </AppShell>
+                    </ProtectedRoute>
+                  }
+                />
+                {/* Subscriptions & Billing */}
+                <Route
+                  path="/subscriptions"
+                  element={
+                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
+                      <AppShell>
+                        <Subscriptions />
                       </AppShell>
                     </ProtectedRoute>
                   }

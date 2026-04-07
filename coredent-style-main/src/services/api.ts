@@ -89,8 +89,8 @@ class ApiClient {
         ...options,
         headers,
         signal: controller.signal,
-        // CRIT-01 FIX: Use same-origin credentials (CSRF cookie needed)
-        credentials: 'same-origin',
+        // FIX: Use 'include' for cross-origin cookie support (CSRF + refresh tokens)
+        credentials: 'include',
       });
       
       clearTimeout(timeoutId);
@@ -234,19 +234,26 @@ class ApiClient {
     this.isRefreshing = true;
     this.refreshPromise = (async () => {
       try {
+        // Create AbortController for timeout on refresh
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout for refresh
+
         const response = await fetch(`${this.baseUrl}/auth/refresh`, {
           method: 'POST',
           headers: {
              'Content-Type': 'application/json',
              ...getCsrfHeader() // CSRF required for state-changing refresh
           },
-          // CRIT-01: Must send include for HttpOnly refresh cookie
-          credentials: 'same-origin',
+          // FIX: Use 'include' for cross-origin cookie support
+          credentials: 'include',
+          signal: controller.signal,
           body: JSON.stringify({
              // If we used Bearer for refresh, we'd pass it here
              // But the backend hardened version (Round 10) uses httpOnly cookies.
           })
         });
+
+        clearTimeout(timeoutId);
 
         if (response.ok) {
           const result = await response.json();
@@ -260,7 +267,12 @@ class ApiClient {
         
         return null;
       } catch (err) {
-        logger.error('Failed to rotate access token', err as Error);
+        // Handle timeout specifically
+        if (err instanceof Error && err.name === 'AbortError') {
+          logger.error('Token refresh timeout', err);
+        } else {
+          logger.error('Failed to rotate access token', err as Error);
+        }
         return null;
       } finally {
         this.isRefreshing = false;

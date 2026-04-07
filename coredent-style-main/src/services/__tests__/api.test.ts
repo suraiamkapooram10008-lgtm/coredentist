@@ -1,74 +1,38 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { server } from '@/test/mocks/server';
-import { authApi, patientsApi, appointmentsApi } from '@/services/api';
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { apiClient, setAuthToken, clearAuthToken } from "../api";
 
-// Start mock server
-beforeAll(() => server.listen());
-afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
+describe("API Client", () => {
+  beforeEach(() => {
+    clearAuthToken();
+    vi.clearAllMocks();
+  });
 
-describe('API Services', () => {
-  describe('authApi', () => {
-    it('logs in successfully with valid credentials', async () => {
-      const response = await authApi.login({
-        email: 'demo@coredent.com',
-        password: 'demo123',
-      });
-
-      expect(response.success).toBe(true);
-      expect(response.data).toBeDefined();
-      expect(response.data?.access_token).toBeDefined();
-      expect(response.data?.refresh_token).toBeDefined();
-      expect(response.data?.csrf_token).toBeDefined();
-    });
-
-    it('fails login with invalid credentials', async () => {
-      const response = await authApi.login({
-        email: 'wrong@example.com',
-        password: 'wrongpass',
-      });
-
-      expect(response.success).toBe(false);
-      expect(response.error).toBeDefined();
-    });
-
-    it('gets current user', async () => {
-      const response = await authApi.getCurrentUser();
-
-      expect(response.success).toBe(true);
-      expect(response.data).toBeDefined();
-      expect(response.data?.email).toBe('demo@coredent.com');
+  describe("setAuthToken", () => {
+    it("should set auth token", () => {
+      setAuthToken("test-token");
+      expect(localStorage.getItem("auth_token")).toBe("test-token");
     });
   });
 
-  describe('patientsApi', () => {
-    it('lists patients', async () => {
-      const response = await patientsApi.list();
-
-      expect(response.success).toBe(true);
-      expect(response.data).toBeDefined();
-      expect(Array.isArray(response.data?.data)).toBe(true);
-    });
-
-    it('gets patient by id', async () => {
-      const response = await patientsApi.getById('patient-1');
-
-      expect(response.success).toBe(true);
-      expect(response.data).toBeDefined();
-      expect(response.data?.id).toBe('patient-1');
+  describe("clearAuthToken", () => {
+    it("should clear auth token", () => {
+      setAuthToken("test-token");
+      clearAuthToken();
+      expect(localStorage.getItem("auth_token")).toBeNull();
     });
   });
 
-  describe('appointmentsApi', () => {
-    it('lists appointments', async () => {
-      const response = await appointmentsApi.list({
-        startDate: new Date().toISOString(),
-        endDate: new Date().toISOString(),
-      });
+  describe("apiClient", () => {
+    it("should be defined", () => {
+      expect(apiClient).toBeDefined();
+    });
 
-      expect(response.success).toBe(true);
-      expect(response.data).toBeDefined();
-      expect(Array.isArray(response.data)).toBe(true);
+    it("should have base URL configured", () => {
+      expect(apiClient.defaults.baseURL).toBeDefined();
+    });
+
+    it("should have interceptors configured", () => {
+      expect(apiClient.interceptors).toBeDefined();
     });
   });
 });

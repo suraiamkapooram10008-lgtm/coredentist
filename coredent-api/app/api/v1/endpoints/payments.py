@@ -32,6 +32,8 @@ from app.schemas.payment import (
     RazorpayWebhookEvent,
 )
 from app.schemas.common import APIResponse
+from app.models.billing import Invoice, InvoiceStatus, Payment, PaymentStatus
+from app.models.patient import Patient
 
 router = APIRouter()
 
@@ -113,7 +115,7 @@ async def create_payment_intent(
             db, current_user, "create_payment_intent", "invoice", invoice.id, request,
             {"amount": payment_amount}
         )
-        await db.commit()
+        # Note: log_audit_event commits internally, no need for double commit
         
         return PaymentIntentResponse(
             client_secret=intent.client_secret,
@@ -129,13 +131,16 @@ async def create_payment_intent(
         )
 
 
-@router.post("/webhook")
+@router.post("/webhooks/stripe")  # Separate route prefix for webhooks
 async def stripe_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
     Handle Stripe webhook events for payment confirmation.
+    
+    SECURITY: Webhook endpoint with signature verification.
+    No CSRF required as Stripe signs requests.
     
     Design decisions:
     - External side effect: Stripe webhook (required useEffect alternative: webhook)
@@ -289,7 +294,7 @@ async def refund_payment(
             db, current_user, "refund_payment", "payment", payment.id, request,
             {"amount": amount or payment.amount, "transaction_id": transaction_id}
         )
-        await db.commit()
+        # Note: log_audit_event commits internally
         
         return APIResponse(
             success=True,
@@ -388,7 +393,7 @@ async def create_razorpay_order(
             db, current_user, "create_razorpay_order", "invoice", invoice.id, request,
             {"amount": amount, "currency": order_data.currency}
         )
-        await db.commit()
+        # Note: log_audit_event commits internally
         
         return RazorpayOrderResponse(
             order_id=order["id"],
@@ -466,14 +471,13 @@ async def verify_razorpay_payment(
                 notes=f"Razorpay payment: {verify_data.razorpay_payment_id}",
             )
             db.add(payment_record)
-            await db.commit()
-        
-        # HIPAA: Log payment verification
-        await log_audit_event(
-            db, current_user, "verify_razorpay_payment", "invoice", verify_data.invoice_id, request,
-            {"payment_id": verify_data.razorpay_payment_id}
-        )
-        await db.commit()
+            
+            # HIPAA: Log payment verification
+            await log_audit_event(
+                db, current_user, "verify_razorpay_payment", "invoice", verify_data.invoice_id, request,
+                {"payment_id": verify_data.razorpay_payment_id}
+            )
+            # Note: log_audit_event commits internally, includes payment_record
         
         return RazorpayPaymentResponse(
             payment_id=verify_data.razorpay_payment_id,
@@ -535,14 +539,13 @@ async def refund_razorpay_payment(
         
         # Update payment status
         payment.status = PaymentStatus.REFUNDED
-        await db.commit()
         
         # HIPAA: Log refund
         await log_audit_event(
             db, current_user, "refund_razorpay_payment", "payment", payment.id, request,
             {"refund_id": refund["id"], "amount": refund_data.amount or payment.amount}
         )
-        await db.commit()
+        # Note: log_audit_event commits internally, includes payment status update
         
         return RazorpayRefundResponse(
             refund_id=refund["id"],
@@ -631,9 +634,31 @@ async def get_payment_stats(
     pending_amount = sum(float(inv.balance_due) for inv in pending_invoices)
     pending_count = len(pending_invoices)
     
-    # Recurring revenue (estimate from active subscriptions)
-    # In production, this would query a subscription table
-    recurring_revenue = pending_amount * 0.3  # Placeholder: 30% of pending is recurring
+    # Recurring revenue - Calculate from recurring billing records
+    # Query active recurring billing plans
+    from app.models.payment import RecurringBilling, RecurringStatus
+    
+    recurring_result = await db.execute(
+        select(RecurringBilling).where(
+            RecurringBilling.practice_id == current_user.practice_id,
+            RecurringBilling.status == RecurringStatus.ACTIVE,
+        )
+    )
+    recurring_plans = recurring_result.scalars().all()
+    
+    # Calculate monthly recurring revenue (MRR)
+    recurring_revenue = 0.0
+    for plan in recurring_plans:
+        # Convert all intervals to monthly equivalent
+        amount = float(plan.amount)
+        if plan.interval == "monthly":
+            recurring_revenue += amount
+        elif plan.interval == "quarterly":
+            recurring_revenue += amount / 3  # Quarterly to monthly
+        elif plan.interval == "yearly":
+            recurring_revenue += amount / 12  # Yearly to monthly
+        elif plan.interval == "weekly":
+            recurring_revenue += amount * 4.33  # Weekly to monthly (avg 4.33 weeks/month)
     
     return {
         "todayRevenue": today_revenue,
@@ -642,7 +667,7 @@ async def get_payment_stats(
         "monthGrowth": month_growth,
         "pendingPayments": pending_amount,
         "pendingCount": pending_count,
-        "recurringRevenue": recurring_revenue,
+        "recurringRevenue": round(recurring_revenue, 2),  # Monthly Recurring Revenue (MRR)
     }
 
 
@@ -653,9 +678,10 @@ async def list_transactions(
     status: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),  # Add CSRF protection
 ) -> Any:
     """
-    List payment transactions
+    List payment transactions (CSRF protected)
     """
     from app.models.billing import Invoice, Payment, PaymentStatus
     
@@ -779,13 +805,16 @@ async def list_terminals(
     return {"terminals": terminals}
 
 
-@router.post("/razorpay/webhook")
+@router.post("/webhooks/razorpay")  # Separate route prefix for webhooks
 async def razorpay_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
     Handle Razorpay webhook events for payment confirmation.
+    
+    SECURITY: Webhook endpoint with signature verification.
+    No CSRF required as Razorpay signs requests.
     """
     if not settings.RAZORPAY_WEBHOOK_SECRET:
         raise HTTPException(

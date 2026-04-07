@@ -158,6 +158,12 @@ const navItems: NavItem[] = [
     href: '/payments',
     roles: ['owner', 'admin', 'front_desk'],
   },
+  {
+    label: 'Subscriptions',
+    icon: CreditCard,
+    href: '/subscriptions',
+    roles: ['owner', 'admin'],
+  },
 ];
 
 export function Sidebar({ collapsed, mobileOpen, onToggle, onMobileClose }: SidebarProps) {

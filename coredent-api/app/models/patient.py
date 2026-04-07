@@ -100,6 +100,7 @@ class Patient(Base):
     conversations = relationship("Conversation", back_populates="patient", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="patient", cascade="all, delete-orphan")
     payment_cards = relationship("PaymentCard", back_populates="patient")
+    subscriptions = relationship("Subscription", back_populates="patient")
     
     @property
     def full_name(self) -> str:

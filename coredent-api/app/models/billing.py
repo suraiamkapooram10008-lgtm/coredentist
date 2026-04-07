@@ -86,6 +86,7 @@ class Invoice(Base):
     practice = relationship("Practice", back_populates="invoices")
     patient = relationship("Patient", back_populates="invoices")
     payments = relationship("Payment", back_populates="invoice", cascade="all, delete-orphan")
+    subscription = relationship("Subscription", back_populates="invoices")
     
     @property
     def amount_paid(self) -> float:

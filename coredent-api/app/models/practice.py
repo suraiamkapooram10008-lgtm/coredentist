@@ -75,7 +75,7 @@ class Practice(Base):
     lab_cases = relationship("LabCase", back_populates="practice")
     lab_invoices = relationship("LabInvoice", back_populates="practice")
     referral_sources = relationship("ReferralSource1", back_populates="practice")
-    referrals = relationship("Referral", back_populates="practice")
+    referrals = relationship("Referral", back_populates="practice", foreign_keys="[Referral.practice_id]")
     referral_reports = relationship("ReferralReport", back_populates="practice")
     message_templates = relationship("MessageTemplate", back_populates="practice")
     patient_messages = relationship("PatientMessage", back_populates="practice")
@@ -93,6 +93,10 @@ class Practice(Base):
     recurring_billing = relationship("RecurringBilling", back_populates="practice")
     payment_terminals = relationship("PaymentTerminal", back_populates="practice")
     payment_settings = relationship("PaymentSettings", back_populates="practice")
+
+    # Subscription Relationships
+    subscription_plans = relationship("SubscriptionPlan", back_populates="practice")
+    subscriptions = relationship("Subscription", back_populates="practice")
 
     def __repr__(self):
         return f"<Practice {self.name}>"

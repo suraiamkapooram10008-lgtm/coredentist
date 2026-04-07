@@ -22,6 +22,7 @@ from app.api.v1.endpoints import (
     edi,
     accounting,
     staff,
+    subscriptions,
 )
 
 api_router = APIRouter()
@@ -43,3 +44,4 @@ api_router.include_router(payments.router, prefix="/payments", tags=["Payments"]
 api_router.include_router(edi.router, prefix="/edi", tags=["Insurance EDI"])
 api_router.include_router(accounting.router, prefix="/accounting", tags=["Accounting Integration"])
 api_router.include_router(staff.router, prefix="/staff", tags=["Practice Staff Management"])
+api_router.include_router(subscriptions.router, prefix="/subscriptions", tags=["Subscriptions"])

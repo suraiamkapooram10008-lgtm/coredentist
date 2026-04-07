@@ -144,10 +144,10 @@ class Referral(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
-    practice = relationship("Practice", back_populates="referrals")
+    practice = relationship("Practice", back_populates="referrals", foreign_keys=[practice_id])
     patient = relationship("Patient", back_populates="referrals")
     referring_provider = relationship("User", foreign_keys=[referring_provider_id])
-    target_practice = relationship("Practice", foreign_keys=[target_practice_id])
+    target_practice = relationship("Practice", foreign_keys=[target_practice_id], viewonly=True)
     referral_source_obj = relationship("ReferralSource1", back_populates="referrals")
     communications = relationship("ReferralCommunication", back_populates="referral", cascade="all, delete-orphan")
     
