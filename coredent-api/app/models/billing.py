@@ -29,6 +29,7 @@ class PaymentMethod(str, enum.Enum):
     CARD = "card"
     CHECK = "check"
     INSURANCE = "insurance"
+    UPI = "upi"  # Indian UPI payments
     OTHER = "other"
 
 
@@ -62,6 +63,14 @@ class Invoice(Base):
     subtotal = Column(Numeric(10, 2), nullable=False)
     tax = Column(Numeric(10, 2), default=0)
     total = Column(Numeric(10, 2), nullable=False)
+    
+    # GST fields (Indian compliance)
+    gstin = Column(String(15))  # GST Identification Number
+    gst_rate = Column(Numeric(5, 2), default=18.00)  # Default 18%
+    cgst_amount = Column(Numeric(10, 2), default=0)
+    sgst_amount = Column(Numeric(10, 2), default=0)
+    igst_amount = Column(Numeric(10, 2), default=0)
+    is_inter_state = Column(String(1), default="N")  # Y/N for inter-state
     
     # Line items stored as JSON
     # Structure: [{ description: "", quantity: 1, unit_price: 0, total: 0 }]
