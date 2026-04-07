@@ -5,6 +5,7 @@
 
 import { useState, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { logger } from "@/lib/logger";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -110,7 +111,7 @@ export default function Appointments() {
   };
 
   const handleFormSubmit = (data: any) => {
-    console.log('Form submitted:', data);
+    logger.info('Appointment form submitted', { data });
     setShowForm(false);
     setSelectedAppointment(null);
   };
