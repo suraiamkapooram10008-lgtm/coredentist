@@ -386,13 +386,20 @@ export default function Payments() {
             <CardContent className="space-y-4">
               <div className="flex items-center justify-between p-4 border rounded-lg">
                 <div>
-                  <p className="font-medium">Payment Processor</p>
-                  <p className="text-sm text-muted-foreground">Stripe integration</p>
+                  <p className="font-medium">US Payment Processor</p>
+                  <p className="text-sm text-muted-foreground">Stripe - Credit/Debit cards</p>
                 </div>
                 <Button variant="outline">
                   <Settings className="mr-2 h-4 w-4" />
                   Configure
                 </Button>
+              </div>
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div>
+                  <p className="font-medium">India Payment Processor</p>
+                  <p className="text-sm text-muted-foreground">Razorpay - UPI, Paytm, PhonePe, Cards, Net Banking</p>
+                </div>
+                <Badge className="bg-green-500">Active</Badge>
               </div>
               <div className="flex items-center justify-between p-4 border rounded-lg">
                 <div>
