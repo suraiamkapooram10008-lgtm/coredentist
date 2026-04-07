@@ -13,6 +13,7 @@ from app.core.database import get_db
 from app.models.user import User, UserRole
 from app.models.patient import Patient
 from app.schemas.patient import PatientCreate, PatientUpdate, PatientResponse, PatientListItem
+from app.schemas.common import PaginatedResponse
 from app.api.deps import get_current_user, get_current_practice_id, Pagination, verify_csrf, require_role
 from app.core.audit import log_audit_event
 from app.core.sanitization import sanitize_search_query, sanitize_phone
@@ -23,7 +24,7 @@ import re
 router = APIRouter()
 
 
-@router.get("", response_model=List[PatientListItem])
+@router.get("", response_model=PaginatedResponse[PatientListItem])
 async def list_patients(
     request: Request,
     query: str = Query(None, description="Search by name, email, or phone"),
@@ -34,15 +35,16 @@ async def list_patients(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
-    List patients with search and filtering
+    List patients with search and filtering (paginated)
     """
     # HIPAA: Log PHI list access
     await log_audit_event(
         db, current_user, "patient_list_viewed", "patient", None, request
     )
     await db.commit()
-    # Build query with eager loading to prevent N+1 for visit stats
-    stmt = (
+
+    # Build base query with eager loading to prevent N+1 for visit stats
+    base_stmt = (
         select(Patient)
         .where(Patient.practice_id == practice_id)
         .options(selectinload(Patient.appointments))
@@ -69,20 +71,50 @@ async def list_patients(
             else:
                 filters.append(Patient.phone.ilike(search_pattern))
                 
-            stmt = stmt.where(or_(*filters))
+            base_stmt = base_stmt.where(or_(*filters))
     
     # Apply status filter
     if status_filter:
-        stmt = stmt.where(Patient.status == status_filter)
+        base_stmt = base_stmt.where(Patient.status == status_filter)
+
+    # Get total count BEFORE pagination
+    from sqlalchemy import func
+    count_stmt = select(func.count()).select_from(Patient).where(Patient.practice_id == practice_id)
+    if query:
+        query = sanitize_search_query(query)
+        if query:
+            search_pattern = f"%{query}%"
+            count_filters = [
+                Patient.first_name.ilike(search_pattern),
+                Patient.last_name.ilike(search_pattern),
+                Patient.email.ilike(search_pattern),
+            ]
+            clean_phone = re.sub(r"\D", "", query)
+            if clean_phone:
+                count_filters.append(Patient.phone.like(f"%{clean_phone}%"))
+            else:
+                count_filters.append(Patient.phone.ilike(search_pattern))
+            count_stmt = count_stmt.where(or_(*count_filters))
+    if status_filter:
+        count_stmt = count_stmt.where(Patient.status == status_filter)
     
-    # Apply pagination
-    stmt = stmt.offset(pagination.offset).limit(pagination.limit)
+    count_result = await db.execute(count_stmt)
+    total = count_result.scalar() or 0
+    
+    # Apply pagination to data query
+    stmt = base_stmt.offset(pagination.offset).limit(pagination.limit)
     
     # Execute query
     result = await db.execute(stmt)
     patients = result.scalars().all()
     
-    return patients
+    # Return paginated response
+    return PaginatedResponse.create(
+        items=patients,
+        total=total,
+        page=pagination.page,
+        limit=pagination.limit
+    )
 
 
 @router.post("", response_model=PatientResponse, status_code=status.HTTP_201_CREATED)
