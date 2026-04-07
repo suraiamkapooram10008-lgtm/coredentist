@@ -131,11 +131,8 @@ class Settings(BaseSettings):
             origins = [origin.strip() for origin in v.split(",") if origin.strip()]
             return origins if origins else []
         if not v:
-            # Return Railway defaults if not set
-            return [
-                "https://respectful-strength-production-ef28.up.railway.app",
-                "https://coredentist-production.up.railway.app"
-            ]
+            # No hardcoded URLs - must be set via environment variable
+            return []
         return v
 
     class Config:

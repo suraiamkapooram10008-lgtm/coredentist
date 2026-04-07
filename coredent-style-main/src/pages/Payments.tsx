@@ -4,7 +4,8 @@
  * Supports: Stripe (US) and Razorpay (India - UPI/Paytm/PhonePe)
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { logger } from "@/lib/logger";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +46,18 @@ import {
 } from "@/services/paymentApi";
 import { useToast } from "@/hooks/use-toast";
 
+// Razorpay response type
+interface RazorpayResponse {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+// Razorpay window type
+interface RazorpayWindow extends Window {
+  Razorpay: new (options: Record<string, unknown>) => { open: () => void };
+}
+
 export default function Payments() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showRazorpayDialog, setShowRazorpayDialog] = useState(false);
@@ -56,15 +69,17 @@ export default function Payments() {
 
   // Load Razorpay SDK on mount
   useEffect(() => {
+    let cancelled = false;
     loadRazorpayScript().then((success) => {
-      if (!success) {
-        console.warn("Failed to load Razorpay SDK - UPI payments may not work");
+      if (!cancelled && !success) {
+        logger.warn("Failed to load Razorpay SDK - UPI payments may not work");
       }
     });
+    return () => { cancelled = true; };
   }, []);
 
   // Handle Razorpay payment
-  const handleRazorpayPayment = async () => {
+  const handleRazorpayPayment = useCallback(async () => {
     if (!paymentAmount || !patientName) {
       toast({
         title: "Missing Information",
@@ -99,15 +114,16 @@ export default function Payments() {
       }
 
       // Step 2: Open Razorpay checkout
-      if (typeof window !== "undefined" && (window as any).Razorpay) {
-        const options = {
+      const razorpayWindow = window as unknown as RazorpayWindow;
+      if (typeof window !== "undefined" && razorpayWindow.Razorpay) {
+        const options: Record<string, unknown> = {
           key: order.key_id,
           amount: order.amount,
           currency: order.currency,
           name: "CoreDent PMS",
           description: `Payment for ${patientName}`,
           order_id: order.order_id,
-          handler: async (response: any) => {
+          handler: async (response: RazorpayResponse) => {
             // Step 3: Verify payment
             const verifyData: RazorpayPaymentVerify = {
               razorpay_order_id: response.razorpay_order_id,
@@ -127,6 +143,7 @@ export default function Payments() {
               setPaymentAmount("");
               setPatientName("");
             } catch (error) {
+              logger.error("Payment verification failed", error instanceof Error ? error : undefined);
               toast({
                 title: "Verification Failed",
                 description: "Payment was made but verification failed. Contact support.",
@@ -147,7 +164,7 @@ export default function Payments() {
           },
         };
 
-        const razorpay = new (window as any).Razorpay(options);
+        const razorpay = new razorpayWindow.Razorpay(options);
         razorpay.open();
       } else {
         toast({
@@ -156,16 +173,20 @@ export default function Payments() {
           variant: "destructive",
         });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const detail = error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { data?: { detail?: string } } }).response?.data?.detail
+        : "Failed to create payment order";
+      logger.error("Razorpay payment failed", error instanceof Error ? error : undefined, { detail });
       toast({
         title: "Payment Failed",
-        description: error?.response?.data?.detail || "Failed to create payment order",
+        description: detail || "Failed to create payment order",
         variant: "destructive",
       });
     } finally {
       setIsProcessing(false);
     }
-  };
+  }, [paymentAmount, patientName, toast]);
 
   const transactions = [
     { id: "1", patient: "John Smith", amount: 250.00, type: "Payment", method: "Visa ****4242", status: "Completed", date: "Feb 12, 2026" },

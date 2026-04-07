@@ -10,6 +10,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { CookieConsent } from "@/components/CookieConsent";
 import { PageLoader } from "@/components/ui/spinner";
 import { Suspense, lazy, useEffect } from "react";
+import { logger } from "@/lib/logger";
 
 // Lazy load pages for performance
 const Login = lazy(() => import("./pages/Login"));
@@ -65,18 +66,22 @@ const queryClient = new QueryClient({
 const App = () => {
   // Register service worker for offline mode
   useEffect(() => {
+    let cancelled = false;
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
+        if (cancelled) return;
         navigator.serviceWorker
           .register("/sw.js")
           .then((registration) => {
-            console.log("SW registered:", registration.scope);
+            logger.info("Service worker registered", { scope: registration.scope });
           })
-          .catch((error) => {
-            console.log("SW registration failed:", error);
+          .catch((error: unknown) => {
+            const err = error instanceof Error ? error : new Error(String(error));
+            logger.error("Service worker registration failed", err);
           });
       });
     }
+    return () => { cancelled = true; };
   }, []);
 
   return (
