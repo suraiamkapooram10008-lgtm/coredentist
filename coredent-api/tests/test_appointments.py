@@ -3,15 +3,17 @@ Tests for appointment endpoints
 """
 import pytest
 from datetime import datetime, timedelta
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class TestAppointmentEndpoints:
     """Test appointment management endpoints"""
 
-    def test_get_appointments_success(self, client: TestClient, auth_headers, test_appointment):
+    @pytest.mark.asyncio
+    async def test_get_appointments_success(self, client: AsyncClient, auth_headers, test_appointment):
         """Test getting appointments list"""
-        response = client.get("/api/v1/appointments", headers=auth_headers)
+        response = await client.get("/api/v1/appointments", headers=auth_headers)
         
         assert response.status_code == 200
         data = response.json()
@@ -28,54 +30,60 @@ class TestAppointmentEndpoints:
         assert "start_time" in appointment
         assert "end_time" in appointment
 
-    def test_get_appointments_with_date_filter(self, client: TestClient, auth_headers):
+    @pytest.mark.asyncio
+    async def test_get_appointments_with_date_filter(self, client: AsyncClient, auth_headers):
         """Test getting appointments with date filter"""
         today = datetime.now().strftime("%Y-%m-%d")
-        response = client.get(f"/api/v1/appointments?date={today}", headers=auth_headers)
+        response = await client.get(f"/api/v1/appointments?date={today}", headers=auth_headers)
         
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
 
-    def test_get_appointments_with_status_filter(self, client: TestClient, auth_headers):
+    @pytest.mark.asyncio
+    async def test_get_appointments_with_status_filter(self, client: AsyncClient, auth_headers):
         """Test getting appointments with status filter"""
-        response = client.get("/api/v1/appointments?status=scheduled", headers=auth_headers)
+        response = await client.get("/api/v1/appointments?status=scheduled", headers=auth_headers)
         
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
 
-    def test_get_appointments_unauthorized(self, client: TestClient):
+    @pytest.mark.asyncio
+    async def test_get_appointments_unauthorized(self, client: AsyncClient):
         """Test getting appointments without authentication"""
-        response = client.get("/api/v1/appointments")
+        response = await client.get("/api/v1/appointments")
         
         assert response.status_code == 401
 
-    def test_get_appointment_by_id_success(self, client: TestClient, auth_headers, test_appointment):
+    @pytest.mark.asyncio
+    async def test_get_appointment_by_id_success(self, client: AsyncClient, auth_headers, test_appointment):
         """Test getting appointment by ID"""
-        response = client.get(f"/api/v1/appointments/{test_appointment.id}", headers=auth_headers)
+        response = await client.get(f"/api/v1/appointments/{test_appointment.id}", headers=auth_headers)
         
         assert response.status_code == 200
         data = response.json()
-        assert data["id"] == test_appointment.id
-        assert data["patient_id"] == test_appointment.patient_id
-        assert data["provider_id"] == test_appointment.provider_id
+        assert str(data["id"]) == str(test_appointment.id)
+        assert str(data["patient_id"]) == str(test_appointment.patient_id)
+        assert str(data["provider_id"]) == str(test_appointment.provider_id)
         assert data["appointment_type"] == test_appointment.appointment_type
 
-    def test_get_appointment_by_id_not_found(self, client: TestClient, auth_headers):
+    @pytest.mark.asyncio
+    async def test_get_appointment_by_id_not_found(self, client: AsyncClient, auth_headers):
         """Test getting non-existent appointment"""
-        response = client.get("/api/v1/appointments/nonexistent-id", headers=auth_headers)
+        response = await client.get("/api/v1/appointments/nonexistent-id", headers=auth_headers)
         
         assert response.status_code == 404
 
-    def test_create_appointment_success(self, client: TestClient, auth_headers, test_patient, test_user):
+    @pytest.mark.asyncio
+    async def test_create_appointment_success(self, client: AsyncClient, auth_headers, test_patient, test_user):
         """Test creating new appointment"""
         start_time = (datetime.now() + timedelta(days=1)).isoformat()
         end_time = (datetime.now() + timedelta(days=1, hours=1)).isoformat()
         
         appointment_data = {
-            "patient_id": test_patient.id,
-            "provider_id": test_user.id,
+            "patient_id": str(test_patient.id),
+            "provider_id": str(test_user.id),
             "appointment_type": "checkup",
             "status": "scheduled",
             "start_time": start_time,
@@ -85,46 +93,49 @@ class TestAppointmentEndpoints:
             "chair_id": "chair-1"
         }
         
-        response = client.post("/api/v1/appointments", json=appointment_data, headers=auth_headers)
+        response = await client.post("/api/v1/appointments", json=appointment_data, headers=auth_headers)
         
         assert response.status_code == 201
         data = response.json()
-        assert data["patient_id"] == appointment_data["patient_id"]
-        assert data["provider_id"] == appointment_data["provider_id"]
+        assert str(data["patient_id"]) == appointment_data["patient_id"]
+        assert str(data["provider_id"]) == appointment_data["provider_id"]
         assert data["appointment_type"] == appointment_data["appointment_type"]
         assert "id" in data
         assert "created_at" in data
 
-    def test_create_appointment_validation_error(self, client: TestClient, auth_headers):
+    @pytest.mark.asyncio
+    async def test_create_appointment_validation_error(self, client: AsyncClient, auth_headers):
         """Test creating appointment with invalid data"""
         appointment_data = {
             "patient_id": "",  # Empty patient ID
             "start_time": "invalid-date"  # Invalid date format
         }
         
-        response = client.post("/api/v1/appointments", json=appointment_data, headers=auth_headers)
+        response = await client.post("/api/v1/appointments", json=appointment_data, headers=auth_headers)
         
         assert response.status_code == 422
 
-    def test_create_appointment_time_conflict(self, client: TestClient, auth_headers, test_appointment, test_user):
+    @pytest.mark.asyncio
+    async def test_create_appointment_time_conflict(self, client: AsyncClient, auth_headers, test_appointment, test_user):
         """Test creating appointment with time conflict"""
         # Try to create appointment at same time as existing one
         appointment_data = {
-            "patient_id": test_appointment.patient_id,
-            "provider_id": test_user.id,
+            "patient_id": str(test_appointment.patient_id),
+            "provider_id": str(test_user.id),
             "appointment_type": "cleaning",
             "status": "scheduled",
-            "start_time": test_appointment.start_time,
-            "end_time": test_appointment.end_time,
+            "start_time": test_appointment.start_time.isoformat(),
+            "end_time": test_appointment.end_time.isoformat(),
             "duration": 60
         }
         
-        response = client.post("/api/v1/appointments", json=appointment_data, headers=auth_headers)
+        response = await client.post("/api/v1/appointments", json=appointment_data, headers=auth_headers)
         
         assert response.status_code == 400
         assert "conflict" in response.json()["detail"].lower()
 
-    def test_update_appointment_success(self, client: TestClient, auth_headers, test_appointment):
+    @pytest.mark.asyncio
+    async def test_update_appointment_success(self, client: AsyncClient, auth_headers, test_appointment):
         """Test updating appointment"""
         update_data = {
             "status": "confirmed",
@@ -132,7 +143,7 @@ class TestAppointmentEndpoints:
             "duration": 90
         }
         
-        response = client.put(f"/api/v1/appointments/{test_appointment.id}", 
+        response = await client.put(f"/api/v1/appointments/{test_appointment.id}", 
                             json=update_data, headers=auth_headers)
         
         assert response.status_code == 200
@@ -141,23 +152,25 @@ class TestAppointmentEndpoints:
         assert data["notes"] == update_data["notes"]
         assert data["duration"] == update_data["duration"]
 
-    def test_update_appointment_not_found(self, client: TestClient, auth_headers):
+    @pytest.mark.asyncio
+    async def test_update_appointment_not_found(self, client: AsyncClient, auth_headers):
         """Test updating non-existent appointment"""
         update_data = {"status": "confirmed"}
         
-        response = client.put("/api/v1/appointments/nonexistent-id", 
+        response = await client.put("/api/v1/appointments/nonexistent-id", 
                             json=update_data, headers=auth_headers)
         
         assert response.status_code == 404
 
-    def test_cancel_appointment_success(self, client: TestClient, auth_headers, test_appointment):
+    @pytest.mark.asyncio
+    async def test_cancel_appointment_success(self, client: AsyncClient, auth_headers, test_appointment):
         """Test canceling appointment"""
         cancel_data = {
             "reason": "Patient requested cancellation",
             "cancelled_by": "patient"
         }
         
-        response = client.post(f"/api/v1/appointments/{test_appointment.id}/cancel", 
+        response = await client.post(f"/api/v1/appointments/{test_appointment.id}/cancel", 
                              json=cancel_data, headers=auth_headers)
         
         assert response.status_code == 200
@@ -165,7 +178,8 @@ class TestAppointmentEndpoints:
         assert data["status"] == "cancelled"
         assert data["cancellation_reason"] == cancel_data["reason"]
 
-    def test_reschedule_appointment_success(self, client: TestClient, auth_headers, test_appointment):
+    @pytest.mark.asyncio
+    async def test_reschedule_appointment_success(self, client: AsyncClient, auth_headers, test_appointment):
         """Test rescheduling appointment"""
         new_start_time = (datetime.now() + timedelta(days=2)).isoformat()
         new_end_time = (datetime.now() + timedelta(days=2, hours=1)).isoformat()
@@ -176,7 +190,7 @@ class TestAppointmentEndpoints:
             "reason": "Patient requested reschedule"
         }
         
-        response = client.post(f"/api/v1/appointments/{test_appointment.id}/reschedule", 
+        response = await client.post(f"/api/v1/appointments/{test_appointment.id}/reschedule", 
                              json=reschedule_data, headers=auth_headers)
         
         assert response.status_code == 200
@@ -184,7 +198,8 @@ class TestAppointmentEndpoints:
         assert data["start_time"] == new_start_time
         assert data["end_time"] == new_end_time
 
-    def test_complete_appointment_success(self, client: TestClient, auth_headers, test_appointment):
+    @pytest.mark.asyncio
+    async def test_complete_appointment_success(self, client: AsyncClient, auth_headers, test_appointment):
         """Test completing appointment"""
         completion_data = {
             "treatment_notes": "Cleaning completed successfully",
@@ -192,7 +207,7 @@ class TestAppointmentEndpoints:
             "next_appointment_interval": "6 months"
         }
         
-        response = client.post(f"/api/v1/appointments/{test_appointment.id}/complete", 
+        response = await client.post(f"/api/v1/appointments/{test_appointment.id}/complete", 
                              json=completion_data, headers=auth_headers)
         
         assert response.status_code == 200
@@ -200,38 +215,45 @@ class TestAppointmentEndpoints:
         assert data["status"] == "completed"
         assert data["treatment_notes"] == completion_data["treatment_notes"]
 
-    def test_delete_appointment_success(self, client: TestClient, auth_headers, db_session, test_patient, test_user):
+    @pytest.mark.asyncio
+    async def test_delete_appointment_success(self, client: AsyncClient, auth_headers, db_session: AsyncSession, test_patient, test_user):
         """Test deleting appointment"""
         # Create appointment to delete
         from app.models.appointment import Appointment
+        import uuid as uuid_lib
+        
         appointment = Appointment(
+            id=uuid_lib.uuid4(),
+            practice_id=test_user.practice_id,
             patient_id=test_patient.id,
             provider_id=test_user.id,
             appointment_type="consultation",
             status="scheduled",
-            start_time=(datetime.now() + timedelta(days=3)).isoformat(),
-            end_time=(datetime.now() + timedelta(days=3, hours=1)).isoformat(),
+            start_time=datetime.now() + timedelta(days=3),
+            end_time=datetime.now() + timedelta(days=3, hours=1),
             duration=60
         )
         db_session.add(appointment)
-        db_session.commit()
-        db_session.refresh(appointment)
+        await db_session.commit()
+        await db_session.refresh(appointment)
         
-        response = client.delete(f"/api/v1/appointments/{appointment.id}", headers=auth_headers)
+        response = await client.delete(f"/api/v1/appointments/{appointment.id}", headers=auth_headers)
         
         assert response.status_code == 200
         assert "deleted" in response.json()["message"].lower()
 
-    def test_delete_appointment_not_found(self, client: TestClient, auth_headers):
+    @pytest.mark.asyncio
+    async def test_delete_appointment_not_found(self, client: AsyncClient, auth_headers):
         """Test deleting non-existent appointment"""
-        response = client.delete("/api/v1/appointments/nonexistent-id", headers=auth_headers)
+        response = await client.delete("/api/v1/appointments/nonexistent-id", headers=auth_headers)
         
         assert response.status_code == 404
 
-    def test_get_appointment_availability(self, client: TestClient, auth_headers):
+    @pytest.mark.asyncio
+    async def test_get_appointment_availability(self, client: AsyncClient, auth_headers):
         """Test getting available appointment slots"""
         date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-        response = client.get(f"/api/v1/appointments/availability?date={date}&provider_id=provider-1", 
+        response = await client.get(f"/api/v1/appointments/availability?date={date}&provider_id=provider-1", 
                             headers=auth_headers)
         
         assert response.status_code == 200
@@ -239,15 +261,16 @@ class TestAppointmentEndpoints:
         assert "available_slots" in data
         assert isinstance(data["available_slots"], list)
 
-    def test_get_appointment_conflicts(self, client: TestClient, auth_headers, test_appointment):
+    @pytest.mark.asyncio
+    async def test_get_appointment_conflicts(self, client: AsyncClient, auth_headers, test_appointment):
         """Test checking for appointment conflicts"""
         conflict_data = {
-            "start_time": test_appointment.start_time,
-            "end_time": test_appointment.end_time,
-            "provider_id": test_appointment.provider_id
+            "start_time": test_appointment.start_time.isoformat(),
+            "end_time": test_appointment.end_time.isoformat(),
+            "provider_id": str(test_appointment.provider_id)
         }
         
-        response = client.post("/api/v1/appointments/check-conflicts", 
+        response = await client.post("/api/v1/appointments/check-conflicts", 
                              json=conflict_data, headers=auth_headers)
         
         assert response.status_code == 200

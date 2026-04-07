@@ -5,18 +5,18 @@ import os
 
 # Ensure required env vars for Settings to load during tests
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
-os.environ.setdefault("SECRET_KEY", "test-secret-key")
+os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only")
+os.environ.setdefault("ENCRYPTION_KEY", "test-encryption-key-32-bytes-long!")
 os.environ.setdefault("DEBUG", "True")
 os.environ.setdefault("ENVIRONMENT", "test")
 
 import pytest
 import asyncio
 import datetime
-import uuid
+import uuid as uuid_lib
 from typing import AsyncGenerator, Generator
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
@@ -28,70 +28,60 @@ from app.models.user import User
 from app.models.patient import Patient
 from app.models.appointment import Appointment
 
-# Test database URL
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
+# Test database URL (async SQLite)
+SQLALCHEMY_DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 
-# Create test engine
-engine = create_engine(
+# Create async test engine
+engine = create_async_engine(
     SQLALCHEMY_DATABASE_URL,
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
+    echo=False,
 )
 
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+TestingSessionLocal = async_sessionmaker(
+    engine, class_=AsyncSession, expire_on_commit=False
+)
 
 
-def override_get_db():
+async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
     """Override database dependency for testing"""
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
+    async with TestingSessionLocal() as session:
+        yield session
 
 
 app.dependency_overrides[get_db] = override_get_db
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="session")
-def client() -> Generator[TestClient, None, None]:
-    """Create test client"""
-    # Create tables
-    Base.metadata.create_all(bind=engine)
-    
-    with TestClient(app) as test_client:
-        yield test_client
-    
-    # Drop tables after tests
-    Base.metadata.drop_all(bind=engine)
+@pytest.fixture(scope="function")
+async def setup_database():
+    """Create database tables before tests and drop after"""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
 
 
 @pytest.fixture
-def db_session():
+async def db_session(setup_database) -> AsyncGenerator[AsyncSession, None]:
     """Create database session for testing"""
-    connection = engine.connect()
-    transaction = connection.begin()
-    session = TestingSessionLocal(bind=connection)
-    
-    yield session
-    
-    session.close()
-    transaction.rollback()
-    connection.close()
+    async with TestingSessionLocal() as session:
+        yield session
 
 
 @pytest.fixture
-def test_practice(db_session):
+async def client(setup_database) -> AsyncGenerator[AsyncClient, None]:
+    """Create async test client"""
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        yield ac
+
+
+@pytest.fixture
+async def test_practice(db_session: AsyncSession) -> Practice:
     """Create test practice"""
     practice = Practice(
+        id=uuid_lib.uuid4(),
         name="Test Practice",
         email="test@practice.com",
         phone="555-0100",
@@ -101,19 +91,19 @@ def test_practice(db_session):
         address_zip="12345",
     )
     db_session.add(practice)
-    db_session.commit()
-    db_session.refresh(practice)
+    await db_session.commit()
+    await db_session.refresh(practice)
     return practice
 
 
 @pytest.fixture
-def test_user(db_session, test_practice):
+async def test_user(db_session: AsyncSession, test_practice: Practice) -> User:
     """Create test user with unique email"""
-    import uuid
-    unique_email = f"testuser_{uuid.uuid4().hex[:8]}@example.com"
+    unique_email = f"testuser_{uuid_lib.uuid4().hex[:8]}@example.com"
     user = User(
+        id=uuid_lib.uuid4(),
         email=unique_email,
-        password_hash=get_password_hash("secret"),  # secret
+        password_hash=get_password_hash("testpassword123"),
         first_name="Test",
         last_name="User",
         role="dentist",
@@ -121,15 +111,16 @@ def test_user(db_session, test_practice):
         is_active=True,
     )
     db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
+    await db_session.commit()
+    await db_session.refresh(user)
     return user
 
 
 @pytest.fixture
-def test_patient(db_session, test_practice):
+async def test_patient(db_session: AsyncSession, test_practice: Practice) -> Patient:
     """Create test patient"""
     patient = Patient(
+        id=uuid_lib.uuid4(),
         practice_id=test_practice.id,
         first_name="John",
         last_name="Doe",
@@ -150,15 +141,21 @@ def test_patient(db_session, test_practice):
         status="active",
     )
     db_session.add(patient)
-    db_session.commit()
-    db_session.refresh(patient)
+    await db_session.commit()
+    await db_session.refresh(patient)
     return patient
 
 
 @pytest.fixture
-def test_appointment(db_session, test_practice, test_patient, test_user):
+async def test_appointment(
+    db_session: AsyncSession,
+    test_practice: Practice,
+    test_patient: Patient,
+    test_user: User
+) -> Appointment:
     """Create test appointment"""
     appointment = Appointment(
+        id=uuid_lib.uuid4(),
         practice_id=test_practice.id,
         patient_id=test_patient.id,
         provider_id=test_user.id,
@@ -170,19 +167,19 @@ def test_appointment(db_session, test_practice, test_patient, test_user):
         notes="Regular cleaning appointment",
     )
     db_session.add(appointment)
-    db_session.commit()
-    db_session.refresh(appointment)
+    await db_session.commit()
+    await db_session.refresh(appointment)
     return appointment
 
 
 @pytest.fixture
-def auth_headers(client, test_user):
+async def auth_headers(client: AsyncClient, test_user: User) -> dict:
     """Get authentication headers for test user"""
     login_data = {
         "email": test_user.email,
-        "password": "secret"
+        "password": "testpassword123"
     }
-    response = client.post("/api/v1/auth/login", json=login_data)
+    response = await client.post("/api/v1/auth/login", json=login_data)
     token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
 
@@ -191,7 +188,8 @@ def auth_headers(client, test_user):
 def mock_settings():
     """Mock settings for testing"""
     return {
-        "SECRET_KEY": "test-secret-key",
+        "SECRET_KEY": "test-secret-key-for-testing-only",
+        "ENCRYPTION_KEY": "test-encryption-key-32-bytes-long!",
         "DATABASE_URL": SQLALCHEMY_DATABASE_URL,
         "ACCESS_TOKEN_EXPIRE_MINUTES": 30,
         "ENVIRONMENT": "test",
