@@ -12,8 +12,8 @@ import re
 
 from app.core.config import settings
 
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing context - HIPAA compliant with 14 rounds (minimum recommended for healthcare)
+pwd_context = CryptContext(schemes=["bcrypt"], bcrypt__rounds=14, deprecated="auto")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:

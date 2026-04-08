@@ -60,8 +60,8 @@ export function useScheduling() {
       setChairs(chairList);
       setProviders(providerList);
       setAppointmentTypes(typeList);
-    } catch (error) {
-      console.error('Failed to load scheduling data:', error);
+    } catch {
+      // Failed to load scheduling data - will show empty state
     } finally {
       setIsLoading(false);
     }

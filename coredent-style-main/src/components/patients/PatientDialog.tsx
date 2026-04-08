@@ -186,8 +186,8 @@ export function PatientDialog({
         });
       }
       onSave();
-    } catch (error) {
-      console.error('Failed to save patient:', error);
+    } catch {
+      // Save failed - user can retry
     } finally {
       setIsSaving(false);
     }

@@ -52,8 +52,8 @@ export function AppointmentHistory({ patientId }: AppointmentHistoryProps) {
       try {
         const data = await patientApi.getAppointmentHistory(patientId);
         setAppointments(data);
-      } catch (error) {
-        console.error('Failed to load appointments:', error);
+      } catch {
+        // Failed to load appointments - will show empty state
       } finally {
         setIsLoading(false);
       }

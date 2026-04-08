@@ -9,47 +9,48 @@ import { AppShell } from "@/components/layout/AppShell";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { CookieConsent } from "@/components/CookieConsent";
 import { PageLoader } from "@/components/ui/spinner";
-import { Suspense, lazy, useEffect } from "react";
-import { logger } from "@/lib/logger";
+import { Suspense } from "react";
+import { publicRoutes, protectedRoutes, notFoundRoute } from "@/routes/config";
 
-// Lazy load pages for performance
-const Login = lazy(() => import("./pages/Login"));
-const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
-const ResetPassword = lazy(() => import("./pages/ResetPassword"));
-const AcceptInvitation = lazy(() => import("./pages/AcceptInvitation"));
-const Dashboard = lazy(() => import("./pages/Dashboard"));
-const Schedule = lazy(() => import("./pages/Schedule"));
-const PatientList = lazy(() => import("./pages/patients/PatientList"));
-const PatientProfile = lazy(() => import("./pages/patients/PatientProfile"));
-const DentalChart = lazy(() => import("./pages/DentalChart"));
-const TreatmentPlans = lazy(() => import("./pages/TreatmentPlans"));
-const Billing = lazy(() => import("./pages/Billing"));
-const Reports = lazy(() => import("./pages/Reports"));
-const Settings = lazy(() => import("./pages/Settings"));
-const NotFound = lazy(() => import("./pages/NotFound"));
-const ClinicalNotes = lazy(() => import("./pages/ClinicalNotes"));
-// New module pages
-const Insurance = lazy(() => import("./pages/Insurance"));
-const Imaging = lazy(() => import("./pages/Imaging"));
-const Appointments = lazy(() => import("./pages/Appointments"));
-const OnlineBooking = lazy(() => import("./pages/OnlineBooking"));
-const Inventory = lazy(() => import("./pages/Inventory"));
-const LabManagement = lazy(() => import("./pages/LabManagement"));
-const Referrals = lazy(() => import("./pages/Referrals"));
-const Communications = lazy(() => import("./pages/Communications"));
-const Marketing = lazy(() => import("./pages/Marketing"));
-const Documents = lazy(() => import("./pages/Documents"));
-const Payments = lazy(() => import("./pages/Payments"));
-const PublicBooking = lazy(() => import("./pages/PublicBooking"));
-const BookingSuccess = lazy(() => import("./pages/BookingSuccess"));
-const RevenueLanding = lazy(() => import("./pages/RevenueLanding"));
-const BillingPortal = lazy(() => import("./pages/BillingPortal"));
-const ImagingHub = lazy(() => import("./pages/ImagingHub"));
-const EnterpriseHQ = lazy(() => import("./pages/EnterpriseHQ"));
-const ReferralHub = lazy(() => import("./pages/ReferralHub"));
-const LabLogistics = lazy(() => import("./pages/LabLogistics"));
-const Subscriptions = lazy(() => import("./pages/Subscriptions"));
+/**
+ * RouteGroupErrorBoundary - Wraps route groups with error recovery
+ * Provides graceful error handling for specific route categories
+ */
+function RouteGroupErrorBoundary({
+  children,
+  fallbackMessage,
+}: {
+  children: React.ReactNode;
+  fallbackMessage: string;
+}) {
+  return (
+    <ErrorBoundary fallback={
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <h2 className="text-xl font-semibold text-destructive mb-2">
+            {fallbackMessage}
+          </h2>
+          <p className="text-muted-foreground mb-4">
+            Please try refreshing the page or contact support if the problem persists.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded hover:opacity-90"
+          >
+            Reload Page
+          </button>
+        </div>
+      </div>
+    }>
+      {children}
+    </ErrorBoundary>
+  );
+}
 
+/**
+ * React Query Client Configuration
+ * Optimized for medical data with conservative caching
+ */
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -64,457 +65,74 @@ const queryClient = new QueryClient({
   },
 });
 
+/**
+ * Main Application Component
+ * 
+ * Architecture:
+ * - Error boundary wraps entire app for crash recovery
+ * - Query client provides server state management
+ * - Auth provider handles authentication state
+ * - BrowserRouter manages client-side routing
+ * - Routes are generated from centralized configuration
+ */
 const App = () => {
-  // Register service worker for offline mode
-  useEffect(() => {
-    let cancelled = false;
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        if (cancelled) return;
-        navigator.serviceWorker
-          .register("/sw.js")
-          .then((registration) => {
-            logger.info("Service worker registered", { scope: registration.scope });
-          })
-          .catch((error: unknown) => {
-            const err = error instanceof Error ? error : new Error(String(error));
-            logger.error("Service worker registration failed", err);
-          });
-      });
-    }
-    return () => { cancelled = true; };
-  }, []);
-
   return (
-  <ErrorBoundary>
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <AuthProvider>
-          <Toaster />
-          <Sonner />
-          <CookieConsent />
-          <BrowserRouter>
-            <Suspense fallback={<PageLoader />}>
-              <Routes>
-                {/* Public routes - Auth flows */}
-                <Route path="/login" element={<Login />} />
-                <Route path="/forgot-password" element={<ForgotPassword />} />
-                <Route path="/reset-password" element={<ResetPassword />} />
-                <Route path="/accept-invitation" element={<AcceptInvitation />} />
-                
-                {/* Public Booking Portal */}
-                <Route path="/book/success" element={<BookingSuccess />} />
-                <Route path="/book/:slug" element={<PublicBooking />} />
-                
-                {/* Protected routes with AppShell */}
-                <Route
-                  path="/dashboard"
-                  element={
-                    <ProtectedRoute>
-                      <AppShell>
-                        <Dashboard />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                
-                {/* Patient Management routes */}
-                <Route
-                  path="/patients"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist', 'front_desk']}>
-                      <AppShell>
-                        <PatientList />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/patients/:id"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist', 'front_desk']}>
-                      <AppShell>
-                        <PatientProfile />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/schedule/*"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist', 'front_desk']}>
-                      <AppShell>
-                        <Schedule />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Dental Chart - Dentist only */}
-                <Route
-                  path="/chart"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'dentist']}>
-                      <AppShell>
-                        <DentalChart />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/chart/*"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'dentist']}>
-                      <AppShell>
-                        <DentalChart />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Treatment Plans - Dentist access */}
-                <Route
-                  path="/treatment-plans"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'dentist']}>
-                      <AppShell>
-                        <TreatmentPlans />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/treatment-plans/*"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'dentist']}>
-                      <AppShell>
-                        <TreatmentPlans />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/notes"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist']}>
-                      <AppShell>
-                        <ClinicalNotes />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/notes/:id"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist']}>
-                      <AppShell>
-                        <ClinicalNotes />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/notes/*"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist']}>
-                      <AppShell>
-                        <ClinicalNotes />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Billing - Admin and Front Desk access */}
-                <Route
-                  path="/billing"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'front_desk']}>
-                      <AppShell>
-                        <Billing />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/billing/*"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'front_desk']}>
-                      <AppShell>
-                        <Billing />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Reports - Owner and Admin only */}
-                <Route
-                  path="/reports"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
-                      <AppShell>
-                        <Reports />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/reports/*"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
-                      <AppShell>
-                        <Reports />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Settings - Owner and Admin only */}
-                <Route
-                  path="/settings"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
-                      <AppShell>
-                        <Settings />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/settings/*"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
-                      <AppShell>
-                        <Settings />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Revenue - Admin access */}
-                <Route
-                  path="/revenue"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
-                      <AppShell>
-                        <RevenueLanding />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Billing Portal - Admin access */}
-                <Route
-                  path="/billing-portal"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
-                      <AppShell>
-                        <BillingPortal />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Imaging Hub - Dentist and Hygienist */}
-                <Route
-                  path="/imaging-hub"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist', 'hygienist']}>
-                      <AppShell>
-                        <ImagingHub />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Enterprise HQ - Owner and Admin */}
-                <Route
-                  path="/enterprise/hq"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
-                      <AppShell>
-                        <EnterpriseHQ />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Referral Hub - Multiple roles */}
-                <Route
-                  path="/referrals/hub"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist', 'hygienist', 'front_desk']}>
-                      <AppShell>
-                        <ReferralHub />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Lab Logistics - Multiple roles */}
-                <Route
-                  path="/lab/logistics"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist', 'hygienist', 'front_desk']}>
-                      <AppShell>
-                        <LabLogistics />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Insurance Management */}
-                <Route
-                  path="/insurance"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'front_desk']}>
-                      <AppShell>
-                        <Insurance />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/insurance/*"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'front_desk']}>
-                      <AppShell>
-                        <Insurance />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Imaging Management - Admin and Dentist */}
-                <Route
-                  path="/imaging"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist']}>
-                      <AppShell>
-                        <Imaging />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/imaging/*"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist']}>
-                      <AppShell>
-                        <Imaging />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Appointments */}
-                <Route
-                  path="/appointments"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'front_desk']}>
-                      <AppShell>
-                        <Appointments />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Online Booking */}
-                <Route
-                  path="/online-booking"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'front_desk']}>
-                      <AppShell>
-                        <OnlineBooking />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Inventory */}
-                <Route
-                  path="/inventory"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
-                      <AppShell>
-                        <Inventory />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Lab Management */}
-                <Route
-                  path="/labs"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'dentist']}>
-                      <AppShell>
-                        <LabManagement />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Referrals */}
-                <Route
-                  path="/referrals"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'front_desk']}>
-                      <AppShell>
-                        <Referrals />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Communications */}
-                <Route
-                  path="/communications"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'front_desk']}>
-                      <AppShell>
-                        <Communications />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Marketing */}
-                <Route
-                  path="/marketing"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
-                      <AppShell>
-                        <Marketing />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Documents */}
-                <Route
-                  path="/documents"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'front_desk']}>
-                      <AppShell>
-                        <Documents />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Payments */}
-                <Route
-                  path="/payments"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin', 'front_desk']}>
-                      <AppShell>
-                        <Payments />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Subscriptions & Billing */}
-                <Route
-                  path="/subscriptions"
-                  element={
-                    <ProtectedRoute allowedRoles={['owner', 'admin']}>
-                      <AppShell>
-                        <Subscriptions />
-                      </AppShell>
-                    </ProtectedRoute>
-                  }
-                />
-                
-                {/* Redirect root to dashboard */}
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                
-                {/* 404 */}
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Suspense>
-          </BrowserRouter>
-        </AuthProvider>
-      </TooltipProvider>
-    </QueryClientProvider>
-  </ErrorBoundary>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <AuthProvider>
+            <Toaster />
+            <Sonner />
+            <CookieConsent />
+            <BrowserRouter>
+              <Suspense fallback={<PageLoader />}>
+                <Routes>
+                  {/* Public routes (no authentication required) - wrapped in error boundary */}
+                  <Route>
+                    {publicRoutes.map((route) => (
+                      <Route
+                        key={route.path}
+                        path={route.path}
+                        element={
+                          <RouteGroupErrorBoundary fallbackMessage="Unable to load this page">
+                            <route.component />
+                          </RouteGroupErrorBoundary>
+                        }
+                      />
+                    ))}
+                  </Route>
+
+                  {/* Protected routes (authentication required) - wrapped in error boundary */}
+                  <Route>
+                    {protectedRoutes.map((route) => (
+                      <Route
+                        key={route.path}
+                        path={route.path}
+                        element={
+                          <RouteGroupErrorBoundary fallbackMessage="Unable to load this section">
+                            <ProtectedRoute allowedRoles={route.roles}>
+                              <AppShell>
+                                <route.component />
+                              </AppShell>
+                            </ProtectedRoute>
+                          </RouteGroupErrorBoundary>
+                        }
+                      />
+                    ))}
+                  </Route>
+
+                  {/* 404 route */}
+                  <Route path={notFoundRoute.path} element={<notFoundRoute.component />} />
+
+                  {/* Root redirect */}
+                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                </Routes>
+              </Suspense>
+            </BrowserRouter>
+          </AuthProvider>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 };
 

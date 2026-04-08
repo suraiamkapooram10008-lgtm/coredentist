@@ -4,7 +4,7 @@ Represents staff members and system users
 SECURITY: Added database indexes for query performance
 """
 
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum, Index
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Enum, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -44,6 +44,16 @@ class User(Base):
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
     is_active = Column(Boolean, default=True)
     last_login = Column(DateTime(timezone=True), nullable=True)
+    
+    # SECURITY: Account lockout fields for brute force protection
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime(timezone=True), nullable=True)
+    last_failed_login = Column(DateTime(timezone=True), nullable=True)
+    
+    # SECURITY: Email verification
+    is_email_verified = Column(Boolean, default=False, nullable=False)
+    email_verification_token = Column(String(255), nullable=True)
+    
     # Password reset tokens are now stored in separate table for security
     # See PasswordResetToken model
     password_changed_at = Column(DateTime(timezone=True), nullable=True)

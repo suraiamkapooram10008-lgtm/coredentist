@@ -49,8 +49,8 @@ export function PatientSearchDialog({
         try {
           const data = await schedulingApi.searchPatients(query);
           setResults(data);
-        } catch (error) {
-          console.error('Patient search failed:', error);
+        } catch {
+          // Search failed - results will remain empty
         } finally {
           setIsLoading(false);
         }

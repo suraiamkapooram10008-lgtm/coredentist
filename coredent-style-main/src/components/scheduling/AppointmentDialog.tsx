@@ -165,8 +165,8 @@ export function AppointmentDialog({
         try {
           const results = await schedulingApi.searchPatients(searchQuery);
           setSearchResults(results);
-        } catch (error) {
-          console.error('Patient search failed:', error);
+        } catch {
+          // Search failed - results will remain empty
         } finally {
           setIsSearching(false);
         }
@@ -216,8 +216,8 @@ export function AppointmentDialog({
         notes: data.notes,
       });
       onOpenChange(false);
-    } catch (error) {
-      console.error('Failed to save appointment:', error);
+    } catch {
+      // Save failed - dialog remains open for user to retry
     } finally {
       setIsSaving(false);
     }

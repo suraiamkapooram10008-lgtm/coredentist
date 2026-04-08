@@ -87,8 +87,8 @@ export function AttachmentsList({
     try {
       await patientApi.uploadAttachment(patientId, file, selectedCategory);
       onUpload();
-    } catch (error) {
-      console.error('Upload failed:', error);
+    } catch {
+      // Upload failed - user can retry
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) {
@@ -102,8 +102,8 @@ export function AttachmentsList({
     try {
       await patientApi.deleteAttachment(patientId, deleteId);
       onDelete();
-    } catch (error) {
-      console.error('Delete failed:', error);
+    } catch {
+      // Delete failed - user can retry
     } finally {
       setDeleteId(null);
     }

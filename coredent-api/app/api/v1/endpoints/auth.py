@@ -50,6 +50,10 @@ async def _await_if_needed(value: Any) -> Any:
         return await value
     return value
 
+# Account lockout configuration
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_DURATION_MINUTES = 15
+
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("5/minute")  # SECURITY FIX: Only 5 login attempts per minute
 async def login(
@@ -62,12 +66,43 @@ async def login(
     """
     Login with email and password
     Returns access and refresh tokens
+    SECURITY: Implements account lockout after failed attempts
     """
     # Find user by email
     result = await _await_if_needed(db.execute(select(User).where(User.email == credentials.email)))
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(credentials.password, user.password_hash):
+    if not user:
+        # Generic message to prevent email enumeration
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+        )
+    
+    # Check if account is locked
+    if user.locked_until:
+        from datetime import datetime, timezone
+        if datetime.now(timezone.utc) < user.locked_until:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Account temporarily locked. Try again after {user.locked_until.isoformat()}",
+            )
+        else:
+            # Lockout expired, reset
+            user.failed_login_attempts = 0
+            user.locked_until = None
+    
+    if not verify_password(credentials.password, user.password_hash):
+        # Increment failed attempts
+        user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+        user.last_failed_login = datetime.now(timezone.utc)
+        
+        # Lock account if max attempts reached
+        if user.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
+            from datetime import datetime, timezone, timedelta
+            user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+        
+        await _await_if_needed(db.commit())
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -78,6 +113,11 @@ async def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive",
         )
+    
+    # Reset failed attempts on successful login
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    user.last_failed_login = None
 
     # Create tokens
     token_data = {
@@ -337,6 +377,91 @@ async def forgot_password(
         logging.warning(f"Failed to send password reset email: {e}")
     
     return {"message": "If the email exists, a password reset link has been sent"}
+
+
+@router.post("/resend-verification")
+@limiter.limit("3/minute")  # SECURITY: Prevent spam
+async def resend_verification_email(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    """
+    Resend email verification link
+    Only available for unverified users
+    """
+    if current_user.is_email_verified:
+        return {"message": "Email already verified"}
+    
+    # Generate new verification token
+    from app.core.security import generate_password_reset_token
+    from datetime import datetime, timedelta, timezone
+    
+    verification_token = generate_password_reset_token()
+    current_user.email_verification_token = verification_token
+    await _await_if_needed(db.commit())
+    
+    # Send verification email
+    try:
+        verification_link = f"{settings.FRONTEND_URL}/verify-email?token={verification_token}"
+        await email_service.send_email(
+            to=current_user.email,
+            subject="Verify Your Email - CoreDent",
+            html_content=f"""
+            <html>
+                <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <h1>Verify Your Email</h1>
+                    <p>Welcome to CoreDent! Please verify your email address by clicking the link below:</p>
+                    <p><a href="{verification_link}" style="background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px;">Verify Email</a></p>
+                    <p>Or copy this link: {verification_link}</p>
+                    <p>This link expires in 24 hours.</p>
+                    <hr>
+                    <p style="color: #666; font-size: 12px;">CoreDent Dental Practice Management</p>
+                </body>
+            </html>
+            """,
+            text_content=f"Verify your email: {verification_link}. This link expires in 24 hours."
+        )
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to send verification email: {e}")
+    
+    return {"message": "Verification email sent"}
+
+
+@router.get("/verify-email")
+async def verify_email(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Verify email with token
+    """
+    from datetime import datetime, timezone
+    
+    # Find user with matching verification token
+    result = await _await_if_needed(
+        db.execute(
+            select(User).where(
+                User.email_verification_token == token,
+                User.is_email_verified == False
+            )
+        )
+    )
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token",
+        )
+    
+    # Mark email as verified
+    user.is_email_verified = True
+    user.email_verification_token = None
+    await _await_if_needed(db.commit())
+    
+    return {"message": "Email verified successfully"}
 
 
 @router.post("/reset-password")

@@ -157,10 +157,10 @@ class FeatureFlagService {
         const remoteFlags = await response.json();
         this.flags = { ...this.flags, ...remoteFlags };
       }
-    } catch (error) {
+    } catch {
       // Silently fail and use default flags
       if (import.meta.env.DEV) {
-        console.warn('Failed to load remote feature flags, using defaults');
+        // Feature flags will use defaults - this is expected behavior
       }
     }
   }

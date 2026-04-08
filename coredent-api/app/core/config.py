@@ -34,12 +34,12 @@ class Settings(BaseSettings):
     @field_validator("SECRET_KEY")
     @classmethod
     def validate_secret_key(cls, v: str) -> str:
+        if not v or len(v) < 32:
+            raise ValueError("SECRET_KEY must be at least 32 characters long for security")
         if v == "insecure-default-key-for-dev-only-change-in-production":
-            import warnings
-            warnings.warn(
-                "SECURITY WARNING: Using default insecure SECRET_KEY. "
-                "This must be changed in production for HIPAA compliance.",
-                UserWarning
+            raise ValueError(
+                "SECURITY ERROR: Using default insecure SECRET_KEY. "
+                "Generate a secure key with: python -c 'from secrets import token_urlsafe; print(token_urlsafe(64))'"
             )
         return v
     

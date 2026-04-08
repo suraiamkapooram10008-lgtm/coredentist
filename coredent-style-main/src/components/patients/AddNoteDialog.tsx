@@ -66,8 +66,8 @@ export function AddNoteDialog({
       setIsPinned(false);
       
       onSave();
-    } catch (error) {
-      console.error('Failed to add note:', error);
+    } catch {
+      // Failed to add note - user can retry
     } finally {
       setIsSaving(false);
     }

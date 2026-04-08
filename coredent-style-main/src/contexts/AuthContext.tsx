@@ -19,7 +19,7 @@ import { analytics, trackLogin, trackLogout } from '@/lib/analytics';
   
   // Production safety check - this will throw if somehow bypass is enabled in production
   if (typeof window !== 'undefined' && import.meta.env.MODE === 'production' && import.meta.env.VITE_DEV_BYPASS_AUTH === 'true') {
-    console.error('SECURITY ERROR: Auth bypass cannot be enabled in production!');
+    logger.error('SECURITY ERROR: Auth bypass cannot be enabled in production!');
     throw new Error('Auth bypass enabled in production - this is a security violation');
   }
 
@@ -31,6 +31,7 @@ const DEV_USER: User = {
   role: 'owner',
   practiceId: 'dev-practice-1',
   practiceName: 'Development Practice',
+  practiceCountry: 'US',
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
