@@ -231,7 +231,7 @@ class UsageRecord(Base):
     """
     __tablename__ = "usage_records"
     __table_args__ = (
-        Index('idx_usage_sub_period', 'subscription_id', 'subscription_id'),
+        Index('idx_usage_sub_period', 'subscription_id', 'timestamp'),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
