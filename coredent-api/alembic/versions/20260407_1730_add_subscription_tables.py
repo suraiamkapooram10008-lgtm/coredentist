@@ -113,7 +113,7 @@ def upgrade() -> None:
         sa.Column('description', sa.String(500), nullable=True),
         sa.Column('metadata', postgresql.JSON(), nullable=True),
     )
-    op.create_index('idx_usage_sub_period', 'usage_records', ['subscription_id', 'subscription_id'])
+    op.create_index('idx_usage_sub_period', 'usage_records', ['subscription_id', 'timestamp'])
 
     # Create dunning_events table
     op.create_table(
