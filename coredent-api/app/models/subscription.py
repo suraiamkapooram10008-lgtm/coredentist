@@ -242,9 +242,9 @@ class UsageRecord(Base):
     quantity = Column(Numeric(10, 2), nullable=False)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Metadata
+    # Metadata (renamed from 'metadata' to avoid SQLAlchemy reserved word)
     description = Column(String(500))
-    metadata = Column(JSON)
+    usage_metadata = Column(JSON)
 
     # Relationships
     subscription = relationship("Subscription", back_populates="usage_records")

@@ -111,7 +111,7 @@ def upgrade() -> None:
         sa.Column('quantity', sa.Numeric(10, 2), nullable=False),
         sa.Column('timestamp', sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column('description', sa.String(500), nullable=True),
-        sa.Column('metadata', postgresql.JSON(), nullable=True),
+        sa.Column('usage_metadata', postgresql.JSON(), nullable=True),  # Renamed from 'metadata' to avoid SQLAlchemy reserved word
     )
     op.create_index('idx_usage_sub_period', 'usage_records', ['subscription_id', 'timestamp'])
 
