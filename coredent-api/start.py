@@ -33,17 +33,29 @@ def run_migrations():
         if database_url.startswith("postgres://"):
             database_url = database_url.replace("postgres://", "postgresql://", 1)
             
-        logger.info("Running database migrations...")
+        logger.info("=" * 60)
+        logger.info("STARTING DATABASE MIGRATIONS")
+        logger.info("=" * 60)
+        logger.info(f"Database URL: {database_url.split('@')[0]}@***")  # Hide credentials
+        
         alembic_cfg = alembic.config.Config("alembic.ini")
         
         # Override the sqlalchemy.url in alembic config with the environment variable
         alembic_cfg.set_main_option("sqlalchemy.url", database_url)
         
+        logger.info("Executing: alembic upgrade head")
         alembic.command.upgrade(alembic_cfg, "head")
-        logger.info("Database migrations completed successfully")
+        
+        logger.info("=" * 60)
+        logger.info("DATABASE MIGRATIONS COMPLETED SUCCESSFULLY")
+        logger.info("=" * 60)
         return True
     except Exception as e:
-        logger.error(f"Migration failed: {e}")
+        logger.error("=" * 60)
+        logger.error(f"MIGRATION FAILED: {e}")
+        logger.error("=" * 60)
+        import traceback
+        logger.error(traceback.format_exc())
         # Don't fail startup - table might already exist
         logger.warning("Continuing with server startup despite migration warning...")
         return False

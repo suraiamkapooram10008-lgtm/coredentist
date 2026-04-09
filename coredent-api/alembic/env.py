@@ -55,9 +55,14 @@ def do_run_migrations(connection: Connection) -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    # Add connection and statement timeouts to prevent hanging
     connectable = create_engine(
         config.get_main_option("sqlalchemy.url"),
         poolclass=pool.NullPool,
+        connect_args={
+            "connect_timeout": 10,
+            "options": "-c statement_timeout=300000"  # 5 minutes in milliseconds
+        }
     )
     with connectable.connect() as connection:
         do_run_migrations(connection)
