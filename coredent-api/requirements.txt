@@ -32,6 +32,10 @@ hiredis==2.3.2
 # AWS S3 (for file storage)
 boto3==1.34.34
 
+# File type detection (for secure uploads)
+python-magic==0.4.27
+python-magic-bin==0.4.14  # Windows binary for python-magic
+
 # Stripe Payments (US Market)
 stripe==7.11.0
 
@@ -69,3 +73,13 @@ mkdocs-material==9.5.6
 python-dotenv==1.0.0
 pytz==2024.1
 setuptools==69.0.3  # Required by razorpay (provides pkg_resources)
+
+# SMS Service
+twilio>=8.0.0
+
+# Email Service (already have sendgrid in other section)
+# sendgrid>=6.9.7
+
+# Task Scheduling (for automated reminders)
+apscheduler>=3.10.0
+celery==5.3.4

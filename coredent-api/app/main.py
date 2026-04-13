@@ -12,7 +12,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from app.core.config import settings
+from app.core.config_simple import settings
 from app.core.database import engine
 from app.core.limiter import limiter
 from app.api.v1.api import api_router
@@ -45,30 +45,144 @@ if settings.ENVIRONMENT == "production":
 
 logger = logging.getLogger(__name__)
 
-# Initialize Sentry for error tracking (optional)
-# Sentry is optional for local development and tests; some environments (e.g., Python 3.13)
-# may have compatibility issues with dependencies like eventlet.
+# Initialize Sentry for error tracking and monitoring (SECURITY FIX)
 try:
     import sentry_sdk
     from sentry_sdk.integrations.fastapi import FastApiIntegration
     from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
 except Exception:
     sentry_sdk = None
 
 if settings.SENTRY_DSN and sentry_sdk:
     try:
+        # SECURITY FIX: Enhanced Sentry configuration with security event tracking
+        sentry_logging = LoggingIntegration(
+            level=logging.INFO,  # Capture info and above as breadcrumbs
+            event_level=logging.ERROR  # Send errors as events
+        )
+        
         sentry_sdk.init(
             dsn=settings.SENTRY_DSN,
             integrations=[
                 FastApiIntegration(),
                 SqlalchemyIntegration(),
+                sentry_logging,
             ],
-            traces_sample_rate=0.1,
+            traces_sample_rate=0.1,  # 10% of transactions for performance monitoring
+            profiles_sample_rate=0.1,  # 10% for profiling
             environment=settings.ENVIRONMENT,
+            release=f"{settings.APP_NAME}@{settings.APP_VERSION}",
+            
+            # SECURITY: Filter sensitive data from error reports
+            before_send=lambda event, hint: filter_sensitive_data(event),
+            
+            # SECURITY: Track security-relevant events
+            attach_stacktrace=True,
+            send_default_pii=False,  # Don't send PII by default
         )
-    except Exception:
-        # Fail gracefully if Sentry initialization fails
+        
+        logger.info("Sentry monitoring initialized successfully")
+    except Exception as e:
+        logger.warning(f"Failed to initialize Sentry: {e}")
         sentry_sdk = None
+else:
+    if not settings.SENTRY_DSN:
+        logger.info("Sentry DSN not configured - monitoring disabled")
+
+
+def filter_sensitive_data(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Filter sensitive data from Sentry events (HIPAA compliance)
+    
+    Removes:
+    - Passwords
+    - Tokens
+    - API keys
+    - Patient data
+    - Email addresses
+    - Phone numbers
+    """
+    sensitive_keys = [
+        'password', 'token', 'secret', 'api_key', 'authorization',
+        'ssn', 'social_security', 'credit_card', 'card_number',
+        'patient_name', 'email', 'phone', 'address'
+    ]
+    
+    def redact_dict(d: dict) -> dict:
+        """Recursively redact sensitive keys"""
+        if not isinstance(d, dict):
+            return d
+        
+        for key in list(d.keys()):
+            if any(sensitive in key.lower() for sensitive in sensitive_keys):
+                d[key] = '[REDACTED]'
+            elif isinstance(d[key], dict):
+                d[key] = redact_dict(d[key])
+            elif isinstance(d[key], list):
+                d[key] = [redact_dict(item) if isinstance(item, dict) else item for item in d[key]]
+        
+        return d
+    
+    # Redact request data
+    if 'request' in event:
+        event['request'] = redact_dict(event['request'])
+    
+    # Redact extra data
+    if 'extra' in event:
+        event['extra'] = redact_dict(event['extra'])
+    
+    return event
+
+
+def log_security_event(
+    event_type: str,
+    severity: str,
+    message: str,
+    extra: Dict[str, Any] = None
+):
+    """
+    Log security events to Sentry and application logs
+    
+    Args:
+        event_type: Type of security event (e.g., 'rate_limit', 'auth_failure')
+        severity: Severity level ('info', 'warning', 'error', 'critical')
+        message: Event description
+        extra: Additional context data
+    """
+    log_data = {
+        'event_type': event_type,
+        'severity': severity,
+        'timestamp': datetime.now().isoformat(),
+        **(extra or {})
+    }
+    
+    # Log to application logs
+    if severity == 'critical':
+        logger.critical(message, extra=log_data)
+    elif severity == 'error':
+        logger.error(message, extra=log_data)
+    elif severity == 'warning':
+        logger.warning(message, extra=log_data)
+    else:
+        logger.info(message, extra=log_data)
+    
+    # Send to Sentry if configured
+    if sentry_sdk:
+        with sentry_sdk.push_scope() as scope:
+            scope.set_tag('event_type', event_type)
+            scope.set_tag('severity', severity)
+            scope.set_context('security_event', log_data)
+            
+            if severity in ['error', 'critical']:
+                sentry_sdk.capture_message(message, level=severity)
+            else:
+                sentry_sdk.add_breadcrumb(
+                    category='security',
+                    message=message,
+                    level=severity,
+                    data=log_data
+                )
 
 # Create FastAPI application
 app = FastAPI(
@@ -123,6 +237,82 @@ app.add_middleware(
     expose_headers=["X-Total-Count", "X-Page", "X-Page-Size"],
     max_age=3600,  # Cache preflight for 1 hour
 )
+
+# SECURITY FIX: Security Monitoring Middleware
+@app.middleware("http")
+async def security_monitoring_middleware(request: Request, call_next):
+    """
+    Monitor and log security-relevant events
+    
+    Tracks:
+    - Failed authentication attempts
+    - Rate limit violations
+    - Suspicious request patterns
+    - Error rates
+    """
+    import time
+    
+    start_time = time.time()
+    
+    try:
+        response = await call_next(request)
+        
+        # Track failed authentication
+        if response.status_code == 401:
+            log_security_event(
+                event_type='auth_failure',
+                severity='warning',
+                message=f"Authentication failed: {request.url.path}",
+                extra={
+                    'path': str(request.url.path),
+                    'method': request.method,
+                    'ip': request.client.host if request.client else 'unknown',
+                    'user_agent': request.headers.get('user-agent', 'unknown')
+                }
+            )
+        
+        # Track rate limit violations
+        elif response.status_code == 429:
+            log_security_event(
+                event_type='rate_limit',
+                severity='warning',
+                message=f"Rate limit exceeded: {request.url.path}",
+                extra={
+                    'path': str(request.url.path),
+                    'method': request.method,
+                    'ip': request.client.host if request.client else 'unknown'
+                }
+            )
+        
+        # Track server errors
+        elif response.status_code >= 500:
+            log_security_event(
+                event_type='server_error',
+                severity='error',
+                message=f"Server error: {request.url.path}",
+                extra={
+                    'path': str(request.url.path),
+                    'method': request.method,
+                    'status_code': response.status_code,
+                    'duration_ms': (time.time() - start_time) * 1000
+                }
+            )
+        
+        return response
+        
+    except Exception as e:
+        # Log unexpected errors
+        log_security_event(
+            event_type='exception',
+            severity='critical',
+            message=f"Unhandled exception: {str(e)}",
+            extra={
+                'path': str(request.url.path),
+                'method': request.method,
+                'error': str(e)
+            }
+        )
+        raise
 
 # HIGH-01 FIX: Audit Logging Middleware for HIPAA compliance
 if settings.AUDIT_LOG_ENABLED:

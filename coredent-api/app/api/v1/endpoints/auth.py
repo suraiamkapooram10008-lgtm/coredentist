@@ -7,7 +7,7 @@ import inspect
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -20,7 +20,7 @@ from app.core.security import (
     decode_token,
     validate_password_strength,
 )
-from app.core.config import settings
+from app.core.config_simple import settings
 from app.core.email import email_service
 from app.models.user import User
 from app.models.audit import Session as UserSession
@@ -81,7 +81,6 @@ async def login(
     
     # Check if account is locked
     if user.locked_until:
-        from datetime import datetime, timezone
         if datetime.now(timezone.utc) < user.locked_until:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -99,7 +98,6 @@ async def login(
         
         # Lock account if max attempts reached
         if user.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
-            from datetime import datetime, timezone, timedelta
             user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
         
         await _await_if_needed(db.commit())
@@ -138,10 +136,15 @@ async def login(
         )
     )
     
+    # SECURITY FIX: Hash refresh token before storing
+    from app.core.security import hash_token
+    token_hash = hash_token(refresh_token)
+    
     # Store refresh token in database
     session = UserSession(
         user_id=user.id,
-        refresh_token=refresh_token,
+        refresh_token=refresh_token,  # DEPRECATED: Keep for backward compatibility
+        token_hash=token_hash,  # SECURITY FIX: Store hashed token
         expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
@@ -246,13 +249,26 @@ async def refresh_token(
             detail="Invalid refresh token",
         )
     
-    # Check if session exists
+    # SECURITY FIX: Hash the provided token to compare with stored hash
+    from app.core.security import hash_token
+    token_hash = hash_token(refresh_in.refresh_token)
+    
+    # Check if session exists using hashed token
     result = await _await_if_needed(
         db.execute(
-            select(UserSession).where(UserSession.refresh_token == refresh_in.refresh_token)
+            select(UserSession).where(UserSession.token_hash == token_hash)
         )
     )
     session = result.scalar_one_or_none()
+    
+    # FALLBACK: Try legacy unhashed token for backward compatibility
+    if not session:
+        result = await _await_if_needed(
+            db.execute(
+                select(UserSession).where(UserSession.refresh_token == refresh_in.refresh_token)
+            )
+        )
+        session = result.scalar_one_or_none()
     
     if not session or session.expires_at < datetime.now(timezone.utc):
         raise HTTPException(
@@ -279,9 +295,11 @@ async def refresh_token(
     
     access_token = create_access_token(token_data)
     new_refresh_token = create_refresh_token(token_data)
+    new_token_hash = hash_token(new_refresh_token)  # SECURITY FIX: Hash new token
     
     # Update session with new refresh token
-    session.refresh_token = new_refresh_token
+    session.refresh_token = new_refresh_token  # DEPRECATED: Keep for backward compatibility
+    session.token_hash = new_token_hash  # SECURITY FIX: Store hashed token
     session.expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     await _await_if_needed(db.commit())
     
@@ -322,9 +340,10 @@ async def forgot_password(
         return {"message": "If the email exists, a password reset link has been sent"}
     
     # Generate reset token
-    from app.core.security import generate_password_reset_token
+    from app.core.security import generate_password_reset_token, hash_token
     from datetime import datetime, timedelta
     reset_token = generate_password_reset_token()
+    token_hash = hash_token(reset_token)  # SECURITY FIX: Hash token before storing
     
     # Store reset token in separate table for security (with expiration)
     # First, invalidate any existing tokens for this user
@@ -343,7 +362,8 @@ async def forgot_password(
     # Create new reset token
     password_reset = PasswordResetToken(
         user_id=user.id,
-        token=reset_token,
+        token=reset_token,  # DEPRECATED: Keep for backward compatibility
+        token_hash=token_hash,  # SECURITY FIX: Store hashed token
         expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
         ip_address=request.client.host if request.client else None,
     )
@@ -476,17 +496,34 @@ async def reset_password(
     """
     # Validate reset token using separate table
     from datetime import datetime
+    from app.core.security import hash_token
+    
+    # SECURITY FIX: Hash the provided token to compare with stored hash
+    token_hash = hash_token(reset_in.token)
     
     result = await _await_if_needed(
         db.execute(
             select(PasswordResetToken).where(
-                PasswordResetToken.token == reset_in.token,
+                PasswordResetToken.token_hash == token_hash,  # SECURITY FIX: Compare hashed tokens
                 PasswordResetToken.is_used == False,
                 PasswordResetToken.expires_at > datetime.now(timezone.utc)
             )
         )
     )
     password_reset = result.scalar_one_or_none()
+    
+    # FALLBACK: Try legacy unhashed token for backward compatibility
+    if not password_reset:
+        result = await _await_if_needed(
+            db.execute(
+                select(PasswordResetToken).where(
+                    PasswordResetToken.token == reset_in.token,
+                    PasswordResetToken.is_used == False,
+                    PasswordResetToken.expires_at > datetime.now(timezone.utc)
+                )
+            )
+        )
+        password_reset = result.scalar_one_or_none()
     
     if not password_reset:
         raise HTTPException(
@@ -519,6 +556,13 @@ async def reset_password(
     # Update user password
     user.password_hash = get_password_hash(reset_in.new_password)
     user.password_changed_at = datetime.now(timezone.utc)
+    
+    # SECURITY FIX: Invalidate all sessions on password change
+    await _await_if_needed(
+        db.execute(
+            delete(UserSession).where(UserSession.user_id == user.id)
+        )
+    )
     
     # Mark reset token as used
     password_reset.is_used = True

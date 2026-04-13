@@ -44,7 +44,8 @@ class Session(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     
-    refresh_token = Column(String(500), unique=True, nullable=False, index=True)
+    refresh_token = Column(String(500), unique=True, nullable=False, index=True)  # DEPRECATED: Use token_hash instead
+    token_hash = Column(String(255), nullable=True, index=True)  # SECURITY FIX: Store hashed refresh token
     expires_at = Column(DateTime(timezone=True), nullable=False)
     
     # Use string type for IP address for SQLite compatibility

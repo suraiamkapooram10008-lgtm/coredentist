@@ -10,7 +10,7 @@ from passlib.context import CryptContext
 import secrets
 import re
 
-from app.core.config import settings
+from app.core.config_simple import settings
 
 # Password hashing context - HIPAA compliant with 14 rounds (minimum recommended for healthcare)
 pwd_context = CryptContext(schemes=["bcrypt"], bcrypt__rounds=14, deprecated="auto")
@@ -99,6 +99,23 @@ def verify_csrf_token(token: str, expected_token: str) -> bool:
 def generate_password_reset_token() -> str:
     """Generate a secure password reset token"""
     return secrets.token_urlsafe(32)
+
+
+def hash_token(token: str) -> str:
+    """
+    Hash a token for secure storage (SECURITY FIX)
+    
+    Uses SHA-256 for fast hashing of tokens.
+    Tokens are already cryptographically random, so we don't need bcrypt's slow hashing.
+    
+    Args:
+        token: The token to hash
+        
+    Returns:
+        Hex-encoded SHA-256 hash of the token
+    """
+    import hashlib
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
 
 
 def generate_invitation_token() -> str:

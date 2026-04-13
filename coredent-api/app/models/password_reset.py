@@ -24,7 +24,8 @@ class PasswordResetToken(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    token = Column(String(255), nullable=False, index=True)
+    token = Column(String(255), nullable=False, index=True)  # DEPRECATED: Use token_hash instead
+    token_hash = Column(String(255), nullable=True, index=True)  # SECURITY FIX: Store hashed token
     expires_at = Column(DateTime(timezone=True), nullable=False)
     is_used = Column(Boolean, default=False)
     used_at = Column(DateTime(timezone=True), nullable=True)
