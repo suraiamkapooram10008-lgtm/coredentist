@@ -199,6 +199,16 @@ function PortalLogin({ onLogin }: { onLogin: (session: PortalSession) => void })
   );
 }
 
+interface DocumentItem {
+  id: string;
+  name: string;
+  type: string;
+  is_completed: boolean;
+  content: string | null;
+  assigned_date: string | null;
+  completed_date: string | null;
+}
+
 // ── Portal Dashboard ─────────────────────────────────────────────────
 
 function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogout: () => void }) {
@@ -207,6 +217,7 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
   const [totalOutstanding, setTotalOutstanding] = useState(0);
   const [treatmentPlans, setTreatmentPlans] = useState<TreatmentPlanItem[]>([]);
   const [insurance, setInsurance] = useState<InsurancePolicy[]>([]);
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
@@ -215,11 +226,12 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
     const tokenParam = `token=${encodeURIComponent(session.access_token)}`;
 
     try {
-      const [aptRes, billRes, txRes, insRes] = await Promise.allSettled([
+      const [aptRes, billRes, txRes, insRes, docRes] = await Promise.allSettled([
         fetch(`${API_BASE}/api/v1/portal/appointments?${tokenParam}`, { headers }),
         fetch(`${API_BASE}/api/v1/portal/billing?${tokenParam}`, { headers }),
         fetch(`${API_BASE}/api/v1/portal/treatment-plans?${tokenParam}`, { headers }),
         fetch(`${API_BASE}/api/v1/portal/insurance?${tokenParam}`, { headers }),
+        fetch(`${API_BASE}/api/v1/portal/documents?${tokenParam}`, { headers }),
       ]);
 
       if (aptRes.status === 'fulfilled' && aptRes.value.ok) {
@@ -238,6 +250,10 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
       if (insRes.status === 'fulfilled' && insRes.value.ok) {
         const d = await insRes.value.json();
         setInsurance(d.insurance_policies || []);
+      }
+      if (docRes.status === 'fulfilled' && docRes.value.ok) {
+        const d = await docRes.value.json();
+        setDocuments(d.documents || []);
       }
     } catch {
       // Silently handle - data just won't populate
@@ -360,18 +376,21 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
         {/* Main Tabbed Content */}
         <Tabs defaultValue="appointments" className="w-full">
           <Card className="border-none shadow-[0_20px_60px_rgba(0,0,0,0.04)] rounded-[2rem] overflow-hidden">
-            <TabsList className="h-14 bg-slate-50/50 p-1.5 gap-1.5 border-b border-slate-100 w-full justify-start px-6 rounded-none">
-              <TabsTrigger value="appointments" className="rounded-lg px-5 font-bold text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm">
+            <TabsList className="h-14 bg-slate-50/50 p-1.5 gap-1.5 border-b border-slate-100 w-full justify-start px-6 rounded-none flex-wrap h-auto">
+              <TabsTrigger value="appointments" className="rounded-lg px-5 py-2 font-bold text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm">
                 <Calendar className="w-4 h-4 mr-2" /> Appointments
               </TabsTrigger>
-              <TabsTrigger value="billing" className="rounded-lg px-5 font-bold text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm">
+              <TabsTrigger value="billing" className="rounded-lg px-5 py-2 font-bold text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm">
                 <CreditCard className="w-4 h-4 mr-2" /> Billing
               </TabsTrigger>
-              <TabsTrigger value="treatments" className="rounded-lg px-5 font-bold text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm">
-                <Heart className="w-4 h-4 mr-2" /> Treatment Plans
+              <TabsTrigger value="treatments" className="rounded-lg px-5 py-2 font-bold text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm">
+                <Heart className="w-4 h-4 mr-2" /> Treatment
               </TabsTrigger>
-              <TabsTrigger value="insurance" className="rounded-lg px-5 font-bold text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm">
+              <TabsTrigger value="insurance" className="rounded-lg px-5 py-2 font-bold text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm">
                 <Shield className="w-4 h-4 mr-2" /> Insurance
+              </TabsTrigger>
+              <TabsTrigger value="forms" className="rounded-lg px-5 py-2 font-bold text-slate-500 data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm">
+                <FileText className="w-4 h-4 mr-2" /> Digital Forms
               </TabsTrigger>
             </TabsList>
 
@@ -553,6 +572,70 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
                   </div>
                 ))
               )}
+            </TabsContent>
+            
+            {/* Digital Forms Tab */}
+            <TabsContent value="forms" className="p-8 m-0 space-y-4">
+              <h3 className="text-lg font-black text-slate-800 tracking-tight">Your Digital Forms</h3>
+              <p className="text-slate-500 font-medium">Please complete these forms before your next visit.</p>
+              
+              <div className="space-y-4 mt-6">
+                {documents.length === 0 ? (
+                  <div className="text-center py-16 text-slate-400">
+                    <FileText className="w-12 h-12 mx-auto mb-4 opacity-30" />
+                    <p className="font-bold">No forms pending.</p>
+                    <p className="text-sm mt-1">You are all caught up with your paperwork!</p>
+                  </div>
+                ) : (
+                  documents.map((doc) => (
+                    <div key={doc.id} className={`flex items-center justify-between p-5 rounded-2xl border border-slate-100 transition-colors ${doc.is_completed ? 'bg-slate-50/50' : 'hover:bg-blue-50/30 group'}`}>
+                      <div className="flex items-center gap-4">
+                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${doc.is_completed ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>
+                          {doc.is_completed ? <CheckCircle2 className="w-6 h-6" /> : <FileText className="w-6 h-6" />}
+                        </div>
+                        <div>
+                          <p className="font-black text-slate-900">{doc.name}</p>
+                          <p className="text-sm text-slate-500 font-medium">
+                            {doc.is_completed 
+                              ? `Completed on ${formatDate(doc.completed_date)}`
+                              : `Assigned on ${formatDate(doc.assigned_date)}`}
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-3">
+                        {doc.is_completed ? (
+                          <Badge variant="outline" className="font-bold uppercase tracking-wider text-[9px] px-3 py-1 bg-emerald-50 text-emerald-600 border-emerald-100">
+                            Completed
+                          </Badge>
+                        ) : (
+                          <>
+                            <Badge variant="outline" className="font-bold uppercase tracking-wider text-[9px] px-3 py-1 bg-amber-50 text-amber-600 border-amber-100">
+                              Signature Required
+                            </Badge>
+                            <Button 
+                              size="sm" 
+                              className="rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700"
+                              onClick={async () => {
+                                // Real implementation would open a modal with the doc.content and a canvas
+                                // Here we mock the signing for demo purposes
+                                if(confirm(`Sign document: ${doc.name}?`)) {
+                                  const res = await fetch(`${API_BASE}/api/v1/portal/documents/${doc.id}/sign?token=${encodeURIComponent(session.access_token)}&signature_data=mock`, {
+                                    method: 'POST'
+                                  });
+                                  if(res.ok) fetchData();
+                                }
+                              }}
+                            >
+                              Sign Now <ChevronRight className="w-3 h-3 ml-1" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </TabsContent>
           </Card>
         </Tabs>

@@ -5,11 +5,12 @@ Patient messaging, SMS/email reminders, two-way messaging
 
 from datetime import datetime, timedelta
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, Form
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
 from app.api.deps import get_db, get_current_user, get_current_practice
+from app.services.communications_service import CommunicationsEngine
 from app.models.user import User
 from app.models.practice import Practice
 from app.models.communication import (
@@ -608,7 +609,7 @@ def send_conversation_message(
     current_user: User = Depends(get_current_user),
     current_practice: Practice = Depends(get_current_practice)
 ):
-    """Send a message in a conversation"""
+    """Send a message in a conversation (Staff -> Patient)"""
     # Verify conversation exists
     conversation = db.query(Conversation).filter(
         and_(
@@ -619,7 +620,15 @@ def send_conversation_message(
     
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
+        
+    engine = CommunicationsEngine(db)
     
+    # Actually send the SMS if channel is SMS
+    if conversation.channel == MessageType.SMS:
+        patient = db.query(Patient).get(conversation.patient_id)
+        if patient and patient.phone:
+            engine.send_sms(patient.phone, message.content, current_practice)
+            
     db_message = ConversationMessage(
         **message.model_dump(),
         conversation_id=conversation_id,
@@ -637,6 +646,40 @@ def send_conversation_message(
     db.commit()
     
     return db_message
+
+
+# ============================================
+# Engine & Webhooks
+# ============================================
+
+@router.post("/webhook/twilio", tags=["Communications - Webhooks"])
+async def twilio_inbound_sms(
+    request: Request,
+    From: str = Form(...),
+    To: str = Form(...),
+    Body: str = Form(...),
+    MessageSid: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Twilio Incoming Webhook. 
+    Routes inbound text messages from patients to the Two-Way SMS system.
+    """
+    engine = CommunicationsEngine(db)
+    success = engine.handle_inbound_sms(From, To, Body, MessageSid)
+    
+    # Return empty TwiML response to acknowledge receipt
+    return "<Response></Response>"
+
+@router.post("/engine/run-recalls", tags=["Communications - Engine"])
+def trigger_recall_engine(db: Session = Depends(get_db)):
+    """
+    Manually trigger the Automated Recall System Engine.
+    In production, this is called by a cron job (e.g. AWS EventBridge) daily at 8AM.
+    """
+    engine = CommunicationsEngine(db)
+    engine.process_automated_recalls()
+    return {"status": "success", "message": "Automated recall engine executed"}
 
 
 # ============================================

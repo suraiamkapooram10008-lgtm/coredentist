@@ -373,3 +373,68 @@ async def make_payment(
         "invoice_id": str(invoice.id),
         "message": "Complete payment using the client secret with Stripe.js" if client_secret else "Payment recorded. Please contact the office for processing.",
     }
+
+
+# ── Digital Forms & Documents ─────────────────────────────────────────
+
+@router.get("/documents")
+async def get_my_documents(
+    token: str = Query(..., description="Portal access token"),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Get documents and forms assigned to the patient"""
+    patient = await _get_portal_patient(token, db)
+    from app.models.document import Document
+    
+    result = await db.execute(
+        select(Document).where(
+            Document.patient_id == patient.id,
+        ).order_by(Document.created_at.desc())
+    )
+    docs = result.scalars().all()
+    
+    return {
+        "documents": [
+            {
+                "id": str(d.id),
+                "name": d.name,
+                "type": d.category.value if hasattr(d.category, 'value') else str(d.category),
+                "is_completed": d.is_completed,
+                "content": d.content, # Contains the form fields/HTML
+                "assigned_date": d.created_at.isoformat() if d.created_at else None,
+                "completed_date": d.completed_at.isoformat() if d.completed_at else None,
+            }
+            for d in docs
+        ],
+        "count": len(docs),
+    }
+
+@router.post("/documents/{document_id}/sign")
+async def sign_document(
+    document_id: str,
+    signature_data: str = Query(..., description="Base64 image or signature text"),
+    token: str = Query(..., description="Portal access token"),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Submit an electronic signature for a form"""
+    patient = await _get_portal_patient(token, db)
+    from app.models.document import Document
+    
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.patient_id == patient.id
+        )
+    )
+    doc = result.scalar_one_or_none()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    doc.is_completed = True
+    doc.completed_at = datetime.now(timezone.utc)
+    
+    db.add(doc)
+    await db.commit()
+    
+    return {"status": "success", "message": "Document signed successfully"}
