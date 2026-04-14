@@ -798,6 +798,81 @@ async def create_pre_authorization(
         patient_id=patient_insurance.patient_id,
         patient_insurance_id=pre_auth_data.patient_insurance_id,
         authorization_number=auth_number,
+        procedure_codes=procedure_codes_json,
+        estimated_cost=pre_auth_data.estimated_cost,
+        notes=pre_auth_data.notes,
+    )
+    
+    db.add(pre_auth)
+    await db.commit()
+    await db.refresh(pre_auth)
+    
+    return pre_auth
+
+
+# Fee Schedule Endpoints
+
+from app.models.insurance import FeeSchedule, FeeScheduleEntry
+from app.schemas.insurance import FeeScheduleCreate, FeeScheduleResponse, FeeScheduleListResponse
+
+@router.get("/fee-schedules/", response_model=FeeScheduleListResponse)
+async def list_fee_schedules(
+    is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+) -> Any:
+    """
+    List fee schedules for the practice
+    """
+    query = select(FeeSchedule).where(FeeSchedule.practice_id == current_user.practice_id)
+    if is_active is not None:
+        query = query.where(FeeSchedule.is_active == is_active)
+        
+    result = await db.execute(query)
+    fee_schedules = result.scalars().all()
+    
+    # HIPAA Audit log mapping
+    await log_audit_event(
+        db, current_user, "list_fee_schedules", "fee_schedule", None, request
+    )
+    await db.commit()
+    
+    return FeeScheduleListResponse(
+        fee_schedules=fee_schedules,
+        count=len(fee_schedules)
+    )
+
+@router.post("/fee-schedules/", response_model=FeeScheduleResponse)
+async def create_fee_schedule(
+    schedule_data: FeeScheduleCreate,
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> Any:
+    """
+    Create a new fee schedule
+    """
+    new_schedule = FeeSchedule(
+        practice_id=current_user.practice_id,
+        name=schedule_data.name,
+        description=schedule_data.description,
+        is_active=schedule_data.is_active,
+    )
+    db.add(new_schedule)
+    await db.flush()
+    
+    if schedule_data.entries:
+        for entry_data in schedule_data.entries:
+            entry = FeeScheduleEntry(
+                fee_schedule_id=new_schedule.id,
+                **entry_data.dict()
+            )
+            db.add(entry)
+            
+    await db.commit()
+    await db.refresh(new_schedule)
+    return new_schedule
         request_date=pre_auth_data.request_date,
         procedure_codes=procedure_codes_json,
         estimated_cost=pre_auth_data.estimated_cost,

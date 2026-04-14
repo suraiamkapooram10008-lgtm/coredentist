@@ -4,7 +4,7 @@ Encrypts API keys, payment tokens, and other sensitive fields
 """
 
 from cryptography.fernet import Fernet
-from app.core.config import settings
+from app.core.config_simple import settings
 import logging
 
 logger = logging.getLogger(__name__)

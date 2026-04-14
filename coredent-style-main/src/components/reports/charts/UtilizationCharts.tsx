@@ -28,6 +28,18 @@ interface UtilizationChartsProps {
 }
 
 export const UtilizationCharts = React.memo(({ peakHours, byChair, byDayOfWeek }: UtilizationChartsProps) => {
+  const hasData = peakHours.length > 0 || byChair.length > 0 || byDayOfWeek.length > 0;
+  
+  if (!hasData) {
+    return (
+      <Card className="p-8">
+        <div className="text-center space-y-3">
+          <p className="text-muted-foreground">No utilization data available for the selected date range.</p>
+        </div>
+      </Card>
+    );
+  }
+  
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <Card>
@@ -35,24 +47,28 @@ export const UtilizationCharts = React.memo(({ peakHours, byChair, byDayOfWeek }
           <CardTitle>Hourly Utilization</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={peakHours}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis dataKey="hour" />
-                <YAxis tickFormatter={(v) => `${v}%`} />
-                <Tooltip
-                  formatter={(value: number) => `${value}%`}
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--background))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '8px',
-                  }}
-                />
-                <Bar dataKey="utilization" name="Utilization" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          {peakHours.length > 0 ? (
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={peakHours}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="hour" />
+                  <YAxis tickFormatter={(v) => `${v}%`} />
+                  <Tooltip
+                    formatter={(value: number) => `${value}%`}
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--background))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '8px',
+                    }}
+                  />
+                  <Bar dataKey="utilization" name="Utilization" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-8">No hourly data available</p>
+          )}
         </CardContent>
       </Card>
 
@@ -61,37 +77,41 @@ export const UtilizationCharts = React.memo(({ peakHours, byChair, byDayOfWeek }
           <CardTitle>Chair Performance</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {byChair.map((chair) => (
-              <div key={chair.chair} className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium">{chair.chair}</span>
-                  <div className="flex items-center gap-4">
-                    <span className="text-muted-foreground">
-                      {chair.appointments} appts
-                    </span>
-                    <span className={cn(
-                      'font-medium',
-                      chair.utilization >= 70 ? 'text-green-600' :
-                        chair.utilization >= 50 ? 'text-amber-600' : 'text-red-600'
-                    )}>
-                      {chair.utilization}%
-                    </span>
+          {byChair.length > 0 ? (
+            <div className="space-y-4">
+              {byChair.map((chair) => (
+                <div key={chair.chair} className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-medium">{chair.chair}</span>
+                    <div className="flex items-center gap-4">
+                      <span className="text-muted-foreground">
+                        {chair.appointments} appts
+                      </span>
+                      <span className={cn(
+                        'font-medium',
+                        chair.utilization >= 70 ? 'text-green-600' :
+                          chair.utilization >= 50 ? 'text-amber-600' : 'text-red-600'
+                      )}>
+                        {chair.utilization}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="h-2 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className={cn(
+                        'h-full rounded-full transition-all',
+                        chair.utilization >= 70 ? 'bg-green-500' :
+                          chair.utilization >= 50 ? 'bg-amber-500' : 'bg-red-500'
+                      )}
+                      style={{ width: `${chair.utilization}%` }}
+                    />
                   </div>
                 </div>
-                <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className={cn(
-                      'h-full rounded-full transition-all',
-                      chair.utilization >= 70 ? 'bg-green-500' :
-                        chair.utilization >= 50 ? 'bg-amber-500' : 'bg-red-500'
-                    )}
-                    style={{ width: `${chair.utilization}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-8">No chair data available</p>
+          )}
         </CardContent>
       </Card>
 
@@ -100,24 +120,28 @@ export const UtilizationCharts = React.memo(({ peakHours, byChair, byDayOfWeek }
           <CardTitle>Utilization by Day of Week</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-[200px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={byDayOfWeek} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis type="number" tickFormatter={(v) => `${v}%`} />
-                <YAxis dataKey="day" type="category" width={40} />
-                <Tooltip
-                  formatter={(value: number) => `${value}%`}
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--background))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '8px',
-                  }}
-                />
-                <Bar dataKey="utilization" name="Utilization" fill="hsl(var(--chart-4))" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          {byDayOfWeek.length > 0 ? (
+            <div className="h-[200px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={byDayOfWeek} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis type="number" tickFormatter={(v) => `${v}%`} />
+                  <YAxis dataKey="day" type="category" width={40} />
+                  <Tooltip
+                    formatter={(value: number) => `${value}%`}
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--background))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '8px',
+                    }}
+                  />
+                  <Bar dataKey="utilization" name="Utilization" fill="hsl(var(--chart-4))" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-8">No day-of-week data available</p>
+          )}
         </CardContent>
       </Card>
     </div>

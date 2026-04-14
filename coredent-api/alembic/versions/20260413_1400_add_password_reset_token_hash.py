@@ -17,6 +17,26 @@ depends_on = None
 
 
 def upgrade():
+    # Check if table exists, if not create it
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    
+    if 'password_reset_tokens' not in inspector.get_table_names():
+        # Create the table if it doesn't exist
+        op.create_table(
+            'password_reset_tokens',
+            sa.Column('id', sa.String(length=36), nullable=False),
+            sa.Column('user_id', sa.String(length=36), nullable=False),
+            sa.Column('token', sa.String(length=255), nullable=False),
+            sa.Column('expires_at', sa.DateTime(), nullable=False),
+            sa.Column('used', sa.Boolean(), nullable=True, default=False),
+            sa.Column('created_at', sa.DateTime(), nullable=True),
+            sa.PrimaryKeyConstraint('id'),
+            sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+        )
+        op.create_index('idx_password_reset_token', 'password_reset_tokens', ['token'], unique=True)
+        op.create_index('idx_password_reset_user_id', 'password_reset_tokens', ['user_id'], unique=False)
+    
     # Add token_hash column to password_reset_tokens table
     op.add_column('password_reset_tokens', sa.Column('token_hash', sa.String(length=255), nullable=True))
     

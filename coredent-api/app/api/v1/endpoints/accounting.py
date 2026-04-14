@@ -12,7 +12,7 @@ from uuid import UUID
 import httpx
 
 from app.core.database import get_db
-from app.core.config import settings
+from app.core.config_simple import settings
 from app.models.user import User, UserRole
 from app.models.billing import Invoice, Payment, InvoiceStatus
 from app.models.patient import Patient

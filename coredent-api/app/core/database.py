@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
-from app.core.config import settings
+from app.core.config_simple import settings
 from app.core.base import Base
 
 engine_url = settings.DATABASE_URL or ""
@@ -52,9 +52,8 @@ async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
         try:
             yield session
-            await session.commit()
+            # Only commit if no exceptions occurred
+            # Let the endpoint decide when to commit
         except Exception:
             await session.rollback()
             raise
-        finally:
-            await session.close()

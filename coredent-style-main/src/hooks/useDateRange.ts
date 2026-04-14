@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { subDays, subMonths, startOfMonth, endOfMonth } from 'date-fns';
 import type { DateRange } from '@/types/reports';
 
@@ -37,7 +37,7 @@ export function getDateRangeFromPreset(preset: PresetRange): DateRange {
  */
 export function useDateRange(initialPreset: PresetRange = 'last30days') {
   const [selectedPreset, setSelectedPreset] = useState<PresetRange>(initialPreset);
-  const [dateRange, setDateRange] = useState<DateRange>(getDateRangeFromPreset(initialPreset));
+  const [dateRange, setDateRange] = useState<DateRange>(() => getDateRangeFromPreset(initialPreset));
 
   const handlePresetChange = useCallback((preset: PresetRange) => {
     setSelectedPreset(preset);
@@ -51,8 +51,11 @@ export function useDateRange(initialPreset: PresetRange = 'last30days') {
     setSelectedPreset('custom');
   }, []);
 
+  // Memoize dateRange to prevent unnecessary re-renders
+  const memoizedDateRange = useMemo(() => dateRange, [dateRange.from, dateRange.to]);
+
   return {
-    dateRange,
+    dateRange: memoizedDateRange,
     selectedPreset,
     handlePresetChange,
     setCustomRange,

@@ -3,7 +3,7 @@ Practice Model
 Represents dental practices/clinics
 """
 
-from sqlalchemy import Column, String, DateTime, JSON, ForeignKey
+from sqlalchemy import Column, String, DateTime, JSON, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -41,15 +41,37 @@ class Practice(Base):
     group_id = Column(UUID(as_uuid=True), ForeignKey("practice_groups.id"), nullable=True)
     email = Column(String(255))
     phone = Column(String(20))
+    address = Column(String(255))  # Combined address field
     address_street = Column(String(255))
     address_city = Column(String(100))
     address_state = Column(String(100)) # Expanded for Global compatibility
     address_zip = Column(String(20))
+    city = Column(String(100))  # Alias for address_city
+    state = Column(String(100))  # Alias for address_state
+    zip_code = Column(String(20))  # Alias for address_zip
     country = Column(String(2), default="US") # Region Switch: US, IN, etc.
     timezone = Column(String(50), default="America/New_York")
     currency = Column(String(3), default="USD")
+    website = Column(String(255))
     logo_url = Column(String)
     settings = Column(JSON, default={})
+    
+    # Billing preferences
+    tax_rate = Column(JSON, default=0.0)  # Can be float or dict for multiple tax rates
+    invoice_prefix = Column(String(10), default="INV")
+    payment_terms = Column(JSON, default=30)  # Days
+    late_fee_percentage = Column(JSON, default=0.0)
+    accepted_payment_methods = Column(JSON, default=["cash", "card", "check"])
+    auto_send_invoices = Column(Boolean, default=False)
+    auto_send_reminders = Column(Boolean, default=False)
+    reminder_days_before = Column(JSON, default=3)
+    
+    # Working hours and appointment configuration
+    working_hours = Column(JSON, default={})
+    appointment_types = Column(JSON, default=[])  # Stored as JSON for flexibility
+    chairs = Column(JSON, default=[])  # Stored as JSON for flexibility
+    
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     

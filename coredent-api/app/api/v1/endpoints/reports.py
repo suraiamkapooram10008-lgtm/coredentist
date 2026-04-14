@@ -111,10 +111,10 @@ async def get_dashboard_metrics(
         curr += timedelta(days=1)
 
     # 2. Revenue Metrics (SQL-Level Aggregation)
+    # Note: amount_paid and balance_due are properties, not columns
+    # We need to calculate them from the payments table
     revenue_stmt = select(
-        func.sum(Invoice.total).label('revenue'),
-        func.sum(Invoice.amount_paid).label('collected'),
-        func.sum(Invoice.balance_due).label('outstanding')
+        func.sum(Invoice.total).label('revenue')
     ).where(
         and_(
             Invoice.practice_id == practice_id,
@@ -126,8 +126,24 @@ async def get_dashboard_metrics(
     rev_metrics = rev_res.one()
     
     total_revenue = float(rev_metrics.revenue or 0)
-    total_collected = float(rev_metrics.collected or 0)
-    total_outstanding = float(rev_metrics.outstanding or 0)
+    
+    # Calculate collected amount from payments
+    from app.models.billing import Payment, PaymentStatus
+    collected_stmt = select(
+        func.sum(Payment.amount).label('collected')
+    ).join(Invoice).where(
+        and_(
+            Invoice.practice_id == practice_id,
+            func.date(Invoice.created_at) >= from_date,
+            func.date(Invoice.created_at) <= to_date,
+            Payment.status == PaymentStatus.COMPLETED
+        )
+    )
+    collected_res = await db.execute(collected_stmt)
+    collected_metrics = collected_res.one()
+    
+    total_collected = float(collected_metrics.collected or 0)
+    total_outstanding = total_revenue - total_collected
     avg_per_visit = (total_revenue / completed) if completed > 0 else 0
 
     # byMonth aggregation

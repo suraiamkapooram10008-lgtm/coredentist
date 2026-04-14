@@ -8,55 +8,24 @@ import type {
   DashboardMetrics,
   ReportType
 } from '@/types/reports';
+import type { ApiResponse } from '@/types/api';
 import { format } from 'date-fns';
 import { apiClient } from './api';
 
 export const reportsApi = {
   // Get full dashboard metrics
-  async getDashboardMetrics(dateRange: DateRange): Promise<DashboardMetrics> {
+  async getDashboardMetrics(dateRange: DateRange): Promise<ApiResponse<DashboardMetrics>> {
+    // Backend expects date strings in YYYY-MM-DD format, not ISO timestamps
+    const fromDate = dateRange.from.toISOString().split('T')[0];
+    const toDate = dateRange.to.toISOString().split('T')[0];
+    
     const response = await apiClient.get<DashboardMetrics>('/reports/dashboard', {
-      from: dateRange.from.toISOString(),
-      to: dateRange.to.toISOString(),
+      from: fromDate,
+      to: toDate,
     });
-    if (response.success && response.data) {
-      return response.data;
-    }
-    return {
-      appointments: {
-        total: 0,
-        completed: 0,
-        cancelled: 0,
-        noShow: 0,
-        scheduled: 0,
-        completionRate: 0,
-        noShowRate: 0,
-        byType: [],
-        byDay: [],
-      },
-      revenue: {
-        totalRevenue: 0,
-        totalCollected: 0,
-        totalOutstanding: 0,
-        averagePerVisit: 0,
-        byMonth: [],
-        byProcedure: [],
-      },
-      treatmentAcceptance: {
-        proposedPlans: 0,
-        acceptedPlans: 0,
-        completedPlans: 0,
-        acceptanceRate: 0,
-        completionRate: 0,
-        byMonth: [],
-      },
-      chairUtilization: {
-        totalChairs: 0,
-        averageUtilization: 0,
-        peakHours: [],
-        byChair: [],
-        byDayOfWeek: [],
-      },
-    };
+    
+    // Return the full ApiResponse, not just the data
+    return response;
   },
 
   // Export report as CSV

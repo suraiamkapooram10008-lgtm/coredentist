@@ -12,7 +12,7 @@ from alembic import context
 
 from app.core.base import Base
 from app.models import *  # noqa
-from app.core.config import settings
+from app.core.config_simple import settings
 
 # this is the Alembic Config object
 config = context.config
@@ -55,14 +55,22 @@ def do_run_migrations(connection: Connection) -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
-    # Add connection and statement timeouts to prevent hanging
-    connectable = create_engine(
-        config.get_main_option("sqlalchemy.url"),
-        poolclass=pool.NullPool,
-        connect_args={
+    # Get database URL
+    url = config.get_main_option("sqlalchemy.url")
+    
+    # Configure connect_args based on database type
+    connect_args = {}
+    if "postgresql" in url:
+        connect_args = {
             "connect_timeout": 10,
             "options": "-c statement_timeout=300000"  # 5 minutes in milliseconds
         }
+    # SQLite doesn't support these parameters, so leave connect_args empty
+    
+    connectable = create_engine(
+        url,
+        poolclass=pool.NullPool,
+        connect_args=connect_args
     )
     with connectable.connect() as connection:
         do_run_migrations(connection)

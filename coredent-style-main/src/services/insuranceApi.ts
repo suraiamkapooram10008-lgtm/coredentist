@@ -22,8 +22,8 @@ export const insuranceApi = {
   // ============================================
 
   async getCarriers(filters?: { search?: string; isActive?: boolean }): Promise<InsuranceCarrier[]> {
-    const response = await apiClient.get<InsuranceCarrier[]>('/insurance/carriers', filters as Record<string, unknown>);
-    return response.success && response.data ? response.data : [];
+    const response = await apiClient.get<{ carriers: InsuranceCarrier[]; count: number }>('/insurance/carriers', filters as Record<string, unknown>);
+    return response.success && response.data ? response.data.carriers : [];
   },
 
   async getCarrier(carrierId: string): Promise<InsuranceCarrier | null> {
@@ -56,8 +56,8 @@ export const insuranceApi = {
   // ============================================
 
   async getPatientInsurance(patientId: string): Promise<PatientInsurance[]> {
-    const response = await apiClient.get<PatientInsurance[]>(`/insurance/patients/${patientId}/policies`);
-    return response.success && response.data ? response.data : [];
+    const response = await apiClient.get<{ insurances: PatientInsurance[]; count: number }>(`/insurance/patients/${patientId}/policies`);
+    return response.success && response.data ? response.data.insurances : [];
   },
 
   async getInsurancePolicy(policyId: string): Promise<PatientInsurance | null> {
@@ -110,8 +110,9 @@ export const insuranceApi = {
     startDate?: string;
     endDate?: string;
   }): Promise<InsuranceClaim[]> {
-    const response = await apiClient.get<InsuranceClaim[]>('/insurance/claims', filters as Record<string, unknown>);
-    return response.success && response.data ? response.data : [];
+    const response = await apiClient.get<{ claims: InsuranceClaim[]; count: number }>('/insurance/claims', filters as Record<string, unknown>);
+    // Backend returns { claims: [...], count: number }, extract the claims array
+    return response.success && response.data ? response.data.claims : [];
   },
 
   async getClaim(claimId: string): Promise<InsuranceClaim | null> {
@@ -167,8 +168,9 @@ export const insuranceApi = {
     patientId?: string;
     status?: PreAuthStatus;
   }): Promise<InsurancePreAuthorization[]> {
-    const response = await apiClient.get<InsurancePreAuthorization[]>('/insurance/pre-auth', filters as Record<string, unknown>);
-    return response.success && response.data ? response.data : [];
+    const response = await apiClient.get<{ pre_authorizations: InsurancePreAuthorization[]; count: number }>('/insurance/pre-auth', filters as Record<string, unknown>);
+    // Backend returns { pre_authorizations: [...], count: number }, extract the array
+    return response.success && response.data ? response.data.pre_authorizations : [];
   },
 
   async getPreAuthorization(preAuthId: string): Promise<InsurancePreAuthorization | null> {

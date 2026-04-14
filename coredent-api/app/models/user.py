@@ -16,13 +16,13 @@ from app.core.base import Base
 
 class UserRole(str, enum.Enum):
     """User roles for RBAC"""
-    OWNER = "owner"
-    ADMIN = "admin"
-    DENTIST = "dentist"
-    HYGIENIST = "hygienist"
-    FRONT_DESK = "front_desk"
-    GROUP_OWNER = "group_owner"
-    GROUP_ADMIN = "group_admin"
+    OWNER = "OWNER"
+    ADMIN = "ADMIN"
+    DENTIST = "DENTIST"
+    HYGIENIST = "HYGIENIST"
+    FRONT_DESK = "FRONT_DESK"
+    GROUP_OWNER = "GROUP_OWNER"
+    GROUP_ADMIN = "GROUP_ADMIN"
 
 
 class User(Base):

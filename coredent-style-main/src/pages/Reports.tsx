@@ -3,7 +3,7 @@
 // Analytics dashboard for clinic owners
 // ============================================
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -67,20 +67,37 @@ export default function Reports() {
     PRESET_RANGES 
   } = useDateRange('last30days');
 
+  // Memoize options to prevent execute function from being recreated
+  // No error message - we'll handle empty state gracefully
+  const apiOptions = useMemo(() => ({}), []);
+
   const {
     data: metrics,
     isLoading,
+    error,
     execute: loadMetrics
-  } = useApiRequest(reportsApi.getDashboardMetrics, {
-    errorMessage: 'Failed to load reports data'
-  });
+  } = useApiRequest(reportsApi.getDashboardMetrics, apiOptions);
 
   const [activeTab, setActiveTab] = useState('overview');
 
   // effect:audited — Load metrics when date range changes
   useEffect(() => {
+    console.log('[Reports] Loading metrics for date range:', dateRange);
     loadMetrics(dateRange);
   }, [dateRange, loadMetrics]);
+
+  // Log when data changes
+  useEffect(() => {
+    console.log('[Reports] Data updated:', { 
+      hasMetrics: !!metrics, 
+      isLoading, 
+      error,
+      metricsPreview: metrics ? {
+        appointmentsTotal: metrics.appointments?.total,
+        revenueTotal: metrics.revenue?.totalRevenue
+      } : null
+    });
+  }, [metrics, isLoading, error]);
 
   const handleExport = (reportType: ReportType) => {
     if (!metrics) return;
@@ -96,6 +113,13 @@ export default function Reports() {
       maximumFractionDigits: 0,
     }).format(amount);
   };
+
+  // Check if we have valid empty data (no error, but all zeros)
+  const hasNoData = metrics && 
+    metrics.appointments && 
+    metrics.revenue && 
+    metrics.appointments.total === 0 && 
+    metrics.revenue.totalRevenue === 0;
 
   return (
     <div className="space-y-6">
@@ -145,6 +169,27 @@ export default function Reports() {
           </div>
           <Skeleton className="h-[400px] rounded-xl" />
         </div>
+      ) : error ? (
+        <Card className="p-8">
+          <div className="text-center space-y-3">
+            <AlertTriangle className="h-12 w-12 text-destructive mx-auto" />
+            <h3 className="text-lg font-semibold">Failed to Load Reports</h3>
+            <p className="text-muted-foreground">{error}</p>
+            <Button onClick={() => loadMetrics(dateRange)} variant="outline">
+              Try Again
+            </Button>
+          </div>
+        </Card>
+      ) : hasNoData ? (
+        <Card className="p-8">
+          <div className="text-center space-y-3">
+            <Users className="h-12 w-12 text-muted-foreground mx-auto" />
+            <h3 className="text-lg font-semibold">No Data Available</h3>
+            <p className="text-muted-foreground">
+              No reports data found for the selected date range. Start by scheduling appointments and recording treatments.
+            </p>
+          </div>
+        </Card>
       ) : metrics ? (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
@@ -234,20 +279,24 @@ export default function Reports() {
               <Card>
                 <CardHeader><CardTitle>Revenue by Procedure</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
-                  {metrics.revenue.byProcedure.map((proc, index) => {
-                    const maxRevenue = Math.max(...metrics.revenue.byProcedure.map(p => p.revenue));
-                    return (
-                      <div key={proc.procedure} className="space-y-1">
-                        <div className="flex items-center justify-between text-sm">
-                          <span>{proc.procedure}</span>
-                          <span className="font-medium">{formatCurrency(proc.revenue)}</span>
+                  {metrics.revenue.byProcedure.length > 0 ? (
+                    metrics.revenue.byProcedure.map((proc, index) => {
+                      const maxRevenue = Math.max(...metrics.revenue.byProcedure.map(p => p.revenue));
+                      return (
+                        <div key={proc.procedure} className="space-y-1">
+                          <div className="flex items-center justify-between text-sm">
+                            <span>{proc.procedure}</span>
+                            <span className="font-medium">{formatCurrency(proc.revenue)}</span>
+                          </div>
+                          <div className="h-2 bg-muted rounded-full overflow-hidden">
+                            <div className="h-full rounded-full transition-all" style={{ width: `${(proc.revenue / maxRevenue) * 100}%`, backgroundColor: COLORS[index % COLORS.length] }} />
+                          </div>
                         </div>
-                        <div className="h-2 bg-muted rounded-full overflow-hidden">
-                          <div className="h-full rounded-full transition-all" style={{ width: `${(proc.revenue / maxRevenue) * 100}%`, backgroundColor: COLORS[index % COLORS.length] }} />
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-4">No procedure data available</p>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -262,8 +311,8 @@ export default function Reports() {
               <MetricCard title="Total Chairs" value={metrics.chairUtilization.totalChairs} icon={Users} />
               <MetricCard 
                 title="Peak Hour" 
-                value={metrics.chairUtilization.peakHours.reduce((max, h) => h.utilization > max.utilization ? h : max).hour} 
-                subtitle={`${metrics.chairUtilization.peakHours.reduce((max, h) => h.utilization > max.utilization ? h : max).utilization}% utilization`}
+                value={metrics.chairUtilization.peakHours.length > 0 ? metrics.chairUtilization.peakHours.reduce((max, h) => h.utilization > max.utilization ? h : max).hour : 'N/A'} 
+                subtitle={metrics.chairUtilization.peakHours.length > 0 ? `${metrics.chairUtilization.peakHours.reduce((max, h) => h.utilization > max.utilization ? h : max).utilization}% utilization` : 'No data'}
                 icon={TrendingUp} 
               />
             </div>

@@ -4,12 +4,20 @@ Loads settings from environment variables
 """
 
 from typing import List, Any
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
+    
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        # Disable JSON parsing for all fields
+        env_parse_none_str="",
+        env_ignore_empty=True
+    )
     
     # Application
     APP_NAME: str = "CoreDent API"
@@ -51,10 +59,14 @@ class Settings(BaseSettings):
     
     @field_validator("ALLOWED_HOSTS", mode="before")
     @classmethod
-    def parse_allowed_hosts(cls, v: Any) -> Any:
+    def parse_allowed_hosts(cls, v: Any) -> List[str]:
         if isinstance(v, str):
+            if not v:
+                return []
             return [host.strip() for host in v.split(",") if host.strip()]
-        return v if v else []
+        if isinstance(v, list):
+            return v
+        return []
     
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 100
@@ -86,8 +98,28 @@ class Settings(BaseSettings):
     # Sentry (Optional)
     SENTRY_DSN: str = ""
     
-    # Stripe Payments (Optional - US Market)
+    # Stripe
     STRIPE_API_KEY: str = ""
+    STRIPE_PUBLISHABLE_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    
+    # Webhook Security (CRITICAL FIX)
+    STRIPE_WEBHOOK_IP_WHITELIST_ENABLED: bool = True  # Enable IP whitelist in production
+    STRIPE_WEBHOOK_HMAC_SECRET: str = ""  # Optional additional HMAC layer
+    
+    # CAPTCHA Settings (CRITICAL FIX - Anti-Spam)
+    RECAPTCHA_SECRET_KEY: str = ""  # Get from https://www.google.com/recaptcha/admin
+    RECAPTCHA_SITE_KEY: str = ""  # Public key for frontend
+    HCAPTCHA_SECRET_KEY: str = ""  # Alternative to reCAPTCHA
+    HCAPTCHA_SITE_KEY: str = ""  # Public key for frontend
+    
+    # Celery
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
+    
+    # Stripe Payments (Optional - US Market)
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_PUBLISHABLE_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
     
     # Razorpay Payments (Optional - Indian Market)
@@ -110,6 +142,17 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE: int = 10485760  # 10MB
     ALLOWED_EXTENSIONS: List[str] = ["pdf", "jpg", "jpeg", "png", "doc", "docx"]
     
+    @field_validator("ALLOWED_EXTENSIONS", mode="before")
+    @classmethod
+    def parse_allowed_extensions(cls, v: Any) -> List[str]:
+        if isinstance(v, str):
+            if not v:
+                return ["pdf", "jpg", "jpeg", "png", "doc", "docx"]
+            return [ext.strip() for ext in v.split(",") if ext.strip()]
+        if isinstance(v, list):
+            return v
+        return ["pdf", "jpg", "jpeg", "png", "doc", "docx"]
+    
     # Pagination
     DEFAULT_PAGE_SIZE: int = 10
     MAX_PAGE_SIZE: int = 100
@@ -126,18 +169,15 @@ class Settings(BaseSettings):
     
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
-    def parse_cors_origins_default(cls, v: Any) -> Any:
+    def parse_cors_origins_default(cls, v: Any) -> List[str]:
         if isinstance(v, str):
+            if not v:
+                return []
             origins = [origin.strip() for origin in v.split(",") if origin.strip()]
-            return origins if origins else []
-        if not v:
-            # No hardcoded URLs - must be set via environment variable
-            return []
-        return v
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+            return origins
+        if isinstance(v, list):
+            return v
+        return []
 
 
 def validate_production_config() -> None:

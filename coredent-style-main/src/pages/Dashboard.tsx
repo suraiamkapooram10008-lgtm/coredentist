@@ -83,11 +83,18 @@ export default function Dashboard() {
   const monthStart = useMemo(() => startOfMonth(today), [today]);
 
   // Load dashboard metrics with React Query
-  const { data: metrics, isLoading: isLoadingMetrics } = useQuery({
+  const { data: metricsResponse, isLoading: isLoadingMetrics } = useQuery({
     queryKey: ['dashboard', 'metrics', monthStart, today],
     queryFn: () => reportsApi.getDashboardMetrics({ from: monthStart, to: today }),
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
+
+  // Extract metrics from response
+  const metrics = useMemo(() => {
+    return metricsResponse?.success && metricsResponse.data 
+      ? metricsResponse.data 
+      : null;
+  }, [metricsResponse]);
 
   // Load today's appointments
   const { data: appointmentsResponse, isLoading: isLoadingAppointments } = useQuery({

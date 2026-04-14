@@ -53,6 +53,13 @@ class UserResponse(UserInDB):
     
     class Config:
         from_attributes = True
+    
+    @validator('role', pre=False)
+    def lowercase_role(cls, v):
+        """Convert role enum to lowercase string for frontend compatibility"""
+        if isinstance(v, UserRole):
+            return v.value.lower()
+        return str(v).lower() if v else v
 
 
 class PasswordChange(BaseModel):

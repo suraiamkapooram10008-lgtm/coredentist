@@ -70,41 +70,70 @@ async def get_current_user(
             detail="Invalid token payload",
         )
     
-    # EXPERT HARDENING: Eager load Practice to verify Multi-Tenant status
-    # This prevents users from deactivated practices from accessing the API.
-    query_stmt = (
-        select(User)
-        .options(selectinload(User.practice))
-        .where(User.id == UUID(user_id))
-    )
+    # Debug logging
+    print(f"[DEBUG] Looking up user with ID: {user_id}")
+    print(f"[DEBUG] User ID type: {type(user_id)}")
     
-    query = db.execute(query_stmt)
-    if asyncio.iscoroutine(query):
-        query = await query
-    user = query.scalar_one_or_none()
-    
-    if not user:
+    try:
+        # For SQLite: UUIDs are stored as TEXT with dashes
+        # We need to cast the column to string for comparison
+        from sqlalchemy import cast, String
+        query_stmt = select(User).where(cast(User.id, String) == user_id)
+        
+        # Debug: print the query
+        print(f"[DEBUG] Query: {query_stmt}")
+        
+        # Always await the execute call for async sessions
+        result = await db.execute(query_stmt)
+        user = result.scalar_one_or_none()
+        
+        print(f"[DEBUG] Query result: {user}")
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+            )
+        
+        # Check User Status
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account is inactive",
+            )
+        
+        # CRIT-05 FIX: Verify Practice Status (Tenant Leash)
+        # Check if user has a practice and if it's active
+        if not user.practice_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User is not assigned to a practice.",
+            )
+        
+        # Query practice separately to verify it's active
+        from app.models.practice import Practice
+        from sqlalchemy import cast, String
+        # Cast UUID column to string for SQLite comparison
+        practice_stmt = select(Practice).where(cast(Practice.id, String) == str(user.practice_id))
+        practice_result = await db.execute(practice_stmt)
+        practice = practice_result.scalar_one_or_none()
+        
+        if not practice or not practice.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Practice account is suspended or inactive. Please contact support.",
+            )
+        
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Error in get_current_user: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
+            detail="Could not validate credentials",
         )
-    
-    # Check User Status
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive",
-        )
-    
-    # CRIT-05 FIX: Verify Practice Status (Tenant Leash)
-    # If the practice is deactivated, no user from that practice can access the API.
-    if not user.practice or not user.practice.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Practice account is suspended or inactive. Please contact support.",
-        )
-    
-    return user
 
 
 async def get_current_active_user(

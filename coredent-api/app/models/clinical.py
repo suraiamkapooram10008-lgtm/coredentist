@@ -3,7 +3,7 @@ Clinical Models
 Clinical notes, dental charts, and treatment plans
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, JSON, Numeric
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, JSON, Numeric, Integer, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -76,8 +76,7 @@ class PerioChart(Base):
     provider_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     examination_date = Column(DateTime(timezone=True), server_default=func.now())
     
-    # Perio data stored as JSON
-    # Structure: { tooth_number: { probing_depths: [1,2,3...], bleeding_points: [], mobility: "", furcation: "" } }
+    # Legacy/Flexible storage
     perio_data = Column(JSON, nullable=False, default={})
     
     # Overall assessment
@@ -93,6 +92,54 @@ class PerioChart(Base):
     # Relationships
     patient = relationship("Patient", back_populates="perio_charts")
     provider = relationship("User")
+    entries = relationship("PerioChartEntry", back_populates="perio_chart", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<PerioChart for Patient {self.patient_id} on {self.examination_date}>"
+
+
+class PerioChartEntry(Base):
+    """Detailed highly structured entry for a specific tooth in a PerioChart"""
+    __tablename__ = "perio_chart_entries"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    perio_chart_id = Column(UUID(as_uuid=True), ForeignKey("perio_charts.id"), nullable=False)
+    tooth_number = Column(Integer, nullable=False)
+    
+    # 6-Point Pocket Depths (PD)
+    pd_distobuccal = Column(Integer)
+    pd_buccal = Column(Integer)
+    pd_mesiobuccal = Column(Integer)
+    pd_distolingual = Column(Integer)
+    pd_lingual = Column(Integer)
+    pd_mesiolingual = Column(Integer)
+    
+    # 6-Point Bleeding on Probing (BOP)
+    bop_distobuccal = Column(Boolean, default=False)
+    bop_buccal = Column(Boolean, default=False)
+    bop_mesiobuccal = Column(Boolean, default=False)
+    bop_distolingual = Column(Boolean, default=False)
+    bop_lingual = Column(Boolean, default=False)
+    bop_mesiolingual = Column(Boolean, default=False)
+    
+    # 6-Point Clinical Attachment Level (CAL) - Optional calculated or stored
+    cal_distobuccal = Column(Integer)
+    cal_buccal = Column(Integer)
+    cal_mesiobuccal = Column(Integer)
+    cal_distolingual = Column(Integer)
+    cal_lingual = Column(Integer)
+    cal_mesiolingual = Column(Integer)
+    
+    # Advanced clinical metrics
+    mobility = Column(Integer)  # 0, 1, 2, 3
+    furcation_class = Column(String(10))  # I, II, III, IV
+    mucogingival_defect = Column(Boolean, default=False)
+    
+    # Position
+    display_order = Column(Integer, default=0)
+    
+    # Relationships
+    perio_chart = relationship("PerioChart", back_populates="entries")
+
+    def __repr__(self):
+        return f"<PerioChartEntry Tooth {self.tooth_number}>"

@@ -23,6 +23,10 @@ from app.api.v1.endpoints import (
     accounting,
     staff,
     subscriptions,
+    settings,
+    clinic,
+    communications,
+    clinical,
 )
 
 api_router = APIRouter()
@@ -45,3 +49,7 @@ api_router.include_router(edi.router, prefix="/edi", tags=["Insurance EDI"])
 api_router.include_router(accounting.router, prefix="/accounting", tags=["Accounting Integration"])
 api_router.include_router(staff.router, prefix="/staff", tags=["Practice Staff Management"])
 api_router.include_router(subscriptions.router, prefix="/subscriptions", tags=["Subscriptions"])
+api_router.include_router(settings.router, prefix="/settings", tags=["Settings"])
+api_router.include_router(clinic.router, prefix="/clinic", tags=["Clinic Settings"])
+api_router.include_router(communications.router, prefix="/communications", tags=["Communications"])
+api_router.include_router(clinical.router, prefix="/clinical", tags=["Clinical"])

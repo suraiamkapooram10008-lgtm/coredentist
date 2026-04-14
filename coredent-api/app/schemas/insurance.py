@@ -318,3 +318,46 @@ class InsuranceVerificationResponse(BaseModel):
     deductible_remaining: Optional[Decimal]
     verification_date: datetime
     message: str
+
+
+# Fee Schedule Schemas
+
+class FeeScheduleEntryBase(BaseModel):
+    ada_code: str = Field(..., max_length=10)
+    fee: Decimal = Field(..., ge=0)
+    is_allowed_amount: bool = True
+
+class FeeScheduleEntryCreate(FeeScheduleEntryBase):
+    pass
+
+class FeeScheduleEntryResponse(FeeScheduleEntryBase):
+    id: UUID
+    fee_schedule_id: UUID
+    class Config:
+        from_attributes = True
+
+class FeeScheduleBase(BaseModel):
+    name: str = Field(..., max_length=255)
+    description: Optional[str] = None
+    is_active: bool = True
+
+class FeeScheduleCreate(FeeScheduleBase):
+    entries: Optional[List[FeeScheduleEntryCreate]] = []
+
+class FeeScheduleUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=255)
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class FeeScheduleResponse(FeeScheduleBase):
+    id: UUID
+    practice_id: UUID
+    created_at: datetime
+    updated_at: datetime
+    entries: List[FeeScheduleEntryResponse] = []
+    class Config:
+        from_attributes = True
+
+class FeeScheduleListResponse(BaseModel):
+    fee_schedules: List[FeeScheduleResponse]
+    count: int

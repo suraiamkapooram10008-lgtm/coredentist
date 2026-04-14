@@ -9,7 +9,7 @@ from app.models.password_reset import PasswordResetToken
 from app.models.practice import Practice
 from app.models.patient import Patient
 from app.models.appointment import Appointment, AppointmentType, Chair
-from app.models.clinical import ClinicalNote, DentalChart, PerioChart
+from app.models.clinical import ClinicalNote, DentalChart, PerioChart, PerioChartEntry
 from app.models.billing import Invoice, Payment
 from app.models.audit import AuditLog, Session
 from app.models.insurance import (
@@ -19,6 +19,8 @@ from app.models.insurance import (
     InsurancePreAuthorization,
     Eligibility,
     ExplanationOfBenefits,
+    FeeSchedule,
+    FeeScheduleEntry,
 )
 from app.models.imaging import PatientImage, ImageSeries, ImageTemplate
 from app.models.treatment import (
@@ -127,6 +129,7 @@ __all__ = [
     "ClinicalNote",
     "DentalChart",
     "PerioChart",
+    "PerioChartEntry",
     # Billing
     "Invoice",
     "Payment",
@@ -140,6 +143,8 @@ __all__ = [
     "InsurancePreAuthorization",
     "Eligibility",
     "ExplanationOfBenefits",
+    "FeeSchedule",
+    "FeeScheduleEntry",
     # Imaging
     "PatientImage",
     "ImageSeries",

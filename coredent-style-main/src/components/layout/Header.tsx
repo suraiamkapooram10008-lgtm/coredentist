@@ -3,7 +3,6 @@
 // Top navigation with user menu
 // ============================================
 
-import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/auth-context';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -17,10 +16,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Menu, Bell, LogOut, User as UserIcon, Settings } from 'lucide-react';
+import { Menu, LogOut, User as UserIcon, Settings } from 'lucide-react';
 import { Breadcrumbs } from './Breadcrumbs';
 import type { User, UserRole } from '@/types/api';
-import { notificationsApi } from '@/services/api';
+import NotificationCenter from './NotificationCenter';
 
 interface HeaderProps {
   user: User | null;
@@ -31,6 +30,7 @@ const roleLabels: Record<UserRole, string> = {
   owner: 'Owner',
   admin: 'Admin',
   dentist: 'Dentist',
+  hygienist: 'Hygienist',
   front_desk: 'Front Desk',
 };
 
@@ -38,38 +38,12 @@ const roleColors: Record<UserRole, string> = {
   owner: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
   admin: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
   dentist: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+  hygienist: 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200',
   front_desk: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
 };
 
 export function Header({ user, onMenuToggle }: HeaderProps) {
   const { logout } = useAuth();
-  const [unreadCount, setUnreadCount] = useState<number | null>(null);
-
-  useEffect(() => {
-    let isActive = true;
-    if (!user) {
-      setUnreadCount(null);
-      return () => {
-        isActive = false;
-      };
-    }
-
-    const loadUnread = async () => {
-      const response = await notificationsApi.getUnreadCount();
-      if (!isActive) return;
-      if (response.success && response.data) {
-        setUnreadCount(response.data.unreadCount);
-      } else {
-        setUnreadCount(0);
-      }
-    };
-
-    loadUnread();
-
-    return () => {
-      isActive = false;
-    };
-  }, [user]);
 
   const getInitials = (firstName: string | undefined, lastName: string | undefined) => {
     if (!firstName || !lastName) return '?';
@@ -100,15 +74,8 @@ export function Header({ user, onMenuToggle }: HeaderProps) {
 
       {/* Right side */}
       <div className="flex items-center gap-2">
-        {/* Notifications */}
-        <Button variant="ghost" size="icon" className="relative" disabled={!user}>
-          <Bell className="h-5 w-5" />
-          {user && unreadCount && unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] text-destructive-foreground">
-              {unreadCount > 99 ? '99+' : unreadCount}
-            </span>
-          )}
-        </Button>
+        {/* Notification Center */}
+        {user && <NotificationCenter />}
 
         {/* User Menu */}
         {user && (

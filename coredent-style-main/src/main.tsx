@@ -33,8 +33,9 @@ enableMocking().then(() => {
  * Service Worker Registration
  * Handles offline mode and caching for better performance
  * Moved from App.tsx to main.tsx for better separation of concerns
+ * DISABLED in development to avoid CORS issues
  */
-if ("serviceWorker" in navigator) {
+if ("serviceWorker" in navigator && import.meta.env.PROD) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/sw.js")

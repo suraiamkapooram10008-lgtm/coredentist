@@ -103,13 +103,13 @@ export const protectedRoutes: RouteConfig[] = [
   { 
     path: '/chart', 
     component: DentalChart,
-    roles: ['owner', 'dentist'],
+    roles: ['owner', 'admin', 'dentist'],
     title: 'Dental Chart',
   },
   { 
     path: '/chart/*', 
     component: DentalChart,
-    roles: ['owner', 'dentist'],
+    roles: ['owner', 'admin', 'dentist'],
     title: 'Dental Chart',
   },
 
@@ -117,13 +117,13 @@ export const protectedRoutes: RouteConfig[] = [
   { 
     path: '/treatment-plans', 
     component: TreatmentPlans,
-    roles: ['owner', 'dentist'],
+    roles: ['owner', 'admin', 'dentist'],
     title: 'Treatment Plans',
   },
   { 
     path: '/treatment-plans/*', 
     component: TreatmentPlans,
-    roles: ['owner', 'dentist'],
+    roles: ['owner', 'admin', 'dentist'],
     title: 'Treatment Plans',
   },
 

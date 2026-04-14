@@ -15,7 +15,7 @@ import secrets
 import string
 
 from app.core.database import get_db
-from app.core.config import settings
+from app.core.config_simple import settings
 from app.models.user import User
 from app.models.insurance import PatientInsurance, InsuranceClaim, ClaimStatus
 from app.models.patient import Patient

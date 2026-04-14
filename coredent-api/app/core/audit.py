@@ -15,7 +15,7 @@ async def log_audit_event(
     user: Optional[User],
     action: str,
     entity_type: str,
-    entity_id: UUID,
+    entity_id: Any,  # Changed from UUID to Any to accept strings
     request: Optional[Request] = None,
     changes: Optional[dict] = None,
 ) -> None:
@@ -28,9 +28,19 @@ async def log_audit_event(
     if request:
         ip_address = request.client.host if request.client else None
         user_agent = request.headers.get("user-agent")
+    
+    # For SQLite compatibility: convert entity_id to UUID
+    if isinstance(entity_id, str):
+        try:
+            # Try to parse as UUID
+            entity_id = UUID(entity_id)
+        except (ValueError, AttributeError):
+            # Not a valid UUID, create one from the string
+            from uuid import uuid5, NAMESPACE_DNS
+            entity_id = uuid5(NAMESPACE_DNS, entity_id)
         
     audit_entry = AuditLog(
-        user_id=user.id if user else None,
+        user_id=user.id if user else None,  # Keep as UUID object
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,
