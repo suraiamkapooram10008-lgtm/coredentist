@@ -27,6 +27,7 @@ from app.api.v1.endpoints import (
     clinic,
     communications,
     clinical,
+    patient_portal,
 )
 
 api_router = APIRouter()
@@ -53,3 +54,4 @@ api_router.include_router(settings.router, prefix="/settings", tags=["Settings"]
 api_router.include_router(clinic.router, prefix="/clinic", tags=["Clinic Settings"])
 api_router.include_router(communications.router, prefix="/communications", tags=["Communications"])
 api_router.include_router(clinical.router, prefix="/clinical", tags=["Clinical"])
+api_router.include_router(patient_portal.router, prefix="/portal", tags=["Patient Portal"])

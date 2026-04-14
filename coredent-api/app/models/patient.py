@@ -74,6 +74,10 @@ class Patient(Base):
     # Global Compliance (India DPDP / US HIPAA)
     consent_recorded_at = Column(DateTime(timezone=True))
     
+    # Patient Portal Access
+    portal_access_token = Column(String(128))  # Hashed token for patient self-service portal
+    portal_token_expires = Column(DateTime(timezone=True))
+    
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

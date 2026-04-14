@@ -51,6 +51,7 @@ const ReferralHub = React.lazy(() => import('@/pages/ReferralHub'));
 const LabLogistics = React.lazy(() => import('@/pages/LabLogistics'));
 const Subscriptions = React.lazy(() => import('@/pages/Subscriptions'));
 const NotFound = React.lazy(() => import('@/pages/NotFound'));
+const PatientPortal = React.lazy(() => import('@/pages/PatientPortal'));
 
 /**
  * Public routes (no authentication required)
@@ -63,6 +64,8 @@ export const publicRoutes: RouteConfig[] = [
   // Public booking portal
   { path: '/book/success', component: BookingSuccess },
   { path: '/book/:slug', component: PublicBooking },
+  // Patient self-service portal
+  { path: '/patient-portal', component: PatientPortal },
 ];
 
 /**
