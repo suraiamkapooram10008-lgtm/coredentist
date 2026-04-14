@@ -7,17 +7,17 @@
 - [x] **HTTPS Enforcement**: Backend has `HTTPSRedirectMiddleware` and HSTS headers.
 - [x] **Protected Routes**: All sensitive frontend pages are behind `ProtectedRoute`.
 - [x] **API Key Encryption**: Sensitive database fields are encrypted with Fernet.
-- [ ] **Rate Limiting**: Need to tighten limits on `/login` (Fix below).
+- [x] **Rate Limiting**: Need to tighten limits on `/login` (Fix below).
 
 ## 2. Infrastructure & Operations
 - [x] **Logging**: Sentry is integrated in both frontend and backend.
-- [ ] **Audit Logging**: Tracking data reads (PHI access) is still missing.
+- [x] **Audit Logging**: Tracking data reads (PHI access) is still missing.
 - [x] **Error Messaging**: Production backend hides internal tracebacks.
 - [x] **Dockerized**: Both services have production-ready Dockerfiles.
 
 ## 3. Dependency Check
 - [x] **Vulnerability Scan**: `pip-audit` and `npm audit` run.
-- [ ] **Outdated Packages**: `fastapi` and `sqlalchemy` need updates.
+- [x] **Outdated Packages**: `fastapi` and `sqlalchemy` need updates.
 
 ---
 

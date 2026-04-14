@@ -35,11 +35,7 @@ from app.schemas.auth import (
 )
 from app.schemas.user import UserResponse
 from app.api.deps import get_current_user, verify_csrf
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-# Initialize rate limiter
-limiter = Limiter(key_func=get_remote_address)
+from app.core.limiter import limiter
 
 router = APIRouter()
 
