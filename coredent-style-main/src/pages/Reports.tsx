@@ -82,13 +82,13 @@ export default function Reports() {
 
   // effect:audited — Load metrics when date range changes
   useEffect(() => {
-    console.log('[Reports] Loading metrics for date range:', dateRange);
+    logger.debug('Loading metrics for date range', { dateRange });
     loadMetrics(dateRange);
   }, [dateRange, loadMetrics]);
 
   // Log when data changes
   useEffect(() => {
-    console.log('[Reports] Data updated:', { 
+    logger.debug('Data updated', { 
       hasMetrics: !!metrics, 
       isLoading, 
       error,

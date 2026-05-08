@@ -7,7 +7,7 @@ import os
 import logging
 from typing import Dict, Any, Optional, List
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone
 import base64
 import hashlib
 import hmac
@@ -54,14 +54,14 @@ class EDIService:
         
     def _generate_isa_segment(self) -> str:
         """Generate ISA segment for X12 envelope"""
-        timestamp = datetime.now().strftime("%y%m%d%H%M")
-        control_number = str(int(datetime.now().timestamp()))[-9:]
+        timestamp = datetime.now(timezone.utc).strftime("%y%m%d%H%M")
+        control_number = str(int(datetime.now(timezone.utc).timestamp()))[-9:]
         
         return f"ISA*00*          *00*          *ZZ*{self.sender_id:<15}*ZZ*{self.receiver_id:<15}*{timestamp}*U*00401*{control_number}*0*P*>~"
     
     def _generate_gs_segment(self) -> str:
         """Generate GS segment for X12 envelope"""
-        return f"GS*HC*{self.sender_id}*{self.receiver_id}*{datetime.now().strftime('%Y%m%d')}*{datetime.now().strftime('%H%M')}*1*X*004010~"
+        return f"GS*HC*{self.sender_id}*{self.receiver_id}*{datetime.now(timezone.utc).strftime('%Y%m%d')}*{datetime.now(timezone.utc).strftime('%H%M')}*1*X*004010~"
     
     def _generate_st_segment(self, transaction_code: str, control_number: int = 1) -> str:
         """Generate ST segment for transaction set"""
@@ -90,7 +90,7 @@ class EDIService:
         segments.append(self._generate_st_segment("837D"))
         
         # BHT Beginning of Hierarchical Transaction
-        segments.append(f"BHT*0010*00*{claim_number}*{datetime.now().strftime('%Y%m%d%H%M')}*CH~")
+        segments.append(f"BHT*0010*00*{claim_number}*{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')}*CH~")
         
         # Loop 1000A - Submitter Name
         segments.append(f"NM1*41*2*{provider['name']}*****46*{self.sender_id}~")
@@ -131,7 +131,7 @@ class EDIService:
         for idx, line in enumerate(claim_lines, 1):
             segments.append(f"LX*{idx}~")
             segments.append(f"SOA*{line.get('service_code', 'D0120')}**{line.get('charged_amount', '0')}*1*1~")
-            segments.append(f"DTP*472*D8*{line.get('service_date', datetime.now().strftime('%Y%m%d'))}~")
+            segments.append(f"DTP*472*D8*{line.get('service_date', datetime.now(timezone.utc).strftime('%Y%m%d'))}~")
             
             # Tooth code if present
             if line.get('tooth_code'):
@@ -179,10 +179,10 @@ class EDIService:
         # Simulate successful submission
         return {
             "success": True,
-            "batch_id": f"Batch-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "batch_id": f"Batch-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
             "confirmation_number": f"CHC-{hashlib.md5(edi_claim.encode()).hexdigest()[:10].upper()}",
             "status": "accepted",
-            "accepted_date": datetime.now().isoformat(),
+            "accepted_date": datetime.now(timezone.utc).isoformat(),
         }
     
     async def _submit_wave(self, edi_claim: str) -> Dict[str, Any]:
@@ -191,7 +191,7 @@ class EDIService:
         
         return {
             "success": True,
-            "batch_id": f"Wave-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "batch_id": f"Wave-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
             "confirmation_number": f"WAV-{hashlib.md5(edi_claim.encode()).hexdigest()[:10].upper()}",
             "status": "accepted",
         }
@@ -202,7 +202,7 @@ class EDIService:
         
         return {
             "success": True,
-            "batch_id": f"Sim-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "batch_id": f"Sim-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
             "confirmation_number": f"SIM-{hashlib.sha256(edi_claim.encode()).hexdigest()[:10].upper()}",
             "status": "accepted",
             "note": "Simulation mode - no actual submission",
@@ -219,7 +219,7 @@ class EDIService:
         return {
             "confirmation_number": confirmation_number,
             "status": ClaimStatus.PENDING.value,
-            "last_checked": datetime.now().isoformat(),
+            "last_checked": datetime.now(timezone.utc).isoformat(),
         }
     
     async def download_era(self, era_id: str) -> Dict[str, Any]:

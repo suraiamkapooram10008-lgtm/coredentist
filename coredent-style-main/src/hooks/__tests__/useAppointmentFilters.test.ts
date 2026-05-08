@@ -21,11 +21,11 @@ describe('useAppointmentFilters', () => {
 
   it('should filter appointments by search term', () => {
     const { result } = renderHook(() =>
-      useAppointmentFilters(mockAppointments, { searchTerm: 'John' })
+      useAppointmentFilters(mockAppointments, { searchTerm: 'Jane' })
     );
 
     expect(result.current).toHaveLength(1);
-    expect(result.current[0].patient).toBe('John Doe');
+    expect(result.current[0].patient).toBe('Jane Smith');
   });
 
   it('should filter appointments by status', () => {
@@ -68,7 +68,7 @@ describe('useAppointmentFilters', () => {
 
   it('should be case-insensitive for search', () => {
     const { result } = renderHook(() =>
-      useAppointmentFilters(mockAppointments, { searchTerm: 'john' })
+      useAppointmentFilters(mockAppointments, { searchTerm: 'jane' })
     );
 
     expect(result.current).toHaveLength(1);

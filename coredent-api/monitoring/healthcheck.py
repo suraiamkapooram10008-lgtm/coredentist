@@ -7,7 +7,7 @@ Run this periodically to verify system health
 import sys
 import requests
 import psycopg2
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 
 # Configuration
@@ -77,7 +77,7 @@ def send_alert(message):
     try:
         payload = {
             "text": f"🚨 CoreDent Alert: {message}",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         requests.post(ALERT_WEBHOOK, json=payload, timeout=5)
     except Exception as e:
@@ -109,3 +109,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

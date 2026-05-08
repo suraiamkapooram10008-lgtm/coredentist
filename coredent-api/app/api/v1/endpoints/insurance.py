@@ -6,11 +6,13 @@ CRUD operations for insurance management
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import List, Optional, Any
 import json
+import uuid
 
 from app.core.database import get_db
+from app.core.audit import log_audit_event
 from app.models.user import User, UserRole
 from app.api.deps import get_current_user, require_role, verify_csrf
 from app.models.insurance import (
@@ -85,7 +87,7 @@ async def list_carriers(
 
 @router.get("/carriers/{carrier_id}", response_model=InsuranceCarrierResponse)
 async def get_carrier(
-    carrier_id: str,
+    carrier_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -138,7 +140,7 @@ async def create_carrier(
 
 @router.put("/carriers/{carrier_id}", response_model=InsuranceCarrierResponse)
 async def update_carrier(
-    carrier_id: str,
+    carrier_id: uuid.UUID,
     carrier_data: InsuranceCarrierUpdate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
@@ -172,7 +174,7 @@ async def update_carrier(
 
 @router.get("/patients/{patient_id}/policies", response_model=PatientInsuranceListResponse)
 async def list_patient_insurance(
-    patient_id: str,
+    patient_id: uuid.UUID,
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     request: Request = None,
     current_user: User = Depends(get_current_user),
@@ -220,7 +222,7 @@ async def list_patient_insurance(
 
 @router.post("/patients/{patient_id}/policies", response_model=PatientInsuranceResponse)
 async def create_patient_insurance(
-    patient_id: str,
+    patient_id: uuid.UUID,
     insurance_data: PatientInsuranceCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -270,7 +272,7 @@ async def create_patient_insurance(
 
 @router.put("/policies/{policy_id}", response_model=PatientInsuranceResponse)
 async def update_patient_insurance(
-    policy_id: str,
+    policy_id: uuid.UUID,
     insurance_data: PatientInsuranceUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -317,7 +319,7 @@ async def update_patient_insurance(
 
 @router.delete("/policies/{policy_id}")
 async def delete_patient_insurance(
-    policy_id: str,
+    policy_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
@@ -441,7 +443,7 @@ async def create_claim(
         )
     
     # Generate claim number
-    today = datetime.now()
+    today = datetime.now(timezone.utc)
     claim_count = await db.execute(
         select(func.count(InsuranceClaim.id)).where(
             InsuranceClaim.practice_id == current_user.practice_id,
@@ -478,7 +480,7 @@ async def create_claim(
 
 @router.put("/claims/{claim_id}", response_model=InsuranceClaimResponse)
 async def update_claim(
-    claim_id: str,
+    claim_id: uuid.UUID,
     claim_data: InsuranceClaimUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -513,7 +515,7 @@ async def update_claim(
 
 @router.post("/claims/{claim_id}/submit")
 async def submit_claim(
-    claim_id: str,
+    claim_id: uuid.UUID,
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -538,7 +540,7 @@ async def submit_claim(
     
     # Update claim status
     claim.status = ClaimStatus.SUBMITTED
-    claim.submission_date = datetime.now().date()
+    claim.submission_date = datetime.now(timezone.utc).date()
     
     # Integrate with EDI clearinghouse for electronic submission
     try:
@@ -626,7 +628,7 @@ async def submit_claim(
 # New Endpoints for Eligibility
 @router.get("/eligibility/", response_model=EligibilityListResponse)
 async def list_eligibility(
-    patient_id: Optional[str] = Query(None, description="Filter by patient"),
+    patient_id: Optional[uuid.UUID] = Query(None, description="Filter by patient"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
@@ -788,7 +790,7 @@ async def create_pre_authorization(
         )
     
     # Generate authorization number
-    today = datetime.now()
+    today = datetime.now(timezone.utc)
     auth_number = f"PA-{today.strftime('%Y%m%d')}-{patient_insurance.patient_id[:8]}"
     
     # Convert procedure codes to JSON string
@@ -873,22 +875,11 @@ async def create_fee_schedule(
     await db.commit()
     await db.refresh(new_schedule)
     return new_schedule
-        request_date=pre_auth_data.request_date,
-        procedure_codes=procedure_codes_json,
-        estimated_cost=pre_auth_data.estimated_cost,
-        notes=pre_auth_data.notes,
-    )
-    
-    db.add(pre_auth)
-    await db.commit()
-    await db.refresh(pre_auth)
-    
-    return pre_auth
 
 
 @router.put("/pre-auth/{pre_auth_id}", response_model=PreAuthorizationResponse)
 async def update_pre_authorization(
-    pre_auth_id: str,
+    pre_auth_id: uuid.UUID,
     pre_auth_data: PreAuthorizationUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

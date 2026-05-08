@@ -33,7 +33,8 @@ import {
 import { cn } from '@/lib/utils';
 import { patientApi } from '@/services/patientApi';
 import { triggerAutomation } from '@/services/automationApi';
-import type { PatientRecord, PatientFormData } from '@/types/patient';
+import type { PatientRecord } from '@/types/patient';
+import type { PatientFormData } from '@/types/forms';
 import { defaultMedicalHistory, defaultDentalHistory } from '@/types/patient';
 import { US_STATES } from '@/types/clinic';
 

@@ -1,5 +1,7 @@
 // Advanced caching utilities for optimized data management
 
+import type { CachedFunction } from '@/types/utils';
+
 interface CacheEntry<T> {
   data: T;
   timestamp: number;
@@ -98,14 +100,14 @@ export const apiCache = new MemoryCache(200);
 export const uiCache = new MemoryCache(50);
 
 // Cache decorator for functions
-export function cached<T extends (...args: any[]) => any>(
-  fn: T,
+export function cached<TArgs extends unknown[] = unknown[], TReturn = unknown>(
+  fn: (...args: TArgs) => TReturn,
   options: CacheOptions = {}
-): T {
+): CachedFunction<TArgs, TReturn> {
   const { ttl = 5 * 60 * 1000 } = options;
-  const cache = new Map<string, CacheEntry<ReturnType<T>>>();
+  const cache = new Map<string, CacheEntry<TReturn>>();
 
-  return ((...args: Parameters<T>): ReturnType<T> => {
+  return ((...args: TArgs): TReturn => {
     const key = JSON.stringify(args);
     const cached = cache.get(key);
 
@@ -203,7 +205,7 @@ export const sessionCache = {
 
     try {
       sessionStorage.setItem(key, JSON.stringify(entry));
-    } catch (error) {
+    } catch (_error) {
       if (import.meta.env.DEV) {
         console.warn('Session storage full, clearing old entries');
       }
@@ -315,7 +317,7 @@ export const localCache = {
 
     try {
       localStorage.setItem(key, JSON.stringify(entry));
-    } catch (error) {
+    } catch (_error) {
       if (import.meta.env.DEV) {
         console.warn('Local storage full, clearing old entries');
       }

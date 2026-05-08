@@ -15,6 +15,10 @@ class PaymentIntentCreate(BaseModel):
         None,
         description="Amount to charge. If not provided, uses invoice balance."
     )
+    patient_id: Optional[UUID] = Field(
+        None,
+        description="Patient ID for payment record"
+    )
 
 
 class PaymentIntentResponse(BaseModel):

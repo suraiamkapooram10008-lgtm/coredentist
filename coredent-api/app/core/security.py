@@ -5,7 +5,9 @@ JWT tokens, password hashing, CSRF protection
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
-from jose import JWTError, jwt
+# L-1 FIX: Migrated from unmaintained python-jose to PyJWT
+import jwt
+from jwt.exceptions import PyJWTError as JWTError
 from passlib.context import CryptContext
 import secrets
 import re
@@ -101,21 +103,46 @@ def generate_password_reset_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+# Token hashing context - 8 rounds (faster than passwords but still secure)
+# Using bcrypt instead of SHA-256 for defense-in-depth against rainbow table attacks
+token_context = CryptContext(schemes=["bcrypt"], bcrypt__rounds=8, deprecated="auto")
+
+
 def hash_token(token: str) -> str:
     """
-    Hash a token for secure storage (SECURITY FIX)
+    Hash a token for secure storage (SECURITY FIX - CRIT-03)
     
-    Uses SHA-256 for fast hashing of tokens.
-    Tokens are already cryptographically random, so we don't need bcrypt's slow hashing.
+    Changed from SHA-256 to bcrypt (8 rounds) for better security:
+    - bcrypt is intentionally slow, making brute-force attacks impractical
+    - Even if tokens are cryptographically random, bcrypt protects against:
+      * Rainbow table attacks
+      * Future quantum computing attacks on fast hashes
+    - 8 rounds chosen as balance: ~25ms per hash (acceptable) vs security
     
     Args:
         token: The token to hash
         
     Returns:
-        Hex-encoded SHA-256 hash of the token
+        bcrypt hash of the token
     """
-    import hashlib
-    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+    return token_context.hash(token)
+
+
+def verify_token_hash(token: str, hashed_token: str) -> bool:
+    """
+    Verify a token against its bcrypt hash
+    
+    Args:
+        token: The token to verify
+        hashed_token: The bcrypt hash to verify against
+        
+    Returns:
+        True if token matches hash, False otherwise
+    """
+    try:
+        return token_context.verify(token, hashed_token)
+    except Exception:
+        return False
 
 
 def generate_invitation_token() -> str:

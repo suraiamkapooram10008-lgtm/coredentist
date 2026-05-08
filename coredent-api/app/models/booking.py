@@ -9,7 +9,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.core.base import Base
 
@@ -339,3 +339,7 @@ class BookingNotification(Base):
     
     def __repr__(self):
         return f"<BookingNotification {self.notification_type} - {self.channel}>"
+
+
+# Alias for backward compatibility with services importing Waitlist
+Waitlist = WaitlistEntry

@@ -29,6 +29,8 @@ class AppointmentTypeEnum(str, enum.Enum):
     """Common appointment types"""
     CLEANING = "cleaning"
     EXAM = "exam"
+    CHECKUP = "checkup"
+    IN_OFFICE = "in-office"
     FILLING = "filling"
     ROOT_CANAL = "root_canal"
     CROWN = "crown"
@@ -66,6 +68,8 @@ class Appointment(Base):
     duration = Column(Integer, nullable=False)  # in minutes
     
     notes = Column(Text)
+    reminder_sent = Column(Boolean, default=False)  # Track if reminder was sent
+    created_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -73,7 +77,7 @@ class Appointment(Base):
     # Relationships
     practice = relationship("Practice", back_populates="appointments")
     patient = relationship("Patient", back_populates="appointments")
-    provider = relationship("User", back_populates="appointments")
+    provider = relationship("User", back_populates="appointments", foreign_keys=[provider_id])
     chair = relationship("Chair", back_populates="appointments")
     online_booking = relationship("OnlineBooking", back_populates="appointment", uselist=False)
     

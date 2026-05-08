@@ -174,7 +174,8 @@ class OnlineBookingBase(BaseModel):
 
 class OnlineBookingCreate(OnlineBookingBase):
     """Schema for creating an online booking"""
-    pass
+    honeypot: Optional[str] = None
+    captcha_token: Optional[str] = None
 
 
 class OnlineBookingUpdate(BaseModel):
@@ -192,7 +193,7 @@ class OnlineBookingResponse(OnlineBookingBase):
     practice_id: uuid_lib.UUID
     patient_id: Optional[uuid_lib.UUID]
     status: BookingStatus
-    confirmation_code: str
+    confirmation_code: Optional[str] = None
     email_verified: bool
     phone_verified: bool
     appointment_id: Optional[uuid_lib.UUID]
@@ -212,7 +213,8 @@ class OnlineBookingResponse(OnlineBookingBase):
 
 class OnlineBookingPublicResponse(BaseModel):
     """Public-facing online booking response (No sensitive UUIDs)"""
-    confirmation_code: str
+    id: uuid_lib.UUID
+    confirmation_code: Optional[str] = None
     status: BookingStatus
     first_name: str
     last_name: str

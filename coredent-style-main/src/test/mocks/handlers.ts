@@ -2,11 +2,10 @@
 import { http, HttpResponse } from 'msw';
 import type { Patient, Appointment } from '@/types/api';
 
-const API_BASE_URL = '/api/v1';
-
+// MSW v2 requires matching against the full URL. Use wildcard pattern.
 export const handlers = [
   // Auth endpoints
-  http.post(`${API_BASE_URL}/auth/login`, async ({ request }) => {
+  http.post('*/api/v1/auth/login', async ({ request }) => {
     const body = await request.json() as { email: string; password: string };
     
     if (body.email === 'demo@coredent.com' && body.password === 'demo123') {
@@ -25,7 +24,7 @@ export const handlers = [
     );
   }),
 
-  http.get(`${API_BASE_URL}/auth/me`, () => {
+  http.get('*/api/v1/auth/me', () => {
     return HttpResponse.json({
       id: 'user-1',
       email: 'demo@coredent.com',
@@ -36,7 +35,7 @@ export const handlers = [
       practiceName: 'Bright Smile Dental',
     });
   }),
-  http.post(`${API_BASE_URL}/auth/refresh`, async () => {
+  http.post('*/api/v1/auth/refresh', async () => {
     return HttpResponse.json({
       access_token: 'mock-access-token-456',
       refresh_token: 'mock-refresh-token-456',
@@ -46,7 +45,7 @@ export const handlers = [
   }),
 
   // Patients endpoints
-  http.get(`${API_BASE_URL}/patients`, () => {
+  http.get('*/api/v1/patients', () => {
     return HttpResponse.json({
       data: [
         {
@@ -65,7 +64,7 @@ export const handlers = [
     });
   }),
 
-  http.get(`${API_BASE_URL}/patients/:id`, ({ params }) => {
+  http.get('*/api/v1/patients/:id', ({ params }) => {
     return HttpResponse.json({
       id: params.id,
       firstName: 'John',
@@ -78,7 +77,7 @@ export const handlers = [
   }),
 
   // Appointments endpoints
-  http.get(`${API_BASE_URL}/appointments`, () => {
+  http.get('*/api/v1/appointments', () => {
     return HttpResponse.json([
       {
         id: 'apt-1',
@@ -96,7 +95,7 @@ export const handlers = [
   }),
 
   // Clinic settings endpoints
-  http.get(`${API_BASE_URL}/clinic/settings`, () => {
+  http.get('*/api/v1/clinic/settings', () => {
     return HttpResponse.json({
       id: 'clinic-1',
       name: 'Bright Smile Dental',
@@ -160,13 +159,13 @@ export const handlers = [
     });
   }),
 
-  http.put(`${API_BASE_URL}/clinic/settings`, async ({ request }) => {
+  http.put('*/api/v1/clinic/settings', async ({ request }) => {
     const body = await request.json();
     return HttpResponse.json(body);
   }),
 
   // Billing preferences endpoints
-  http.get(`${API_BASE_URL}/settings/billing`, () => {
+  http.get('*/api/v1/settings/billing', () => {
     return HttpResponse.json({
       taxRate: 0,
       currency: 'USD',
@@ -182,7 +181,7 @@ export const handlers = [
     });
   }),
 
-  http.put(`${API_BASE_URL}/settings/billing`, async ({ request }) => {
+  http.put('*/api/v1/settings/billing', async ({ request }) => {
     const body = await request.json();
     return HttpResponse.json(body);
   }),

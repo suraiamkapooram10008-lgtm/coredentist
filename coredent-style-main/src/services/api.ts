@@ -6,6 +6,8 @@ import { logger } from '@/lib/logger';
 import type {
   LoginCredentials,
   LoginResponse,
+  MfaChallengeResponse,
+  MfaVerifyResponse,
   User,
   InvitationDetails,
   Patient,
@@ -94,9 +96,14 @@ class ApiClient {
       
       clearTimeout(timeoutId);
 
-      // Handle 401 Unauthorized - session expired
-      // But skip token refresh for login endpoints (can't refresh when not logged in)
-      if (response.status === 401 && !endpoint.includes('/auth/login')) {
+      // Handle 401 Unauthorized.
+      // Skip automatic refresh for auth handshake endpoints to avoid login/MFA loops.
+      const isAuthHandshakeEndpoint =
+        endpoint.includes('/auth/login') ||
+        endpoint.includes('/auth/refresh') ||
+        endpoint.includes('/mfa/verify');
+
+      if (response.status === 401 && !isAuthHandshakeEndpoint) {
         if (retry) {
           const newToken = await this.refreshAccessToken();
           if (newToken) {
@@ -120,14 +127,14 @@ class ApiClient {
         };
       }
 
-      // For login endpoint with 401, return invalid credentials error
-      if (response.status === 401 && endpoint.includes('/auth/login')) {
+      // For auth handshake endpoints with 401, return API-provided error without redirecting.
+      if (response.status === 401 && isAuthHandshakeEndpoint) {
         const data = await response.json().catch(() => ({}));
         return {
           success: false,
           error: {
-            code: 'INVALID_CREDENTIALS',
-            message: data.message || 'Invalid credentials',
+            code: 'UNAUTHORIZED',
+            message: data.detail || data.message || 'Unauthorized',
           },
         };
       }
@@ -144,20 +151,31 @@ class ApiClient {
         };
       }
 
-      const data = await response.json();
+      // SECURITY: Handle 204 No Content responses (DELETE, etc.)
+      let data: unknown = null;
+      if (response.status !== 204 && response.status !== 205) {
+        const text = await response.text();
+        if (text) {
+          try {
+            data = JSON.parse(text);
+          } catch {
+            data = text;
+          }
+        }
+      }
 
       if (!response.ok) {
         logger.error(`API error: ${endpoint}`, undefined, {
           endpoint,
-          status: response.status,
-          error: data,
+          status: String(response.status),
+          error: JSON.stringify(data),
         });
         return {
           success: false,
           error: {
-            code: data.code || 'API_ERROR',
-            message: data.message || 'An error occurred',
-            details: data.details,
+            code: (data as Record<string, unknown>)?.code as string || 'API_ERROR',
+            message: (data as Record<string, unknown>)?.message as string || 'An error occurred',
+            details: (data as Record<string, unknown>)?.details,
           },
         };
       }
@@ -246,10 +264,7 @@ class ApiClient {
           // FIX: Use 'include' for cross-origin cookie support
           credentials: 'include',
           signal: controller.signal,
-          body: JSON.stringify({
-             // If we used Bearer for refresh, we'd pass it here
-             // But the backend hardened version (Round 10) uses httpOnly cookies.
-          })
+          // Refresh token is sent automatically in httpOnly cookie
         });
 
         clearTimeout(timeoutId);
@@ -291,7 +306,7 @@ export const apiClient = new ApiClient(API_BASE_URL);
 
 export const authApi = {
   login: (credentials: LoginCredentials) => 
-    apiClient.post<LoginResponse>('/auth/login', credentials),
+    apiClient.post<LoginResponse | MfaChallengeResponse>('/auth/login', credentials),
   
   logout: () => 
     apiClient.post<void>('/auth/logout', {}), // Token from httpOnly cookie
@@ -313,6 +328,11 @@ export const authApi = {
 
   resetPassword: (data: { token: string; password: string }) =>
     apiClient.post<void>('/auth/reset-password', data),
+};
+
+export const mfaApi = {
+  verify: (data: { mfa_token: string; totp_code: string; backup_code?: string }) =>
+    apiClient.post<MfaVerifyResponse>('/mfa/verify', data),
 };
 
 export const settingsApi = {

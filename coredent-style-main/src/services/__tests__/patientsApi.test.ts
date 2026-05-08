@@ -31,7 +31,7 @@ describe('patientsApi', () => {
       };
 
       server.use(
-        http.get('/api/v1/patients', () => {
+        http.get('*/api/v1/patients', () => {
           return HttpResponse.json(mockResponse);
         })
       );
@@ -52,7 +52,7 @@ describe('patientsApi', () => {
       };
 
       server.use(
-        http.get('/api/v1/patients', ({ request }) => {
+        http.get('*/api/v1/patients', ({ request }) => {
           const url = new URL(request.url);
           expect(url.searchParams.get('search')).toBe('John');
           expect(url.searchParams.get('page')).toBe('1');
@@ -73,7 +73,7 @@ describe('patientsApi', () => {
   describe('getById', () => {
     it('should fetch patient by ID successfully', async () => {
       server.use(
-        http.get('/api/v1/patients/patient-1', () => {
+        http.get('*/api/v1/patients/patient-1', () => {
           return HttpResponse.json(mockPatient);
         })
       );
@@ -86,7 +86,7 @@ describe('patientsApi', () => {
 
     it('should handle patient not found', async () => {
       server.use(
-        http.get('/api/v1/patients/nonexistent', () => {
+        http.get('*/api/v1/patients/nonexistent', () => {
           return HttpResponse.json(
             { message: 'Patient not found' },
             { status: 404 }
@@ -120,7 +120,7 @@ describe('patientsApi', () => {
       };
 
       server.use(
-        http.post('/api/v1/patients', async ({ request }) => {
+        http.post('*/api/v1/patients', async ({ request }) => {
           const body = await request.json();
           expect(body).toEqual(newPatient);
           return HttpResponse.json(createdPatient, { status: 201 });
@@ -135,7 +135,7 @@ describe('patientsApi', () => {
 
     it('should handle validation errors', async () => {
       server.use(
-        http.post('/api/v1/patients', () => {
+        http.post('*/api/v1/patients', () => {
           return HttpResponse.json(
             { 
               message: 'Validation error',
@@ -170,7 +170,7 @@ describe('patientsApi', () => {
       };
 
       server.use(
-        http.put('/api/v1/patients/patient-1', async ({ request }) => {
+        http.put('*/api/v1/patients/patient-1', async ({ request }) => {
           const body = await request.json();
           expect(body).toEqual(updates);
           return HttpResponse.json(updatedPatient);
@@ -187,7 +187,7 @@ describe('patientsApi', () => {
   describe('delete', () => {
     it('should delete patient successfully', async () => {
       server.use(
-        http.delete('/api/v1/patients/patient-1', () => {
+        http.delete('*/api/v1/patients/patient-1', () => {
           return HttpResponse.json({ message: 'Patient deleted successfully' });
         })
       );
@@ -199,7 +199,7 @@ describe('patientsApi', () => {
 
     it('should handle delete errors', async () => {
       server.use(
-        http.delete('/api/v1/patients/patient-1', () => {
+        http.delete('*/api/v1/patients/patient-1', () => {
           return HttpResponse.json(
             { message: 'Cannot delete patient with active appointments' },
             { status: 409 }

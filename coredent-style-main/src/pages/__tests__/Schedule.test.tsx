@@ -1,38 +1,69 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@/test/test-utils";
 import userEvent from "@testing-library/user-event";
-import { BrowserRouter } from "react-router-dom";
-import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import Schedule from "../Schedule";
+import { server } from "@/test/mocks/server";
+import { http, HttpResponse } from "msw";
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { retry: false },
-  },
-});
-
-const renderWithProviders = (component: React.ReactElement) => {
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        {component}
-      </BrowserRouter>
-    </QueryClientProvider>
-  );
-};
+// Mock hooks
+vi.mock("@/hooks/use-toast", () => ({
+  useToast: () => ({
+    toast: vi.fn(),
+  }),
+}));
 
 describe("Schedule Page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    
+    // Mock auth to return authenticated user
+    server.use(
+      http.get("/api/v1/auth/me", () => {
+        return HttpResponse.json({
+          id: "test-user-id",
+          email: "test@example.com",
+          firstName: "Test",
+          lastName: "User",
+          role: "dentist",
+          practiceId: "test-practice-id",
+          practiceName: "Test Practice",
+        });
+      })
+    );
   });
 
-  it("should render schedule page", () => {
-    renderWithProviders(<Schedule />);
-    expect(document.body).toBeInTheDocument();
+  it("should render schedule page", async () => {
+    render(<Schedule />, {
+      isAuthenticated: true,
+      user: {
+        id: "test-user-id",
+        email: "test@example.com",
+        firstName: "Test",
+        lastName: "User",
+        role: "dentist",
+        practiceId: "test-practice-id",
+        practiceName: "Test Practice",
+      },
+    });
+    
+    await waitFor(() => {
+      expect(document.body).toBeInTheDocument();
+    });
   });
 
   it("should display calendar", async () => {
-    renderWithProviders(<Schedule />);
+    render(<Schedule />, {
+      isAuthenticated: true,
+      user: {
+        id: "test-user-id",
+        email: "test@example.com",
+        firstName: "Test",
+        lastName: "User",
+        role: "dentist",
+        practiceId: "test-practice-id",
+        practiceName: "Test Practice",
+      },
+    });
 
     await waitFor(() => {
       expect(document.body).toBeInTheDocument();
@@ -41,7 +72,22 @@ describe("Schedule Page", () => {
 
   it("should handle date navigation", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<Schedule />);
+    render(<Schedule />, {
+      isAuthenticated: true,
+      user: {
+        id: "test-user-id",
+        email: "test@example.com",
+        firstName: "Test",
+        lastName: "User",
+        role: "dentist",
+        practiceId: "test-practice-id",
+        practiceName: "Test Practice",
+      },
+    });
+
+    await waitFor(() => {
+      expect(document.body).toBeInTheDocument();
+    });
 
     const buttons = screen.queryAllByRole("button");
     const nextButton = buttons.find((btn) => btn.textContent?.includes("Next"));
@@ -54,7 +100,22 @@ describe("Schedule Page", () => {
 
   it("should handle appointment creation", async () => {
     const user = userEvent.setup();
-    renderWithProviders(<Schedule />);
+    render(<Schedule />, {
+      isAuthenticated: true,
+      user: {
+        id: "test-user-id",
+        email: "test@example.com",
+        firstName: "Test",
+        lastName: "User",
+        role: "dentist",
+        practiceId: "test-practice-id",
+        practiceName: "Test Practice",
+      },
+    });
+
+    await waitFor(() => {
+      expect(document.body).toBeInTheDocument();
+    });
 
     const buttons = screen.queryAllByRole("button");
     const addButton = buttons.find((btn) => btn.textContent?.includes("Add") || btn.textContent?.includes("New"));

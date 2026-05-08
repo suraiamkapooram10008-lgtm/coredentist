@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from datetime import datetime, timezone
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 import json
 
 from app.core.database import get_db
@@ -24,7 +24,24 @@ from app.models.inventory import (
     InventoryCategory,
     InventoryUnit,
     InventoryAlertType,
+    VendorContract,
+    VendorInvoice,
+    ReorderRule,
 )
+from app.schemas.inventory import (
+    InventoryItemBase,
+    VendorContractCreate,
+    VendorInvoiceCreate,
+    ReorderRuleCreate,
+    SupplierCreate,
+    InventoryItemResponse,
+    SupplierResponse,
+    VendorContractResponse,
+    VendorInvoiceResponse,
+    ReorderRuleResponse,
+    SupplierListResponse,
+)
+from app.services.vendor_service import VendorService
 from app.api.deps import verify_csrf
 
 router = APIRouter()
@@ -75,7 +92,7 @@ async def list_inventory_items(
     return {"items": items, "count": len(items)}
 
 
-@router.get("/items/{item_id}")
+@router.get("/items/{item_id}", response_model=InventoryItemResponse)
 async def get_inventory_item(
     item_id: str,
     request: Request = None,
@@ -108,19 +125,19 @@ async def get_inventory_item(
     return item
 
 
-@router.post("/items/")
+@router.post("/items/", response_model=InventoryItemResponse)
 async def create_inventory_item(
-    item_data: dict,
+    item_data: InventoryItemBase,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
     """
-    Create new inventory item
+    Create new inventory item with validated schema
     """
     item = InventoryItem(
         practice_id=current_user.practice_id,
-        **item_data
+        **item_data.model_dump(exclude_unset=True)
     )
     db.add(item)
     await db.commit()
@@ -129,7 +146,7 @@ async def create_inventory_item(
     return item
 
 
-@router.put("/items/{item_id}")
+@router.put("/items/{item_id}", response_model=InventoryItemResponse)
 async def update_inventory_item(
     item_id: str,
     item_data: dict,
@@ -310,12 +327,13 @@ async def create_inventory_transaction(
     return transaction
 
 
-# Supplier Endpoints
+# Supplier & Vendor Endpoints
 
-@router.get("/suppliers/")
+@router.get("/suppliers/", response_model=SupplierListResponse)
 async def list_suppliers(
     search: Optional[str] = Query(None, description="Search by name"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -346,9 +364,9 @@ async def list_suppliers(
     return {"suppliers": suppliers, "count": len(suppliers)}
 
 
-@router.post("/suppliers/")
+@router.post("/suppliers/", response_model=SupplierResponse)
 async def create_supplier(
-    supplier_data: dict,
+    supplier_data: SupplierCreate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
@@ -358,7 +376,7 @@ async def create_supplier(
     """
     supplier = Supplier(
         practice_id=current_user.practice_id,
-        **supplier_data
+        **supplier_data.model_dump()
     )
     db.add(supplier)
     await db.commit()
@@ -366,6 +384,101 @@ async def create_supplier(
     
     return supplier
 
+
+@router.post("/suppliers/reorder-check")
+async def trigger_reorder_check(
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> Any:
+    """Trigger manual reorder check against all active reorder rules"""
+    result = await VendorService.check_inventory_and_reorder(db, current_user.practice_id)
+    return result
+
+
+@router.get("/suppliers/contracts/", response_model=Dict[str, List[VendorContractResponse]])
+async def list_vendor_contracts(
+    supplier_id: Optional[str] = Query(None),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """List vendor contracts"""
+    query = select(VendorContract).where(VendorContract.practice_id == current_user.practice_id)
+    if supplier_id:
+        query = query.where(VendorContract.supplier_id == supplier_id)
+    result = await db.execute(query)
+    return {"contracts": result.scalars().all()}
+
+
+@router.post("/suppliers/contracts/", response_model=VendorContractResponse)
+async def create_vendor_contract(
+    data: VendorContractCreate,
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> Any:
+    contract = VendorContract(practice_id=current_user.practice_id, **data.model_dump())
+    db.add(contract)
+    await db.commit()
+    await db.refresh(contract)
+    return contract
+
+
+@router.get("/suppliers/invoices/", response_model=Dict[str, List[VendorInvoiceResponse]])
+async def list_vendor_invoices(
+    supplier_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """List vendor invoices"""
+    query = select(VendorInvoice).where(VendorInvoice.practice_id == current_user.practice_id)
+    if supplier_id:
+        query = query.where(VendorInvoice.supplier_id == supplier_id)
+    if status:
+        query = query.where(VendorInvoice.status == status)
+    result = await db.execute(query)
+    return {"invoices": result.scalars().all()}
+
+
+@router.post("/suppliers/invoices/", response_model=VendorInvoiceResponse)
+async def create_vendor_invoice(
+    data: VendorInvoiceCreate,
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> Any:
+    invoice = VendorInvoice(practice_id=current_user.practice_id, **data.model_dump())
+    db.add(invoice)
+    await db.commit()
+    await db.refresh(invoice)
+    return invoice
+
+
+@router.get("/suppliers/rules/", response_model=Dict[str, List[ReorderRuleResponse]])
+async def list_reorder_rules(
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """List automated reorder rules"""
+    result = await db.execute(
+        select(ReorderRule).where(ReorderRule.practice_id == current_user.practice_id)
+    )
+    return {"rules": result.scalars().all()}
+
+
+@router.post("/suppliers/rules/", response_model=ReorderRuleResponse)
+async def create_reorder_rule(
+    data: ReorderRuleCreate,
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> Any:
+    rule = ReorderRule(practice_id=current_user.practice_id, **data.model_dump())
+    db.add(rule)
+    await db.commit()
+    await db.refresh(rule)
+    return rule
 
 # Alerts Endpoints
 

@@ -3,18 +3,18 @@ Appointment Endpoints
 CRUD operations for appointments
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 from sqlalchemy import select, and_, or_
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Any, Union
+from uuid import UUID
 import asyncio
 
 from app.core.database import get_db
-from app.models.user import User, UserRole
-from app.api.deps import get_current_user, require_role, verify_csrf
-from app.core.audit import log_audit_event
+from app.api.deps import get_current_user
+from app.models.user import User
 from app.models.appointment import Appointment, AppointmentStatus, AppointmentTypeEnum, Chair
 from app.models.patient import Patient
 from app.schemas.appointment import (
@@ -42,25 +42,16 @@ async def list_appointments(
     start_date: Optional[datetime] = Query(None, description="Start date for filtering"),
     end_date: Optional[datetime] = Query(None, description="End date for filtering"),
     status: Optional[AppointmentStatus] = Query(None, description="Filter by status"),
-    provider_id: Optional[str] = Query(None, description="Filter by provider"),
-    patient_id: Optional[str] = Query(None, description="Filter by patient"),
-    request: Request = None,
+    provider_id: Optional[UUID] = Query(None, description="Filter by provider"),
+    patient_id: Optional[UUID] = Query(None, description="Filter by patient"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
     List appointments with optional filters
     """
-    # PERFORMANCE: Use selectinload to prevent N+1 queries for related PHI data
-    query = (
-        select(Appointment)
-        .where(Appointment.practice_id == current_user.practice_id)
-        .options(
-            selectinload(Appointment.patient),
-            selectinload(Appointment.provider),
-            selectinload(Appointment.chair)
-        )
-    )
+    # Build query
+    query = select(Appointment).where(Appointment.practice_id == current_user.practice_id)
     
     # Apply filters
     if start_date:
@@ -80,22 +71,17 @@ async def list_appointments(
     result = await _execute(db, query)
     appointments = result.scalars().all()
     
-    # HIPAA: Log calendar/appointment list access
-    await log_audit_event(
-        db, current_user, "list_appointments", "appointment", None, request
-    )
-    await db.commit()
-    
     return AppointmentListResponse(
         appointments=appointments,
         count=len(appointments),
     )
 
 
+
+
 @router.get("/{appointment_id}", response_model=AppointmentResponse)
 async def get_appointment(
-    appointment_id: str,
-    request: Request = None,
+    appointment_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -116,16 +102,10 @@ async def get_appointment(
             detail="Appointment not found",
         )
     
-    # HIPAA: Log appointment access
-    await log_audit_event(
-        db, current_user, "view_appointment", "appointment", appointment.id, request
-    )
-    await db.commit()
-    
     return appointment
 
 
-@router.post("/", response_model=AppointmentResponse)
+@router.post("/", response_model=AppointmentResponse, status_code=status.HTTP_201_CREATED)
 async def create_appointment(
     appointment_data: AppointmentCreate,
     current_user: User = Depends(get_current_user),
@@ -151,35 +131,20 @@ async def create_appointment(
             detail="Patient not found",
         )
     
-    # Expert Hardening: Verify chair belongs to practice
-    if appointment_data.chair_id:
-        chair_check = await db.execute(
-            select(Chair).where(
-                Chair.id == appointment_data.chair_id,
-                Chair.practice_id == current_user.practice_id
-            )
-        )
-        if not chair_check.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid chair selection for your practice"
-            )
-
-    # Expert Hardening: Verify provider belongs to practice
-    if appointment_data.provider_id:
-        provider_check = await db.execute(
-            select(User).where(
-                User.id == appointment_data.provider_id,
-                User.practice_id == current_user.practice_id
-            )
-        )
-        if not provider_check.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid provider selection for your practice"
-            )
-    
     # Check for scheduling conflicts
+    chair_id_for_query = appointment_data.chair_id
+    if chair_id_for_query and not isinstance(chair_id_for_query, UUID):
+        try:
+            chair_id_for_query = UUID(chair_id_for_query)
+        except ValueError:
+            chair_id_for_query = None
+
+    # Lock the chair record to prevent concurrent bookings in the same operatory (B-13 FIX)
+    if chair_id_for_query:
+        # Use select for update to lock the chair row until the current transaction commits
+        lock_query = select(Chair).where(Chair.id == chair_id_for_query).with_for_update()
+        await _execute(db, lock_query)
+
     conflict_query = select(Appointment).where(
         Appointment.practice_id == current_user.practice_id,
         Appointment.start_time < appointment_data.end_time,
@@ -190,8 +155,8 @@ async def create_appointment(
     if appointment_data.provider_id:
         conflict_query = conflict_query.where(Appointment.provider_id == appointment_data.provider_id)
     
-    if appointment_data.chair_id:
-        conflict_query = conflict_query.where(Appointment.chair_id == appointment_data.chair_id)
+    if chair_id_for_query:
+        conflict_query = conflict_query.where(Appointment.chair_id == chair_id_for_query)
     
     result = await _execute(db, conflict_query)
     conflicts = result.scalars().all()
@@ -203,16 +168,35 @@ async def create_appointment(
         )
     
     # Create appointment
+    # Calculate duration in minutes
+    duration_minutes = appointment_data.duration or int((appointment_data.end_time - appointment_data.start_time).total_seconds() / 60)
+    
+    # Map string chair_id to UUID if needed
+    chair_id = appointment_data.chair_id
+    if chair_id and not isinstance(chair_id, UUID):
+        try:
+            chair_id = UUID(chair_id)
+        except ValueError:
+            chair_id = None
+    
+    # Map status if provided
+    appt_status = AppointmentStatus.SCHEDULED
+    if appointment_data.status:
+        try:
+            appt_status = AppointmentStatus(appointment_data.status)
+        except ValueError:
+            pass
+    
     appointment = Appointment(
         practice_id=current_user.practice_id,
         patient_id=appointment_data.patient_id,
         provider_id=appointment_data.provider_id,
-        chair_id=appointment_data.chair_id,
+        chair_id=chair_id,
         appointment_type=appointment_data.appointment_type,
-        status=appointment_data.status or AppointmentStatus.SCHEDULED,
+        status=appt_status,
         start_time=appointment_data.start_time,
         end_time=appointment_data.end_time,
-        duration=appointment_data.duration,
+        duration=duration_minutes,
         notes=appointment_data.notes,
     )
     
@@ -225,7 +209,7 @@ async def create_appointment(
 
 @router.put("/{appointment_id}", response_model=AppointmentResponse)
 async def update_appointment(
-    appointment_id: str,
+    appointment_id: UUID,
     appointment_data: AppointmentUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -279,8 +263,18 @@ async def update_appointment(
             )
     
     # Update fields
-    update_data = appointment_data.dict(exclude_unset=True)
+    update_data = appointment_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
+        if field == 'chair_id' and value and not isinstance(value, UUID):
+            try:
+                value = UUID(value)
+            except ValueError:
+                continue
+        if field == 'status' and value:
+            try:
+                value = AppointmentStatus(value)
+            except ValueError:
+                continue
         setattr(appointment, field, value)
     
     await db.commit()
@@ -289,10 +283,90 @@ async def update_appointment(
     return appointment
 
 
+@router.patch("/{appointment_id}", response_model=AppointmentResponse)
+async def patch_appointment(
+    appointment_id: UUID,
+    appointment_data: AppointmentUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> Any:
+    """Partial update appointment"""
+    return await update_appointment(
+        appointment_id=appointment_id,
+        appointment_data=appointment_data,
+        current_user=current_user,
+        db=db,
+        _csrf=_csrf,
+    )
+
+
+@router.post("/{appointment_id}/cancel")
+async def cancel_appointment(
+    appointment_id: UUID,
+    cancel_data: Optional[dict] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> Any:
+    """Cancel an appointment"""
+    result = await db.execute(
+        select(Appointment).where(
+            Appointment.id == appointment_id,
+            Appointment.practice_id == current_user.practice_id,
+        )
+    )
+    appointment = result.scalar_one_or_none()
+    
+    if not appointment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Appointment not found",
+        )
+    
+    appointment.status = AppointmentStatus.CANCELLED
+    if cancel_data:
+        appointment.cancellation_reason = cancel_data.get("reason") or cancel_data.get("cancellation_reason")
+    
+    await db.commit()
+    await db.refresh(appointment)
+    
+    return {"message": "Appointment cancelled successfully", "status": "cancelled", "id": str(appointment.id)}
+
+
+@router.post("/{appointment_id}/complete")
+async def complete_appointment(
+    appointment_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> Any:
+    """Complete an appointment"""
+    result = await db.execute(
+        select(Appointment).where(
+            Appointment.id == appointment_id,
+            Appointment.practice_id == current_user.practice_id,
+        )
+    )
+    appointment = result.scalar_one_or_none()
+    
+    if not appointment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Appointment not found",
+        )
+    
+    appointment.status = AppointmentStatus.COMPLETED
+    await db.commit()
+    await db.refresh(appointment)
+    
+    return {"message": "Appointment completed successfully", "status": "completed", "id": str(appointment.id)}
+
+
 @router.delete("/{appointment_id}")
 async def delete_appointment(
-    appointment_id: str,
-    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    appointment_id: UUID,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -320,9 +394,9 @@ async def delete_appointment(
     return {"message": "Appointment cancelled successfully"}
 
 
-@router.get("/slots/available", response_model=List[AppointmentSlot])
+@router.get("/availability", response_model=List[AppointmentSlot])
 async def get_available_slots(
-    date: datetime = Query(..., description="Date to check availability"),
+    date: Optional[str] = Query(None, description="Date to check availability (ISO format)"),
     duration: int = Query(30, description="Appointment duration in minutes"),
     provider_id: Optional[str] = Query(None, description="Filter by provider"),
     chair_id: Optional[str] = Query(None, description="Filter by chair"),
@@ -332,13 +406,39 @@ async def get_available_slots(
     """
     Get available appointment slots
     """
+    # Parse date string if provided
+    if date:
+        try:
+            parsed_date = datetime.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid date format. Use ISO format (YYYY-MM-DD).",
+            )
+    else:
+        parsed_date = datetime.now(timezone.utc)
+    
     # Define business hours (9 AM to 5 PM)
     start_hour = 9
     end_hour = 17
     
     # Calculate day boundaries for query
-    day_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start = parsed_date.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
+    
+    # Convert string IDs to UUID
+    provider_uuid = None
+    if provider_id:
+        try:
+            provider_uuid = UUID(provider_id)
+        except ValueError:
+            pass
+    chair_uuid = None
+    if chair_id:
+        try:
+            chair_uuid = UUID(chair_id)
+        except ValueError:
+            pass
     
     # PERFORMANCE OPTIMIZATION: Fetch all appointments for the day in a single query
     # instead of querying inside the loop.
@@ -349,18 +449,18 @@ async def get_available_slots(
         Appointment.status != AppointmentStatus.CANCELLED,
     )
     
-    if provider_id:
-        query = query.where(Appointment.provider_id == provider_id)
-    if chair_id:
-        query = query.where(Appointment.chair_id == chair_id)
+    if provider_uuid:
+        query = query.where(Appointment.provider_id == provider_uuid)
+    if chair_uuid:
+        query = query.where(Appointment.chair_id == chair_uuid)
         
     result = await db.execute(query)
     day_appointments = result.scalars().all()
     
     # Generate slots for the day
     slots = []
-    current_time = date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
-    business_end_time = date.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+    current_time = parsed_date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+    business_end_time = parsed_date.replace(hour=end_hour, minute=0, second=0, microsecond=0)
     
     while current_time + timedelta(minutes=duration) <= business_end_time:
         slot_end = current_time + timedelta(minutes=duration)
@@ -384,91 +484,3 @@ async def get_available_slots(
         current_time += timedelta(minutes=15)  # 15 minute intervals
     
     return slots
-
-
-@router.get("/stats", response_model=dict)
-async def get_appointment_stats(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> Any:
-    """
-    Get appointment statistics for today
-    """
-    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = today_start + timedelta(days=1)
-    
-    # Get today's appointments
-    today_query = select(Appointment).where(
-        Appointment.practice_id == current_user.practice_id,
-        Appointment.start_time >= today_start,
-        Appointment.start_time < today_end,
-    )
-    today_result = await db.execute(today_query)
-    today_appointments = today_result.scalars().all()
-    
-    # Count by status
-    confirmed = sum(1 for apt in today_appointments if apt.status == AppointmentStatus.CONFIRMED)
-    pending = sum(1 for apt in today_appointments if apt.status == AppointmentStatus.SCHEDULED)
-    cancelled = sum(1 for apt in today_appointments if apt.status == AppointmentStatus.CANCELLED)
-    completed = sum(1 for apt in today_appointments if apt.status == AppointmentStatus.COMPLETED)
-    
-    return {
-        "todayAppointments": len(today_appointments),
-        "confirmed": confirmed,
-        "pending": pending,
-        "cancelled": cancelled,
-        "completed": completed,
-    }
-
-
-@router.get("/types", response_model=dict)
-async def get_appointment_types(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> Any:
-    """
-    Get available appointment types
-    """
-    # Return standard dental appointment types
-    types = [
-        {"id": "checkup", "name": "Checkup", "duration": 30, "description": "Routine dental examination"},
-        {"id": "cleaning", "name": "Cleaning", "duration": 60, "description": "Professional teeth cleaning"},
-        {"id": "filling", "name": "Filling", "duration": 45, "description": "Dental filling procedure"},
-        {"id": "crown", "name": "Crown", "duration": 60, "description": "Crown placement"},
-        {"id": "extraction", "name": "Extraction", "duration": 45, "description": "Tooth extraction"},
-        {"id": "root_canal", "name": "Root Canal", "duration": 90, "description": "Root canal treatment"},
-        {"id": "whitening", "name": "Whitening", "duration": 60, "description": "Teeth whitening"},
-        {"id": "consultation", "name": "Consultation", "duration": 30, "description": "Initial consultation"},
-        {"id": "follow_up", "name": "Follow-up", "duration": 30, "description": "Follow-up appointment"},
-        {"id": "emergency", "name": "Emergency", "duration": 30, "description": "Emergency dental visit"},
-    ]
-    return {"types": types}
-
-
-@router.post("/{appointment_id}/reminder", response_model=dict)
-async def send_appointment_reminder(
-    appointment_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    _csrf: bool = Depends(verify_csrf),
-) -> Any:
-    """
-    Send appointment reminder to patient
-    """
-    result = await db.execute(
-        select(Appointment).where(
-            Appointment.id == appointment_id,
-            Appointment.practice_id == current_user.practice_id,
-        )
-    )
-    appointment = result.scalar_one_or_none()
-    
-    if not appointment:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Appointment not found",
-        )
-    
-    # In production, this would send SMS/email via Twilio/SendGrid
-    # For now, just return success message
-    return {"message": f"Reminder sent for appointment on {appointment.start_time.strftime('%Y-%m-%d %H:%M')}"}

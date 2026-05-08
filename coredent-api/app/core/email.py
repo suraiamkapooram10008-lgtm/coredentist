@@ -7,7 +7,7 @@ import os
 import logging
 from typing import Optional, List, Dict, Any
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ class EmailService:
         return {
             "success": True,
             "provider": "console",
-            "message_id": f"dev-{datetime.now().timestamp()}",
+            "message_id": f"dev-{datetime.now(timezone.utc).timestamp()}",
         }
     
     # Convenience methods for common emails
@@ -525,6 +525,157 @@ class EmailService:
             </html>
             """,
             text_content=f"Your {plan_name} subscription has been canceled. Access continues until end of billing period.",
+        )
+
+    async def send_password_change_confirmation(
+        self,
+        to: str,
+        name: str,
+    ) -> Dict[str, Any]:
+        """Send password change confirmation email"""
+        return await self.send_email(
+            to=to,
+            subject="Your CoreDent password has been changed",
+            html_content=f"""
+            <html>
+                <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <div style="background: #0d6efd; padding: 30px; text-align: center;">
+                        <h1 style="color: white; margin: 0;">Password Changed</h1>
+                    </div>
+                    <div style="padding: 30px;">
+                        <p>Dear {name},</p>
+                        <p>Your CoreDent password was successfully changed.</p>
+                        <div style="background: #d1e7dd; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                            <p style="margin: 0; color: #0f5132;">
+                                <strong>✓</strong> Your password has been updated securely.
+                            </p>
+                        </div>
+                        <p>If you did not make this change, please contact support immediately.</p>
+                        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                        <p style="color: #666; font-size: 12px;">
+                            CoreDent Dental Practice Management<br>
+                            This is an automated message. Do not reply to this email.
+                        </p>
+                    </div>
+                </body>
+            </html>
+            """,
+            text_content=f"Dear {name}, Your CoreDent password was successfully changed. If you did not make this change, please contact support immediately.",
+        )
+
+
+# ==================== Invoice Email (CRIT-05 Fix) ====================
+
+    async def send_invoice_email(
+        self,
+        to: str,
+        patient_name: str,
+        invoice_number: str,
+        invoice_date: str,
+        due_date: str,
+        amount_due: float,
+        items: list[dict],
+        practice_name: str = "CoreDent",
+        practice_address: str = "",
+        practice_phone: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Send invoice email to patient (CRIT-05 Fix - previously TODO)
+        
+        Args:
+            to: Patient email address
+            patient_name: Patient's name
+            invoice_number: Invoice number
+            invoice_date: Invoice date
+            due_date: Payment due date
+            amount_due: Total amount due
+            items: List of invoice items [{description, quantity, unit_price, total}]
+            practice_name: Name of the dental practice
+            practice_address: Practice address
+            practice_phone: Practice phone number
+        """
+        # Build items HTML
+        items_html = ""
+        for item in items:
+            items_html += f"""
+            <tr>
+                <td style="padding: 12px; border-bottom: 1px solid #eee;">{item.get('description', '')}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center;">{item.get('quantity', 1)}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right;">${item.get('unit_price', 0):.2f}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: right;">${item.get('total', 0):.2f}</td>
+            </tr>
+            """
+
+        return await self.send_email(
+            to=to,
+            subject=f"Invoice #{invoice_number} - {practice_name}",
+            html_content=f"""
+            <html>
+                <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <div style="background: #0d6efd; padding: 30px; text-align: center;">
+                        <h1 style="color: white; margin: 0;">Invoice</h1>
+                        <p style="color: white; margin: 10px 0 0 0;">#{invoice_number}</p>
+                    </div>
+                    <div style="padding: 30px;">
+                        <p>Dear {patient_name},</p>
+                        <p>Thank you for choosing {practice_name}. Please find your invoice below.</p>
+                        
+                        <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                            <table style="width: 100%; border-collapse: collapse;">
+                                <tr>
+                                    <td style="padding: 8px 0;"><strong>Invoice Number:</strong></td>
+                                    <td style="text-align: right;">{invoice_number}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px 0;"><strong>Invoice Date:</strong></td>
+                                    <td style="text-align: right;">{invoice_date}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px 0;"><strong>Due Date:</strong></td>
+                                    <td style="text-align: right;">{due_date}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        
+                        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                            <thead>
+                                <tr style="background: #f8f9fa;">
+                                    <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Description</th>
+                                    <th style="padding: 12px; text-align: center; border-bottom: 2px solid #dee2e6;">Qty</th>
+                                    <th style="padding: 12px; text-align: right; border-bottom: 2px solid #dee2e6;">Unit Price</th>
+                                    <th style="padding: 12px; text-align: right; border-bottom: 2px solid #dee2e6;">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {items_html}
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="3" style="padding: 12px; text-align: right; font-weight: bold; font-size: 18px;">Total Due:</td>
+                                    <td style="padding: 12px; text-align: right; font-weight: bold; font-size: 18px; color: #0d6efd;">${amount_due:.2f}</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                        
+                        <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                            <p style="margin: 0;"><strong>Payment Due:</strong> {due_date}</p>
+                        </div>
+                        
+                        <p>Please remit payment to the address above or contact us for payment options.</p>
+                        
+                        {f'<p><strong>Address:</strong> {practice_address}</p>' if practice_address else ''}
+                        {f'<p><strong>Phone:</strong> {practice_phone}</p>' if practice_phone else ''}
+                        
+                        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                        <p style="color: #666; font-size: 12px;">
+                            {practice_name} Dental Practice Management<br>
+                            This is an automated message. Do not reply to this email.
+                        </p>
+                    </div>
+                </body>
+            </html>
+            """,
+            text_content=f"Dear {patient_name}, Please find invoice #{invoice_number} from {practice_name}. Total amount due: ${amount_due:.2f}. Due date: {due_date}.",
         )
 
 

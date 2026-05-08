@@ -26,33 +26,14 @@ async def get_billing_preferences(
     Get billing preferences for the practice
     """
     from sqlalchemy import cast, String
-    
-    print(f"[DEBUG] User practice_id: {current_user.practice_id}")
-    print(f"[DEBUG] User practice_id type: {type(current_user.practice_id)}")
-    
-    # Get practice - cast UUID to string for SQLite compatibility
     stmt = select(Practice).where(cast(Practice.id, String) == str(current_user.practice_id))
-    print(f"[DEBUG] Query: {stmt}")
     result = await db.execute(stmt)
     practice = result.scalar_one_or_none()
-    
-    print(f"[DEBUG] Practice found: {practice}")
     
     if not practice:
         raise HTTPException(status_code=404, detail="Practice not found")
     
-    # Return billing preferences with defaults
-    return {
-        "taxRate": practice.tax_rate or 0.0,
-        "currency": practice.currency or "USD",
-        "invoicePrefix": practice.invoice_prefix or "INV",
-        "paymentTerms": practice.payment_terms or 30,
-        "lateFeePercentage": practice.late_fee_percentage or 0.0,
-        "acceptedPaymentMethods": practice.accepted_payment_methods or ["cash", "card", "check"],
-        "autoSendInvoices": practice.auto_send_invoices or False,
-        "autoSendReminders": practice.auto_send_reminders or False,
-        "reminderDaysBefore": practice.reminder_days_before or 3,
-    }
+    return _billing_preferences_response(practice)
 
 
 @router.put("/billing", response_model=BillingPreferencesResponse)
@@ -64,31 +45,36 @@ async def update_billing_preferences(
     """
     Update billing preferences for the practice
     """
-    # Get practice
-    stmt = select(Practice).where(Practice.id == current_user.practice_id)
+    from sqlalchemy import cast, String
+    stmt = select(Practice).where(cast(Practice.id, String) == str(current_user.practice_id))
     result = await db.execute(stmt)
     practice = result.scalar_one_or_none()
     
     if not practice:
         raise HTTPException(status_code=404, detail="Practice not found")
     
-    # Update fields
+    settings_data = dict(practice.settings or {})
     update_data = preferences.model_dump(exclude_unset=True)
     for field, value in update_data.items():
-        if hasattr(practice, field):
-            setattr(practice, field, value)
+        settings_data[field] = value
+    practice.settings = settings_data
     
     await db.commit()
     await db.refresh(practice)
     
+    return _billing_preferences_response(practice)
+
+
+def _billing_preferences_response(practice: Practice) -> dict:
+    settings_data = practice.settings or {}
     return {
-        "taxRate": practice.tax_rate or 0.0,
-        "currency": practice.currency or "USD",
-        "invoicePrefix": practice.invoice_prefix or "INV",
-        "paymentTerms": practice.payment_terms or 30,
-        "lateFeePercentage": practice.late_fee_percentage or 0.0,
-        "acceptedPaymentMethods": practice.accepted_payment_methods or ["cash", "card", "check"],
-        "autoSendInvoices": practice.auto_send_invoices or False,
-        "autoSendReminders": practice.auto_send_reminders or False,
-        "reminderDaysBefore": practice.reminder_days_before or 3,
+        "taxRate": settings_data.get("taxRate", 0.0),
+        "currency": settings_data.get("currency", practice.currency or "USD"),
+        "invoicePrefix": settings_data.get("invoicePrefix", "INV"),
+        "paymentTerms": settings_data.get("paymentTerms", 30),
+        "lateFeePercentage": settings_data.get("lateFeePercentage", 0.0),
+        "acceptedPaymentMethods": settings_data.get("acceptedPaymentMethods", ["cash", "card", "check"]),
+        "autoSendInvoices": settings_data.get("autoSendInvoices", False),
+        "autoSendReminders": settings_data.get("autoSendReminders", False),
+        "reminderDaysBefore": settings_data.get("reminderDaysBefore", 3),
     }

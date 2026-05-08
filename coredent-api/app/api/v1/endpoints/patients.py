@@ -17,6 +17,7 @@ from app.schemas.common import PaginatedResponse
 from app.api.deps import get_current_user, get_current_practice_id, Pagination, verify_csrf, require_role
 from app.core.audit import log_audit_event
 from app.core.sanitization import sanitize_search_query, sanitize_phone
+from app.core.redis_cache import cache, get_cache_key
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 import re
@@ -36,12 +37,21 @@ async def list_patients(
 ) -> Any:
     """
     List patients with search and filtering (paginated)
+    Cached for performance on hot endpoints
     """
     # HIPAA: Log PHI list access
     await log_audit_event(
         db, current_user, "patient_list_viewed", "patient", None, request
     )
     await db.commit()
+
+    # Try cache first (only for non-search queries to avoid cache explosion)
+    cache_key = None
+    if not query and not status_filter:
+        cache_key = get_cache_key(f"patients:{practice_id}", page=pagination.page, limit=pagination.limit)
+        cached_result = await cache.get(cache_key)
+        if cached_result:
+            return cached_result
 
     # Build base query with eager loading to prevent N+1 for visit stats
     base_stmt = (
@@ -51,13 +61,14 @@ async def list_patients(
     )
     
     # Apply search - Use parameterized queries to prevent SQL injection
+    search_query_sanitized = None
     if query:
         # HIGH-04 FIX: Sanitize search input
-        query = sanitize_search_query(query)
+        search_query_sanitized = sanitize_search_query(query)
         
-        if query:
+        if search_query_sanitized:
             # Normalize search pattern
-            search_pattern = f"%{query}%"
+            search_pattern = f"%{search_query_sanitized}%"
             filters = [
                 Patient.first_name.ilike(search_pattern),
                 Patient.last_name.ilike(search_pattern),
@@ -65,7 +76,7 @@ async def list_patients(
             ]
             
             # Expert Hardening: Smart Phone Search (strip formatting)
-            clean_phone = re.sub(r"\D", "", query)
+            clean_phone = re.sub(r"\D", "", search_query_sanitized)
             if clean_phone:
                 filters.append(Patient.phone.like(f"%{clean_phone}%"))
             else:
@@ -77,24 +88,22 @@ async def list_patients(
     if status_filter:
         base_stmt = base_stmt.where(Patient.status == status_filter)
 
-    # Get total count BEFORE pagination
+    # Get total count BEFORE pagination (reuse already-sanitized search)
     from sqlalchemy import func
     count_stmt = select(func.count()).select_from(Patient).where(Patient.practice_id == practice_id)
-    if query:
-        query = sanitize_search_query(query)
-        if query:
-            search_pattern = f"%{query}%"
-            count_filters = [
-                Patient.first_name.ilike(search_pattern),
-                Patient.last_name.ilike(search_pattern),
-                Patient.email.ilike(search_pattern),
-            ]
-            clean_phone = re.sub(r"\D", "", query)
-            if clean_phone:
-                count_filters.append(Patient.phone.like(f"%{clean_phone}%"))
-            else:
-                count_filters.append(Patient.phone.ilike(search_pattern))
-            count_stmt = count_stmt.where(or_(*count_filters))
+    if search_query_sanitized:
+        search_pattern = f"%{search_query_sanitized}%"
+        count_filters = [
+            Patient.first_name.ilike(search_pattern),
+            Patient.last_name.ilike(search_pattern),
+            Patient.email.ilike(search_pattern),
+        ]
+        clean_phone = re.sub(r"\D", "", search_query_sanitized)
+        if clean_phone:
+            count_filters.append(Patient.phone.like(f"%{clean_phone}%"))
+        else:
+            count_filters.append(Patient.phone.ilike(search_pattern))
+        count_stmt = count_stmt.where(or_(*count_filters))
     if status_filter:
         count_stmt = count_stmt.where(Patient.status == status_filter)
     
@@ -107,14 +116,20 @@ async def list_patients(
     # Execute query
     result = await db.execute(stmt)
     patients = result.scalars().all()
-    
-    # Return paginated response
-    return PaginatedResponse.create(
+
+    # Create response
+    response = PaginatedResponse.create(
         items=patients,
         total=total,
         page=pagination.page,
         limit=pagination.limit
     )
+
+    # Cache result if no search/filter (to avoid cache explosion)
+    if cache_key:
+        await cache.set(cache_key, response.dict())
+
+    return response
 
 
 @router.post("", response_model=PatientResponse, status_code=status.HTTP_201_CREATED)
@@ -178,6 +193,13 @@ async def get_patient(
         select(Patient).where(
             Patient.id == patient_id,
             Patient.practice_id == practice_id,
+        ).options(
+            selectinload(Patient.appointments),
+            selectinload(Patient.insurances),
+            selectinload(Patient.treatment_plans),
+            selectinload(Patient.invoices),
+            selectinload(Patient.clinical_notes),
+            selectinload(Patient.images),
         )
     )
     patient = result.scalar_one_or_none()

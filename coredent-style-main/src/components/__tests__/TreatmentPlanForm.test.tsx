@@ -2,6 +2,7 @@
  * TreatmentPlanForm Component Tests
  */
 
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TreatmentPlanForm } from '../treatment/TreatmentPlanForm';
@@ -11,8 +12,8 @@ describe('TreatmentPlanForm', () => {
   it('should render form with empty fields for new plan', () => {
     render(
       <TreatmentPlanForm
-        onSubmit={jest.fn()}
-        onCancel={jest.fn()}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
       />
     );
 
@@ -33,8 +34,8 @@ describe('TreatmentPlanForm', () => {
     render(
       <TreatmentPlanForm
         plan={plan}
-        onSubmit={jest.fn()}
-        onCancel={jest.fn()}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
       />
     );
 
@@ -46,12 +47,13 @@ describe('TreatmentPlanForm', () => {
 
   it('should call onSubmit with form data', async () => {
     const user = userEvent.setup();
-    const onSubmit = jest.fn();
+    const onSubmit = vi.fn();
 
     render(
       <TreatmentPlanForm
+        patientId="test-patient-id"
         onSubmit={onSubmit}
-        onCancel={jest.fn()}
+        onCancel={vi.fn()}
       />
     );
 
@@ -71,11 +73,11 @@ describe('TreatmentPlanForm', () => {
 
   it('should call onCancel when cancel button is clicked', async () => {
     const user = userEvent.setup();
-    const onCancel = jest.fn();
+    const onCancel = vi.fn();
 
     render(
       <TreatmentPlanForm
-        onSubmit={jest.fn()}
+        onSubmit={vi.fn()}
         onCancel={onCancel}
       />
     );
@@ -99,8 +101,8 @@ describe('TreatmentPlanForm', () => {
     render(
       <TreatmentPlanForm
         plan={plan}
-        onSubmit={jest.fn()}
-        onCancel={jest.fn()}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
       />
     );
 
@@ -110,8 +112,8 @@ describe('TreatmentPlanForm', () => {
   it('should show Create Plan button for new plan', () => {
     render(
       <TreatmentPlanForm
-        onSubmit={jest.fn()}
-        onCancel={jest.fn()}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
       />
     );
 
@@ -123,8 +125,8 @@ describe('TreatmentPlanForm', () => {
 
     render(
       <TreatmentPlanForm
-        onSubmit={jest.fn()}
-        onCancel={jest.fn()}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
       />
     );
 
@@ -141,8 +143,8 @@ describe('TreatmentPlanForm', () => {
 
     render(
       <TreatmentPlanForm
-        onSubmit={jest.fn()}
-        onCancel={jest.fn()}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
       />
     );
 
@@ -154,12 +156,13 @@ describe('TreatmentPlanForm', () => {
 
   it('should handle optional fields', async () => {
     const user = userEvent.setup();
-    const onSubmit = jest.fn();
+    const onSubmit = vi.fn();
 
     render(
       <TreatmentPlanForm
+        patientId="test-patient-id"
         onSubmit={onSubmit}
-        onCancel={jest.fn()}
+        onCancel={vi.fn()}
       />
     );
 
@@ -177,6 +180,7 @@ describe('TreatmentPlanForm', () => {
         expect.objectContaining({
           title: 'Root Canal',
           patientName: 'Jane Doe',
+          patientId: 'test-patient-id',
         })
       );
     });
@@ -204,8 +208,8 @@ describe('TreatmentPlanForm', () => {
     const { rerender } = render(
       <TreatmentPlanForm
         plan={plan1}
-        onSubmit={jest.fn()}
-        onCancel={jest.fn()}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
       />
     );
 
@@ -214,8 +218,8 @@ describe('TreatmentPlanForm', () => {
     rerender(
       <TreatmentPlanForm
         plan={plan2}
-        onSubmit={jest.fn()}
-        onCancel={jest.fn()}
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
       />
     );
 

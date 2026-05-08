@@ -16,8 +16,30 @@ import * as Sentry from '@sentry/browser';
 if (!import.meta.env.DEV && import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
     dsn: import.meta.env.VITE_SENTRY_DSN,
+    integrations: [new Sentry.BrowserTracing()],
     environment: import.meta.env.MODE,
+    release: `coredent-style@${import.meta.env.VITE_APP_VERSION || '1.0.0'}`,
     tracesSampleRate: 0.1,
+    profilesSampleRate: 0.1, // Add profiling
+    sendDefaultPii: false, // Explicitly disable sending PII
+
+    // HIPAA: Redact sensitive data before sending
+    beforeSend(event) {
+      // Modify the event here
+      if (event.request && event.request.data) {
+        // Redact sensitive fields from request data
+        // This is a simple example; you may need a more robust solution
+        try {
+          const data = JSON.parse(event.request.data as string);
+          if (data.password) data.password = '[REDACTED]';
+          if (data.email) data.email = '[REDACTED]';
+          event.request.data = JSON.stringify(data);
+        } catch (e) {
+          // Ignore parsing errors
+        }
+      }
+      return event;
+    },
   });
 }
 
@@ -70,7 +92,6 @@ class Logger {
     this.addLog(entry);
     
     if (this.isDevelopment) {
-      // eslint-disable-next-line no-console
       console.debug(`[DEBUG] ${message}`, context);
     }
   }
@@ -88,7 +109,6 @@ class Logger {
     const entry = this.createEntry('warn', message, context);
     this.addLog(entry);
     
-    // eslint-disable-next-line no-console
     console.warn(`[WARN] ${message}`, context);
     this.sendToMonitoring(entry);
   }

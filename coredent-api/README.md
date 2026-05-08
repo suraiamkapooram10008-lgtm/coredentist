@@ -259,7 +259,7 @@ This backend implements several HIPAA-required features:
 
 ## Monitoring
 
-- Health check endpoint: `/health`
+- Health check endpoints: `/health` (lightweight), `/api/v1/health/` (detailed)
 - Metrics endpoint: `/metrics`
 - Structured logging
 - Error tracking (Sentry integration)

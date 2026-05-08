@@ -4,7 +4,7 @@ Represents dental patients
 SECURITY: Added database indexes for query performance
 """
 
-from sqlalchemy import Column, String, Date, DateTime, ForeignKey, Enum, ARRAY, JSON, Boolean, Index
+from sqlalchemy import Column, String, Date, DateTime, ForeignKey, Enum, ARRAY, JSON, Boolean, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -32,10 +32,14 @@ class Patient(Base):
     __tablename__ = "patients"
     
     # PERFORMANCE: Add composite indexes for common query patterns
+    # CRIT-12: Add unique constraints for data integrity
     __table_args__ = (
         Index('idx_patient_practice_status', 'practice_id', 'status'),
         Index('idx_patient_name', 'last_name', 'first_name'),
         Index('idx_patient_practice_email', 'practice_id', 'email'),
+        Index('idx_patient_dob', 'date_of_birth'),
+        UniqueConstraint('practice_id', 'email', name='uq_patient_practice_email'),
+        UniqueConstraint('practice_id', 'phone', name='uq_patient_practice_phone'),
     )
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -46,16 +50,18 @@ class Patient(Base):
     gender = Column(Enum(Gender))
     email = Column(String(255), index=True)  # Already has index
     phone = Column(String(20), index=True)  # Added index for phone lookups
-    
-    # Address (Expanded for Global/India Portability)
+    abha_id = Column(String(20), unique=True)  # ABHA ID for Indian healthcare integration
+
+    # Address
     address_street = Column(String(255))
     address_city = Column(String(100))
-    address_state = Column(String(100)) # Expanded from 2 chars for Indian states
-    address_zip = Column(String(20))
-    
-    # Global Identifiers
-    abha_id = Column(String(20), index=True) # India's ABHA ID
-    ssn_last_four = Column(String(4)) # US PHI (Standardized)
+    address_state = Column(String(100))
+    address_zip = Column(String(10))
+
+    # Consent tracking (DPDPA 2023 §6)
+    consent_given = Column(Boolean, default=False, nullable=False)
+    consent_recorded_at = Column(DateTime(timezone=True))
+    consent_purpose = Column(String(255), default="Dental treatment and record keeping")
     
     # Emergency Contact
     emergency_contact = Column(JSON)  # {name, relationship, phone}
@@ -70,13 +76,6 @@ class Patient(Base):
     
     # Status
     status = Column(Enum(PatientStatus), default=PatientStatus.ACTIVE)
-    
-    # Global Compliance (India DPDP / US HIPAA)
-    consent_recorded_at = Column(DateTime(timezone=True))
-    
-    # Patient Portal Access
-    portal_access_token = Column(String(128))  # Hashed token for patient self-service portal
-    portal_token_expires = Column(DateTime(timezone=True))
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -104,7 +103,13 @@ class Patient(Base):
     conversations = relationship("Conversation", back_populates="patient", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="patient", cascade="all, delete-orphan")
     payment_cards = relationship("PaymentCard", back_populates="patient")
+    payment_plans = relationship("PaymentPlan", back_populates="patient")
     subscriptions = relationship("Subscription", back_populates="patient")
+    
+    # Prescription relationships
+    allergies = relationship("PatientAllergy", back_populates="patient", cascade="all, delete-orphan")
+    current_medications = relationship("PatientMedication", back_populates="patient", cascade="all, delete-orphan")
+    prescriptions = relationship("Prescription", back_populates="patient", cascade="all, delete-orphan")
     
     @property
     def full_name(self) -> str:

@@ -3,7 +3,7 @@ Insurance Schemas
 Pydantic models for insurance data validation
 """
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, validator
 from uuid import UUID

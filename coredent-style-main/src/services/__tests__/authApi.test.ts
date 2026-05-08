@@ -59,7 +59,7 @@ describe('authApi', () => {
 
     it('should handle unauthorized access', async () => {
       server.use(
-        http.get('/api/v1/auth/me', () => {
+        http.get('*/api/v1/auth/me', () => {
           return HttpResponse.json(
             { message: 'Unauthorized' },
             { status: 401 }

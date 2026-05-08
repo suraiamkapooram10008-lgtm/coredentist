@@ -211,13 +211,14 @@ export function Sidebar({ collapsed, mobileOpen, onToggle, onMobileClose }: Side
               return (
                 <Tooltip key={item.href} delayDuration={0}>
                   <TooltipTrigger asChild>
-                    <NavLink to={item.href}>
+                    <NavLink to={item.href} aria-label={item.label}>
                       <Button
                         variant={isActive ? 'secondary' : 'ghost'}
                         size="icon"
                         className="w-full"
+                        aria-label={item.label}
                       >
-                        <Icon className="h-5 w-5" />
+                        <Icon className="h-5 w-5" aria-hidden="true" />
                       </Button>
                     </NavLink>
                   </TooltipTrigger>
@@ -236,8 +237,9 @@ export function Sidebar({ collapsed, mobileOpen, onToggle, onMobileClose }: Side
                     "w-full justify-start gap-3",
                     isActive && "bg-secondary"
                   )}
+                  aria-label={item.label}
                 >
-                  <Icon className="h-5 w-5" />
+                  <Icon className="h-5 w-5" aria-hidden="true" />
                   {item.label}
                 </Button>
               </NavLink>

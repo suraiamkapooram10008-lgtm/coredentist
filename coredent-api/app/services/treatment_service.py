@@ -3,7 +3,7 @@ Treatment Service
 Core business logic for treatment operations
 """
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 import logging
@@ -82,9 +82,9 @@ class TreatmentService:
         if 'status' in kwargs:
             new_status = kwargs['status']
             if new_status == TreatmentPlanStatus.PRESENTED and not plan.presented_date:
-                plan.presented_date = datetime.now().date()
+                plan.presented_date = datetime.now(timezone.utc).date()
             elif new_status == TreatmentPlanStatus.ACCEPTED and not plan.accepted_date:
-                plan.accepted_date = datetime.now().date()
+                plan.accepted_date = datetime.now(timezone.utc).date()
         
         for key, value in kwargs.items():
             if hasattr(plan, key):

@@ -5,11 +5,22 @@ SQLAlchemy ORM models for all entities
 
 from app.core.base import Base
 from app.models.user import User
-from app.models.password_reset import PasswordResetToken
 from app.models.practice import Practice
 from app.models.patient import Patient
 from app.models.appointment import Appointment, AppointmentType, Chair
-from app.models.clinical import ClinicalNote, DentalChart, PerioChart, PerioChartEntry
+from app.models.clinical import (
+    ClinicalNote,
+    NoteType,
+    DentalChart,
+    ToothCondition,
+    ChartingEntry,
+    ChartingSymbol,
+    ConditionType,
+    RestorationStatus,
+    SurfaceCode,
+    PerioChart,
+    PerioChartEntry,
+)
 from app.models.billing import Invoice, Payment
 from app.models.audit import AuditLog, Session
 from app.models.insurance import (
@@ -19,8 +30,6 @@ from app.models.insurance import (
     InsurancePreAuthorization,
     Eligibility,
     ExplanationOfBenefits,
-    FeeSchedule,
-    FeeScheduleEntry,
 )
 from app.models.imaging import PatientImage, ImageSeries, ImageTemplate
 from app.models.treatment import (
@@ -54,6 +63,9 @@ from app.models.inventory import (
     InventoryCategory,
     InventoryUnit,
     InventoryAlertType,
+    VendorContract,
+    VendorInvoice,
+    ReorderRule,
 )
 from app.models.lab import (
     Lab,
@@ -113,12 +125,44 @@ from app.models.payment import (
     CardType,
     RecurringBillingStatus,
 )
+from app.models.payroll import (
+    EmployeeCompensation,
+    CommissionStructure,
+    Timesheet,
+    PayrollPeriod,
+    PayrollEntry,
+    ProductionLog,
+    PTOBalance,
+    PTORequest,
+    PayType,
+    CommissionType,
+    TimesheetStatus,
+    PayrollPeriodStatus,
+    PTOType,
+    PTORequestStatus,
+)
+from app.models.emergency_token import EmergencyToken
+
+from app.models.prescription import (
+    Medication,
+    PatientAllergy,
+    PatientMedication,
+    Prescription,
+    PrescriptionTemplate,
+    DrugInteraction,
+    PrescriptionStatus,
+    DrugSchedule,
+    DrugForm,
+    AllergySeverity,
+    AllergenType,
+    InteractionSeverity,
+    FrequencyCode,
+)
 
 __all__ = [
     # Core
     "Base",
     "User",
-    "PasswordResetToken",
     "Practice",
     "Patient",
     # Appointments
@@ -127,7 +171,14 @@ __all__ = [
     "Chair",
     # Clinical
     "ClinicalNote",
+    "NoteType",
     "DentalChart",
+    "ToothCondition",
+    "ChartingEntry",
+    "ChartingSymbol",
+    "ConditionType",
+    "RestorationStatus",
+    "SurfaceCode",
     "PerioChart",
     "PerioChartEntry",
     # Billing
@@ -143,8 +194,6 @@ __all__ = [
     "InsurancePreAuthorization",
     "Eligibility",
     "ExplanationOfBenefits",
-    "FeeSchedule",
-    "FeeScheduleEntry",
     # Imaging
     "PatientImage",
     "ImageSeries",
@@ -178,6 +227,9 @@ __all__ = [
     "InventoryCategory",
     "InventoryUnit",
     "InventoryAlertType",
+    "VendorContract",
+    "VendorInvoice",
+    "ReorderRule",
     # Lab
     "Lab",
     "LabCase",
@@ -230,4 +282,35 @@ __all__ = [
     "PaymentStatus",
     "CardType",
     "RecurringBillingStatus",
+    # Emergency
+    "EmergencyToken",
+    # Prescription
+    "Medication",
+    "PatientAllergy",
+    "PatientMedication",
+    "Prescription",
+    "PrescriptionTemplate",
+    "DrugInteraction",
+    "PrescriptionStatus",
+    "DrugSchedule",
+    "DrugForm",
+    "AllergySeverity",
+    "AllergenType",
+    "InteractionSeverity",
+    "FrequencyCode",
+    # Payroll
+    "EmployeeCompensation",
+    "CommissionStructure",
+    "Timesheet",
+    "PayrollPeriod",
+    "PayrollEntry",
+    "ProductionLog",
+    "PTOBalance",
+    "PTORequest",
+    "PayType",
+    "CommissionType",
+    "TimesheetStatus",
+    "PayrollPeriodStatus",
+    "PTOType",
+    "PTORequestStatus",
 ]

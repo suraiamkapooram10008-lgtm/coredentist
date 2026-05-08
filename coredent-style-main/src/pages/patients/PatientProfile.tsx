@@ -27,6 +27,7 @@ import { PatientDialog } from '@/components/patients/PatientDialog';
 import { AddNoteDialog } from '@/components/patients/AddNoteDialog';
 import { AppointmentHistory } from '@/components/patients/AppointmentHistory';
 import { AttachmentsList } from '@/components/patients/AttachmentsList';
+import { VisualDentalChart } from '@/components/clinical/VisualDentalChart';
 import type { PatientRecord } from '@/types/patient';
 
 export default function PatientProfile() {
@@ -135,6 +136,7 @@ export default function PatientProfile() {
         <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent">
           <TabsTrigger value="overview" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent">Overview</TabsTrigger>
           <TabsTrigger value="medical" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent">Medical/Dental</TabsTrigger>
+          <TabsTrigger value="chart" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent">Odontogram</TabsTrigger>
           <TabsTrigger value="appointments" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent">Appointments</TabsTrigger>
           <TabsTrigger value="files" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent">Files & Images</TabsTrigger>
         </TabsList>
@@ -152,6 +154,10 @@ export default function PatientProfile() {
             medicalHistory={patient.medicalHistory} 
             dentalHistory={patient.dentalHistory} 
           />
+        </TabsContent>
+
+        <TabsContent value="chart" className="mt-6">
+          <VisualDentalChart patientId={patient.id} />
         </TabsContent>
 
         <TabsContent value="appointments" className="mt-6">

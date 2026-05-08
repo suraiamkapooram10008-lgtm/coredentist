@@ -6,7 +6,7 @@ Uses service layer for business logic
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Dict
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 import logging
@@ -175,6 +175,40 @@ async def get_subscription_plan(
     return plan
 
 
+@router.delete("/plans/{plan_id}")
+async def delete_subscription_plan(
+    plan_id: UUID,
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> Any:
+    """Deactivate a subscription plan (soft delete) — fails if active subscriptions reference it"""
+    result = await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.id == plan_id))
+    plan = result.scalar_one_or_none()
+
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+
+    # Check for active subscriptions referencing this plan
+    active_subs = await db.execute(
+        select(Subscription).where(
+            Subscription.plan_id == plan_id,
+            Subscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING, SubscriptionStatus.PAST_DUE]),
+        )
+    )
+    if active_subs.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot deactivate plan with active subscriptions. Cancel subscriptions first."
+        )
+
+    plan.is_active = False
+    await db.commit()
+    await db.refresh(plan)
+
+    return APIResponse(success=True, message="Plan deactivated")
+
+
 # ======================= Subscription Management Endpoints =======================
 
 @router.get("", response_model=SubscriptionList)
@@ -238,17 +272,16 @@ async def create_subscription(
         )
     
     # Create Stripe subscription using service
+    service = SubscriptionService(db)
     try:
-        stripe_sub_id, stripe_cust_id = await SubscriptionService.create_stripe_subscription(
-            db,
-            plan,
-            current_user.email,
-            current_user.full_name,
+        sub_result = await service.create_stripe_subscription(
             current_user.practice_id,
-            current_user.id,
-            sub_data.payment_card_id,
-            sub_data.trial_period_days or plan.trial_period_days,
+            plan.id,
+            stripe_customer_id=sub_data.stripe_customer_id or "",
+            stripe_price_id=plan.stripe_price_id or "",
         )
+        stripe_sub_id = sub_result.stripe_subscription_id
+        stripe_cust_id = sub_result.stripe_customer_id
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     
@@ -256,7 +289,7 @@ async def create_subscription(
     now = datetime.now(timezone.utc)
     trial_days = sub_data.trial_period_days or plan.trial_period_days
     trial_end = now + timedelta(days=trial_days) if trial_days > 0 else None
-    period_start, period_end = SubscriptionService.calculate_period_start_end(plan.interval, trial_end or now)
+    period_start, period_end = service.calculate_period_start_end(trial_end or now, plan.interval)
     
     # Determine status
     status_val = SubscriptionStatus.TRIALING if trial_days > 0 else SubscriptionStatus.ACTIVE
@@ -299,6 +332,62 @@ async def create_subscription(
     return subscription
 
 
+@router.get("/stats")
+async def get_subscription_stats(
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Get subscription statistics for dashboard"""
+    stats = await SubscriptionBillingService.get_subscription_stats(db, current_user.practice_id)
+    return stats
+
+
+@router.get("/invoices")
+async def list_subscription_invoices(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """List invoices for the practice's subscriptions"""
+    from app.models.billing import Invoice
+    result = await db.execute(
+        select(Invoice).where(Invoice.practice_id == current_user.practice_id)
+        .order_by(desc(Invoice.created_at))
+    )
+    invoices = result.scalars().all()
+    return [{
+        "id": str(inv.id),
+        "invoice_number": inv.invoice_number,
+        "total": float(inv.total) if inv.total else 0,
+        "status": str(inv.status) if inv.status else "unknown",
+        "created_at": inv.created_at.isoformat() if inv.created_at else None,
+    } for inv in invoices]
+
+
+@router.get("/usage")
+async def get_subscription_usage_overview(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Get usage overview for practice subscriptions"""
+    result = await db.execute(
+        select(Subscription).where(
+            Subscription.practice_id == current_user.practice_id,
+        )
+    )
+    subs = result.scalars().all()
+
+    total_usage = sum(float(s.current_usage or 0) for s in subs)
+    total_overage = sum(float(s.current_overage or 0) for s in subs)
+
+    return {
+        "usage": {
+            "current": total_usage,
+            "overage": total_overage,
+        },
+        "subscriptions": len(subs),
+    }
+
+
 @router.get("/{subscription_id}", response_model=SubscriptionResponse)
 async def get_subscription(
     subscription_id: UUID,
@@ -306,8 +395,9 @@ async def get_subscription(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """Get a specific subscription"""
-    sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
-    if not sub:
+    service = SubscriptionService(db)
+    sub = await service.get_subscription_with_plan(subscription_id)
+    if not sub or sub.practice_id != current_user.practice_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
     return sub
 
@@ -319,8 +409,9 @@ async def get_trial_info(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """Get trial information for a subscription"""
-    sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
-    if not sub:
+    service = SubscriptionService(db)
+    sub = await service.get_subscription_with_plan(subscription_id)
+    if not sub or sub.practice_id != current_user.practice_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
     if not sub.trial_end:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No trial on this subscription")
@@ -350,14 +441,15 @@ async def cancel_subscription(
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
     """Cancel a subscription"""
-    sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
-    if not sub:
+    service = SubscriptionService(db)
+    sub = await service.get_subscription_with_plan(subscription_id)
+    if not sub or sub.practice_id != current_user.practice_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
     if sub.status in [SubscriptionStatus.CANCELED, SubscriptionStatus.EXPIRED, SubscriptionStatus.UNPAID]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Subscription already canceled")
     
     # Cancel Stripe subscription using service
-    await SubscriptionService.cancel_stripe_subscription(sub, cancel_data.cancel_at_period_end)
+    await service.cancel_stripe_subscription(subscription_id, cancel_data.cancel_at_period_end)
     
     # Update local state
     sub.cancel_at_period_end = cancel_data.cancel_at_period_end
@@ -388,14 +480,15 @@ async def pause_subscription(
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
     """Pause a subscription"""
-    sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
-    if not sub:
+    service = SubscriptionService(db)
+    sub = await service.get_subscription_with_plan(subscription_id)
+    if not sub or sub.practice_id != current_user.practice_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
     if sub.status != SubscriptionStatus.ACTIVE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Can only pause active subscriptions")
     
     # Pause Stripe subscription using service
-    await SubscriptionService.pause_stripe_subscription(sub)
+    await service.pause_stripe_subscription(subscription_id)
     
     sub.status = SubscriptionStatus.PAUSED
     sub.paused_at = datetime.now(timezone.utc)
@@ -414,14 +507,15 @@ async def resume_subscription(
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
     """Resume a paused subscription"""
-    sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
-    if not sub:
+    service = SubscriptionService(db)
+    sub = await service.get_subscription_with_plan(subscription_id)
+    if not sub or sub.practice_id != current_user.practice_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
     if sub.status != SubscriptionStatus.PAUSED:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Can only resume paused subscriptions")
     
     # Resume Stripe subscription using service
-    await SubscriptionService.resume_stripe_subscription(sub)
+    await service.resume_stripe_subscription(subscription_id)
     
     sub.status = SubscriptionStatus.ACTIVE
     sub.paused_at = None
@@ -442,8 +536,9 @@ async def change_plan(
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
     """Change to a different subscription plan with proration"""
-    sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
-    if not sub:
+    service = SubscriptionService(db)
+    sub = await service.get_subscription_with_plan(subscription_id)
+    if not sub or sub.practice_id != current_user.practice_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
     
     plan_result = await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.id == change_data.new_plan_id))
@@ -453,15 +548,17 @@ async def change_plan(
     
     # Change plan using service
     try:
-        proration_amount = await SubscriptionService.change_plan(
-            db, sub, new_plan, change_data.proration_behavior
+        await service.change_plan(
+            subscription_id,
+            change_data.new_plan_id,
+            new_plan.stripe_price_id,
         )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    
+
     await log_audit_event(
         db, current_user, "change_plan", "subscription", subscription_id, request,
-        {"old_plan": str(sub.plan_id), "new_plan": str(new_plan.id), "proration": str(proration_amount)}
+        {"old_plan": str(sub.plan_id), "new_plan": str(new_plan.id)}
     )
     
     await db.commit()
@@ -479,16 +576,17 @@ async def record_usage(
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
     """Record usage for usage-based billing"""
-    sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
-    if not sub:
+    service = SubscriptionService(db)
+    sub = await service.get_subscription_with_plan(subscription_id)
+    if not sub or sub.practice_id != current_user.practice_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
     
     if not sub.plan or not sub.plan.is_usage_based:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Plan is not usage-based")
     
     # Record usage using service
-    record = await SubscriptionService.record_usage(
-        db, sub, usage_data.quantity, usage_data.description, usage_data.metadata
+    record = await service.record_usage(
+        subscription_id, usage_data.description or "usage", usage_data.quantity
     )
     
     return record
@@ -501,12 +599,13 @@ async def get_usage(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """Get usage details for current billing period"""
-    sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
-    if not sub:
+    service = SubscriptionService(db)
+    sub = await service.get_subscription_with_plan(subscription_id)
+    if not sub or sub.practice_id != current_user.practice_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
     
     # Get usage records using service
-    records = await SubscriptionService.get_usage_records(db, subscription_id, sub.current_period_start)
+    records = await service.get_usage_records(subscription_id, sub.current_period_start)
     
     return UsageResponse(
         subscription_id=subscription_id,
@@ -543,8 +642,9 @@ async def preview_proration(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """Preview proration amount for plan change"""
-    sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
-    if not sub:
+    service = SubscriptionService(db)
+    sub = await service.get_subscription_with_plan(subscription_id)
+    if not sub or sub.practice_id != current_user.practice_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
     
     old_plan = sub.plan
@@ -564,7 +664,7 @@ async def preview_proration(
         days_remaining = 30
         total_days = 30
     
-    amount = SubscriptionService.calculate_proration_amount(old_plan.amount, new_plan.amount, days_remaining, total_days)
+    amount = service.calculate_proration_amount(old_plan.amount, new_plan.amount, days_remaining, total_days)
     
     return {
         "subscription_id": str(subscription_id),
@@ -590,17 +690,36 @@ async def process_dunning(
     return APIResponse(success=True, data=result)
 
 
-@router.get("/stats", response_model=SubscriptionStats)
-async def get_subscription_stats(
-    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+# ======================= Stripe Webhook Handler =======================
+
+@router.post("/webhook")
+async def subscription_webhook(
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
-    """Get subscription statistics for dashboard"""
-    stats = await SubscriptionBillingService.get_subscription_stats(db, current_user.practice_id)
-    return SubscriptionStats(**stats)
+    """Handle generic subscription webhooks"""
+    # Limit body size to 2MB to prevent memory exhaustion
+    payload = await request.body()
+    if len(payload) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Payload too large")
+    sig_header = request.headers.get("Stripe-Signature") or request.headers.get("stripe-signature")
 
+    if sig_header:
+        # Stripe webhook
+        import stripe as stripe_lib
+        webhook_secret = settings.STRIPE_WEBHOOK_SECRET
+        if webhook_secret:
+            try:
+                event = stripe_lib.Webhook.construct_event(payload, sig_header, webhook_secret)
+                success = await SubscriptionWebhookHandler.process_webhook_event(db, event)
+                return APIResponse(success=success, message="Webhook processed")
+            except stripe_lib.error.SignatureVerificationError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
+        else:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Webhook not configured")
 
-# ======================= Stripe Webhook Handler =======================
+    return APIResponse(success=True, message="Webhook received")
+
 
 @router.post("/webhooks/stripe")
 async def stripe_subscription_webhook(
@@ -610,7 +729,10 @@ async def stripe_subscription_webhook(
     """Handle Stripe webhooks for subscription events"""
     import stripe as stripe_lib
     
+    # Limit body size to 2MB to prevent memory exhaustion
     payload = await request.body()
+    if len(payload) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Payload too large")
     sig_header = request.headers.get("stripe-signature")
     
     webhook_secret = settings.STRIPE_WEBHOOK_SECRET
@@ -640,7 +762,8 @@ async def get_invoice_history(
     """Get invoice history for a subscription from Stripe"""
     import stripe as stripe_lib
     
-    sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
+    service = SubscriptionService(db)
+    sub = await service.get_subscription_with_plan(subscription_id)
     if not sub:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
     
@@ -682,14 +805,15 @@ async def submit_usage_batch(
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
     """Submit multiple usage records at once"""
-    sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
+    service = SubscriptionService(db)
+    sub = await service.get_subscription_with_plan(subscription_id)
     if not sub:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found")
     
     records_created = 0
     for usage in usage_items:
-        await SubscriptionService.record_usage(
-            db, sub, usage.quantity, usage.description, usage.metadata
+        await service.record_usage(
+            subscription_id, usage.description or "batch_usage", usage.quantity
         )
         records_created += 1
     

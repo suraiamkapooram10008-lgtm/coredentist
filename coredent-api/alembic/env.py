@@ -12,12 +12,10 @@ from alembic import context
 
 from app.core.base import Base
 from app.models import *  # noqa
-from app.core.config_simple import settings
+from app.core.config import settings
 
 # this is the Alembic Config object
 config = context.config
-
-# Note: config is already loaded by Alembic, no need to reload it
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
@@ -55,22 +53,9 @@ def do_run_migrations(connection: Connection) -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
-    # Get database URL
-    url = config.get_main_option("sqlalchemy.url")
-    
-    # Configure connect_args based on database type
-    connect_args = {}
-    if "postgresql" in url:
-        connect_args = {
-            "connect_timeout": 10,
-            "options": "-c statement_timeout=300000"  # 5 minutes in milliseconds
-        }
-    # SQLite doesn't support these parameters, so leave connect_args empty
-    
     connectable = create_engine(
-        url,
+        config.get_main_option("sqlalchemy.url"),
         poolclass=pool.NullPool,
-        connect_args=connect_args
     )
     with connectable.connect() as connection:
         do_run_migrations(connection)

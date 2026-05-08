@@ -3,7 +3,7 @@ Referral Management Models
 Patient referrals, specialist communication, and tracking
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, Numeric, Boolean
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, Numeric, Boolean, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -53,6 +53,10 @@ class ReferralSource1(Base):
     """Referral source/tracking model"""
     __tablename__ = "referral_sources"
     
+    __table_args__ = (
+        UniqueConstraint('practice_id', 'name', name='uq_referral_source_name'),
+    )
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
     
@@ -94,15 +98,20 @@ class Referral(Base):
     """Patient referral model"""
     __tablename__ = "referrals"
     
+    __table_args__ = (
+        UniqueConstraint('practice_id', 'referral_number', name='uq_referral_number'),
+    )
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
     patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
     referring_provider_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     referral_source_id = Column(UUID(as_uuid=True), ForeignKey("referral_sources.id"))
+    referral_number = Column(String(50), nullable=False)
     
-    # Internal Enterprise Referrals
-    target_practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=True)
-    is_internal = Column(Boolean, default=False)
+    # Soft Delete Support (CRIT-16 Fix)
+    is_deleted = Column(Boolean, default=False, nullable=False)
+    deleted_at = Column(DateTime(timezone=True))
     
     # Referral Information
     referral_type = Column(Enum(ReferralType), nullable=False)
@@ -144,10 +153,9 @@ class Referral(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
-    practice = relationship("Practice", back_populates="referrals", foreign_keys=[practice_id])
+    practice = relationship("Practice", back_populates="referrals")
     patient = relationship("Patient", back_populates="referrals")
     referring_provider = relationship("User", foreign_keys=[referring_provider_id])
-    target_practice = relationship("Practice", foreign_keys=[target_practice_id], viewonly=True)
     referral_source_obj = relationship("ReferralSource1", back_populates="referrals")
     communications = relationship("ReferralCommunication", back_populates="referral", cascade="all, delete-orphan")
     

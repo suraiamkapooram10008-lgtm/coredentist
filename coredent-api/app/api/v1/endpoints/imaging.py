@@ -3,17 +3,18 @@ Imaging Endpoints (Refactored)
 CRUD operations for patient images and X-rays
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Any
 import logging
+import uuid
 
 from app.core.database import get_db
 from app.api.deps import get_current_user, verify_csrf, require_role
 from app.core.audit import log_audit_event
 from app.models.user import User, UserRole
-from app.models.imaging import ImageType, ImageCategory
+from app.models.imaging import ImageType, ImageCategory, PatientImage
 from app.models.patient import Patient
 from app.schemas.imaging import (
     PatientImageCreate,
@@ -54,7 +55,7 @@ router = APIRouter()
 
 @router.get("/patients/{patient_id}/images", response_model=PatientImageListResponse)
 async def list_patient_images(
-    patient_id: str,
+    patient_id: uuid.UUID,
     image_type: Optional[ImageType] = Query(None, description="Filter by image type"),
     category: Optional[ImageCategory] = Query(None, description="Filter by category"),
     tooth_number: Optional[str] = Query(None, description="Filter by tooth number"),
@@ -113,9 +114,101 @@ async def list_patient_images(
         )
 
 
+@router.post("/upload", response_model=PatientImageResponse)
+async def upload_image_top_level(
+    file: UploadFile = File(...),
+    patient_id: uuid.UUID = Form(...),
+    image_type: Optional[ImageType] = Form(None),
+    imaging_type: Optional[str] = Form(None),
+    category: Optional[ImageCategory] = Form(None),
+    tooth_number: Optional[str] = Form(None),
+    title: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    notes: Optional[str] = Form(None),
+    device_name: Optional[str] = Form(None),
+    device_serial: Optional[str] = Form(None),
+    request: Request = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Upload image via top-level endpoint (delegates to patient-specific upload)"""
+    # Support both image_type and imaging_type from form data
+    resolved_type = image_type or (ImageType(imaging_type) if imaging_type else None)
+    if not resolved_type:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="image_type or imaging_type is required")
+    return await upload_image(
+        patient_id=patient_id,
+        file=file,
+        image_type=resolved_type,
+        category=category,
+        tooth_number=tooth_number,
+        title=title,
+        description=description,
+        notes=notes,
+        device_name=device_name,
+        device_serial=device_serial,
+        request=request,
+        current_user=current_user,
+        db=db,
+    )
+
+
+@router.get("/images", response_model=PatientImageListResponse)
+async def list_all_images(
+    image_type: Optional[ImageType] = Query(None, description="Filter by image type"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+) -> Any:
+    """List all images for the current practice"""
+    try:
+        result = await db.execute(
+            select(PatientImage).where(
+                PatientImage.practice_id == current_user.practice_id,
+                PatientImage.is_deleted == False,
+            ).order_by(PatientImage.created_at.desc())
+        )
+        images = result.scalars().all()
+
+        if image_type:
+            images = [img for img in images if img.image_type == image_type]
+
+        return PatientImageListResponse(
+            images=images,
+            count=len(images),
+        )
+    except Exception as e:
+        logger.error(f"Error listing images: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving images",
+        )
+
+
+@router.get("/types")
+async def list_imaging_types(
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    """List available imaging types"""
+    return [
+        {"value": t.value, "label": t.value.replace("_", " ").title()}
+        for t in ImageType
+    ]
+
+
+@router.post("/images/{image_id}/analyze")
+async def analyze_image(
+    image_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Analyze image (placeholder)"""
+    return {"image_id": image_id, "status": "analysis_pending", "findings": []}
+
+
 @router.post("/patients/{patient_id}/images", response_model=PatientImageResponse)
 async def upload_image(
-    patient_id: str,
+    patient_id: uuid.UUID,
     file: UploadFile = File(...),
     image_type: ImageType = Query(...),
     category: Optional[ImageCategory] = Query(None),
@@ -211,7 +304,7 @@ async def upload_image(
 
 @router.get("/images/{image_id}", response_model=PatientImageResponse)
 async def get_image(
-    image_id: str,
+    image_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
@@ -250,7 +343,7 @@ async def get_image(
 
 @router.put("/images/{image_id}", response_model=PatientImageResponse)
 async def update_image(
-    image_id: str,
+    image_id: uuid.UUID,
     image_data: PatientImageUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -286,7 +379,7 @@ async def update_image(
 
 @router.delete("/images/{image_id}")
 async def delete_image(
-    image_id: str,
+    image_id: uuid.UUID,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
@@ -317,7 +410,7 @@ async def delete_image(
 
 @router.post("/images/{image_id}/annotations", response_model=ImageAnnotationResponse)
 async def add_annotations(
-    image_id: str,
+    image_id: uuid.UUID,
     annotation_data: ImageAnnotationCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -357,7 +450,7 @@ async def add_annotations(
 
 @router.post("/images/{image_id}/share", response_model=ImageShareResponse)
 async def share_image(
-    image_id: str,
+    image_id: uuid.UUID,
     share_data: ImageShareRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -449,15 +542,18 @@ async def share_image(
 
 @router.get("/public/images/{image_id}", response_model=PatientImageResponse)
 async def get_public_image(
-    image_id: str,
+    image_id: uuid.UUID,
     token: str = Query(..., description="Secure share token"),
+    dob: str = Query(..., description="Patient Date of Birth (YYYY-MM-DD) for verification"),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
 ) -> Any:
     """
-    Get image metadata for external referral (Token-Gated)
+    Get image metadata for external referral (Token-Gated + DOB Verified)
+    CRIT-17 FIX: Implements 2nd factor verification for HIPAA compliance.
     """
     try:
+        # 1. Fetch image and verify token
         image = await ImagingService.get_public_image(db, image_id, token)
         
         if not image:
@@ -466,13 +562,34 @@ async def get_public_image(
                 detail="Valid sharing link not found or expired",
             )
         
-        # Generate URL
+        # 2. Verify Patient DOB (CRIT-17 2nd Factor)
+        result = await db.execute(
+            select(Patient).where(Patient.id == image.patient_id)
+        )
+        patient = result.scalar_one_or_none()
+        
+        # Normalize and compare DOB
+        provided_dob = dob.strip()
+        expected_dob = patient.date_of_birth.strftime('%Y-%m-%d') if patient and patient.date_of_birth else None
+        
+        if not expected_dob or provided_dob != expected_dob:
+            # Log failed access attempt
+            await log_audit_event(
+                db, None, "public_image_access_denied", "patient_image", image.id, request,
+                {"reason": "dob_mismatch", "token_prefix": token[:4]}
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Verification failed. Please ensure the Date of Birth matches.",
+            )
+        
+        # 3. Generate URL and return
         image.url = ImageFileProcessor.get_file_url(image.file_path)
         
-        # HIPAA: Log public access
+        # HIPAA: Log successful public access
         await log_audit_event(
             db, None, "public_image_viewed", "patient_image", image.id, request,
-            {"source": "public_link", "token_used": token[:8] + "..."}
+            {"source": "public_link", "token_used": token[:8] + "...", "verified": True}
         )
         
         return image
@@ -493,12 +610,12 @@ async def get_public_image(
 
 @router.get("/patients/{patient_id}/series", response_model=ImageSeriesListResponse)
 async def list_image_series(
-    patient_id: str,
+    patient_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
-    List image series for patient
+    List image series for a patient
     """
     try:
         # Verify patient belongs to practice
@@ -536,7 +653,7 @@ async def list_image_series(
 
 @router.post("/patients/{patient_id}/series", response_model=ImageSeriesResponse)
 async def create_image_series(
-    patient_id: str,
+    patient_id: uuid.UUID,
     series_data: ImageSeriesCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -584,7 +701,7 @@ async def create_image_series(
 
 @router.get("/series/{series_id}", response_model=ImageSeriesResponse)
 async def get_image_series(
-    series_id: str,
+    series_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -614,7 +731,7 @@ async def get_image_series(
 
 @router.put("/series/{series_id}", response_model=ImageSeriesResponse)
 async def update_image_series(
-    series_id: str,
+    series_id: uuid.UUID,
     series_data: ImageSeriesUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -710,7 +827,7 @@ async def create_template(
 
 @router.put("/templates/{template_id}", response_model=ImageTemplateResponse)
 async def update_template(
-    template_id: str,
+    template_id: uuid.UUID,
     template_data: ImageTemplateUpdate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),

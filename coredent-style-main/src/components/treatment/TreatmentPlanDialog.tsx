@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import type { TreatmentPlan } from '@/types/treatmentPlan';
+import type { TreatmentPlanFormData } from '@/types/forms';
 
 const planSchema = z.object({
   title: z.string().trim().min(1, 'Title is required').max(100, 'Title too long'),

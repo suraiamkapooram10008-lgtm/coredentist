@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
   Users, 
   Calendar, 
@@ -14,6 +15,7 @@ import {
   CalendarPlus,
   FileText,
   ArrowRight,
+  AlertTriangle,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Appointment, AppointmentStatus, UserRole } from '@/types/api';
@@ -83,7 +85,7 @@ export default function Dashboard() {
   const monthStart = useMemo(() => startOfMonth(today), [today]);
 
   // Load dashboard metrics with React Query
-  const { data: metricsResponse, isLoading: isLoadingMetrics } = useQuery({
+  const { data: metricsResponse, isLoading: isLoadingMetrics, isError: isMetricsError } = useQuery({
     queryKey: ['dashboard', 'metrics', monthStart, today],
     queryFn: () => reportsApi.getDashboardMetrics({ from: monthStart, to: today }),
     staleTime: 5 * 60 * 1000, // 5 minutes
@@ -97,7 +99,7 @@ export default function Dashboard() {
   }, [metricsResponse]);
 
   // Load today's appointments
-  const { data: appointmentsResponse, isLoading: isLoadingAppointments } = useQuery({
+  const { data: appointmentsResponse, isLoading: isLoadingAppointments, isError: isAppointmentsError } = useQuery({
     queryKey: ['dashboard', 'appointments', startOfToday, endOfToday],
     queryFn: () => appointmentsApi.list({ 
       startDate: startOfToday.toISOString(), 
@@ -107,7 +109,7 @@ export default function Dashboard() {
   });
 
   // Load billing summary
-  const { data: billingSummary, isLoading: isLoadingBilling } = useQuery({
+  const { data: billingSummary, isLoading: isLoadingBilling, isError: isBillingError } = useQuery({
     queryKey: ['dashboard', 'billing-summary'],
     queryFn: () => billingApi.getSummary(),
     staleTime: 5 * 60 * 1000,
@@ -121,6 +123,7 @@ export default function Dashboard() {
   }, [appointmentsResponse]);
 
   const isLoading = isLoadingMetrics || isLoadingAppointments || isLoadingBilling;
+  const hasError = isMetricsError || isAppointmentsError || isBillingError;
 
   const filteredQuickActions = quickActions.filter(action =>
     action.roles.some(role => hasRole(role as UserRole))
@@ -153,33 +156,33 @@ export default function Dashboard() {
   const statCards = [
     {
       title: "Today's Appointments",
-      value: appointments.length,
+      value: isAppointmentsError ? '—' : appointments.length,
       icon: Calendar,
-      description: `${upcomingCount} upcoming today`,
+      description: isAppointmentsError ? 'Unable to load' : `${upcomingCount} upcoming today`,
       trend: 'Updated today',
       href: '/schedule',
     },
     {
       title: 'Patients Today',
-      value: uniquePatientsToday,
+      value: isAppointmentsError ? '—' : uniquePatientsToday,
       icon: Users,
-      description: 'Unique patients',
+      description: isAppointmentsError ? 'Unable to load' : 'Unique patients',
       trend: 'Updated today',
       href: '/patients',
     },
     {
       title: 'Pending Checkouts',
-      value: billingSummary?.pendingCount ?? 0,
+      value: isBillingError ? '—' : (billingSummary?.pendingCount ?? 0),
       icon: Clock,
-      description: 'Invoices awaiting payment',
+      description: isBillingError ? 'Unable to load' : 'Invoices awaiting payment',
       trend: 'Updated today',
       href: '/billing',
     },
     {
       title: 'Monthly Revenue',
-      value: formatCurrency(metrics?.revenue.totalRevenue ?? 0),
+      value: isMetricsError ? '—' : formatCurrency(metrics?.revenue.totalRevenue ?? 0),
       icon: DollarSign,
-      description: format(new Date(), 'MMMM yyyy'),
+      description: isMetricsError ? 'Unable to load' : format(new Date(), 'MMMM yyyy'),
       trend: 'Updated today',
       href: '/reports',
     },
@@ -208,6 +211,17 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+      {/* F-7 FIX: Error banner when API calls fail */}
+      {hasError && (
+        <Alert variant="destructive" className="animate-in fade-in slide-in-from-top-2 duration-300">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Unable to load some dashboard data</AlertTitle>
+          <AlertDescription>
+            Some information may be unavailable. Please try refreshing the page.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Welcome Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -243,6 +257,10 @@ export default function Dashboard() {
             key={stat.title} 
             className="hover:shadow-lg transition-all cursor-pointer group border-muted/60 relative overflow-hidden"
             onClick={() => navigate(stat.href)}
+            role="button"
+            tabIndex={0}
+            aria-label={`View ${stat.title}: ${stat.value}`}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(stat.href); } }}
           >
             <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
                <stat.icon className="h-16 w-16" />
@@ -254,7 +272,7 @@ export default function Dashboard() {
               <stat.icon className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold tracking-tight">{stat.value}</div>
+              <div className="text-3xl font-bold tracking-tight" aria-hidden="true">{stat.value}</div>
               <p className="text-xs text-muted-foreground mt-1 font-medium">
                 {stat.description}
               </p>
@@ -292,7 +310,11 @@ export default function Dashboard() {
                 <div
                   key={apt.id}
                   className="flex items-center justify-between p-4 rounded-xl bg-muted/30 hover:bg-muted/60 transition-all border border-transparent hover:border-border cursor-pointer group"
-                  onClick={() => navigate(`/patients/${apt.patientId}`)}
+                onClick={() => navigate(`/patients/${apt.patientId}`)}
+                role="button"
+                tabIndex={0}
+                aria-label={`View appointment for ${apt.patientName} at ${format(new Date(apt.startTime), 'h:mm a')}`}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/patients/${apt.patientId}`); } }}
                 >
                   <div className="flex items-center gap-4">
                     <div className="text-sm font-black w-16 text-primary tabular-nums">

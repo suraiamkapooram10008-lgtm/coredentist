@@ -21,7 +21,7 @@ class AuditLog(Base):
     
     action = Column(String(100), nullable=False)  # e.g., "patient_viewed", "record_updated"
     entity_type = Column(String(50), nullable=False)  # e.g., "patient", "appointment"
-    entity_id = Column(UUID(as_uuid=True), nullable=False)
+    entity_id = Column(UUID(as_uuid=True), nullable=True)
     
     changes = Column(JSON)  # Before/after values for updates
     # Use string type for IP address for SQLite compatibility
@@ -44,15 +44,17 @@ class Session(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     
-    refresh_token = Column(String(500), unique=True, nullable=False, index=True)  # DEPRECATED: Use token_hash instead
-    token_hash = Column(String(255), nullable=True, index=True)  # SECURITY FIX: Store hashed refresh token
+    refresh_token = Column(String(500), unique=True, nullable=True, index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
-    
+
     # Use string type for IP address for SQLite compatibility
     ip_address = Column(String(45))
     user_agent = Column(Text)
-    
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Security: Hashed refresh token (plaintext token deprecated, nullable for migration)
+    token_hash = Column(String(255), nullable=False, index=True)
     
     # Relationships
     user = relationship("User", back_populates="sessions")

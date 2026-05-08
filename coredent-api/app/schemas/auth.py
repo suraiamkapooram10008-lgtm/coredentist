@@ -18,7 +18,7 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     """Token response schema"""
     access_token: str
-    refresh_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     expires_in: int  # seconds
 
@@ -66,3 +66,14 @@ class AcceptInvitationRequest(BaseModel):
     """Accept invitation request"""
     token: str
     password: str = Field(..., min_length=8)
+
+
+class ChangePasswordRequest(BaseModel):
+    """Change password request (while logged in)"""
+    current_password: str
+    new_password: str = Field(..., min_length=8)
+
+
+class ChangePasswordResponse(BaseModel):
+    """Change password response"""
+    message: str

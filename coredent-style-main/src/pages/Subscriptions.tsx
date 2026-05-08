@@ -25,6 +25,7 @@ import {
 } from '@/hooks/useSubscriptions';
 import { subscriptionApi } from '@/services/subscriptionsApi';
 import type { SubscriptionPlan, Subscription } from '@/services/subscriptionsApi';
+import type { AppError } from '@/types/errors';
 import { format } from 'date-fns';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -241,10 +242,11 @@ const Subscriptions = () => {
       setShowSubscribeDialog(false);
       setSelectedPlan(null);
       queryClient.invalidateQueries({ queryKey: ['subscriptions'] });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const appError = error as AppError;
       toast({
         title: 'Subscription Failed',
-        description: error?.response?.data?.detail || 'Failed to create subscription. Please try again.',
+        description: appError?.response?.data?.detail || 'Failed to create subscription. Please try again.',
         variant: 'destructive',
       });
     } finally {
@@ -272,10 +274,11 @@ const Subscriptions = () => {
       setShowCancelDialog(false);
       setCancelReason('');
       queryClient.invalidateQueries({ queryKey: ['subscriptions'] });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const appError = error as AppError;
       toast({
         title: 'Cancellation Failed',
-        description: error?.response?.data?.detail || 'Failed to cancel subscription. Please try again.',
+        description: appError?.response?.data?.detail || 'Failed to cancel subscription. Please try again.',
         variant: 'destructive',
       });
     } finally {

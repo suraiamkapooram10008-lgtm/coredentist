@@ -6,7 +6,7 @@ Real-time updates for the dental practice management system
 import json
 import logging
 from typing import Dict, Set, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from fastapi import WebSocket, WebSocketDisconnect, Depends
@@ -188,7 +188,7 @@ async def websocket_endpoint(
                     await websocket.send_json({
                         "event": "subscribed",
                         "data": {"events": ["*"]},
-                        "timestamp": datetime.utcnow().isoformat(),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                     })
                     
             except json.JSONDecodeError:
@@ -208,7 +208,7 @@ async def notify_appointment_created(appointment_data: dict, practice_id: str):
     await manager.send_practice_message({
         "event": EventType.APPOINTMENT_CREATED,
         "data": appointment_data,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }, practice_id)
 
 
@@ -217,7 +217,7 @@ async def notify_appointment_updated(appointment_data: dict, practice_id: str):
     await manager.send_practice_message({
         "event": EventType.APPOINTMENT_UPDATED,
         "data": appointment_data,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }, practice_id)
 
 
@@ -226,7 +226,7 @@ async def notify_new_message(message_data: dict, user_id: str):
     await manager.send_personal_message({
         "event": EventType.NEW_MESSAGE,
         "data": message_data,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }, user_id)
 
 
@@ -235,7 +235,7 @@ async def notify_claim_update(claim_data: dict, practice_id: str):
     await manager.send_practice_message({
         "event": EventType.CLAIM_STATUS_UPDATED,
         "data": claim_data,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }, practice_id)
 
 
@@ -244,7 +244,7 @@ async def notify_lab_case_update(case_data: dict, practice_id: str):
     await manager.send_practice_message({
         "event": EventType.LAB_CASE_UPDATED,
         "data": case_data,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }, practice_id)
 
 
@@ -253,5 +253,6 @@ async def notify_payment_received(payment_data: dict, practice_id: str):
     await manager.send_practice_message({
         "event": EventType.PAYMENT_RECEIVED,
         "data": payment_data,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }, practice_id)
+

@@ -20,86 +20,78 @@ from app.models.user import User
 from app.core.audit import log_audit_event
 from app.services.payment_service import PaymentService
 
+# Set Stripe API key globally once at module load time (NOT per-call)
+if settings.STRIPE_API_KEY:
+    stripe_lib.api_key = settings.STRIPE_API_KEY
+
 logger = logging.getLogger(__name__)
 
 
 class StripePaymentProcessor:
     """Handles Stripe payment processing"""
-    
-    @staticmethod
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
     async def create_payment_intent(
-        db: AsyncSession,
-        current_user: User,
-        invoice_id: UUID,
-        amount: Optional[float] = None,
+        self,
+        amount: float,
+        currency: str = "usd",
+        invoice_id: Optional[UUID] = None,
+        practice_id: Optional[UUID] = None,
     ) -> Dict[str, Any]:
         """Create a Stripe PaymentIntent"""
         if not settings.STRIPE_API_KEY:
             raise ValueError("Stripe API key not configured")
-        
-        stripe_lib.api_key = settings.STRIPE_API_KEY
-        
-        # Get invoice
-        invoice = await PaymentService.get_invoice(db, invoice_id, current_user.practice_id)
-        if not invoice:
-            raise ValueError("Invoice not found")
-        
-        if invoice.status == InvoiceStatus.PAID:
-            raise ValueError("Invoice is already paid")
-        
+
         try:
-            # Create Stripe PaymentIntent
-            payment_amount = amount or float(invoice.balance_due)
-            
             intent = stripe_lib.PaymentIntent.create(
-                amount=int(payment_amount * 100),  # Stripe uses cents
-                currency="usd",
+                amount=int(amount * 100),  # Stripe uses cents
+                currency=currency,
                 metadata={
-                    "invoice_id": str(invoice.id),
-                    "patient_id": str(invoice.patient_id),
-                    "practice_id": str(current_user.practice_id),
+                    "invoice_id": str(invoice_id) if invoice_id else None,
+                    "practice_id": str(practice_id) if practice_id else None,
                 },
                 automatic_payment_methods={"enabled": True},
-                description=f"Invoice #{invoice.invoice_number}",
             )
-            
+
             logger.info(f"Created Stripe PaymentIntent: {intent.id}")
-            
+
             return {
+                "id": intent.id,
                 "client_secret": intent.client_secret,
                 "payment_intent_id": intent.id,
-                "amount": payment_amount,
-                "currency": "usd",
+                "amount": amount,
+                "currency": currency,
             }
-            
+
         except stripe_lib.error.StripeError as e:
             logger.error(f"Stripe error: {str(e)}")
             raise
     
-    @staticmethod
     async def handle_payment_succeeded(
-        db: AsyncSession,
+        self,
         payment_intent: Dict[str, Any],
     ) -> Optional[Payment]:
         """Handle successful Stripe payment"""
         invoice_id = payment_intent.get("metadata", {}).get("invoice_id")
-        
+
         if not invoice_id:
             logger.warning("No invoice_id in payment intent metadata")
             return None
-        
+
         try:
             invoice_uuid = UUID(invoice_id)
-            
+
             # Mark invoice as paid
-            invoice = await PaymentService.mark_invoice_paid(db, invoice_uuid)
+            invoice = await PaymentService.mark_invoice_paid(self.db, invoice_uuid)
             if not invoice:
                 logger.warning(f"Invoice not found: {invoice_id}")
                 return None
-            
+
             # Create payment record
             payment = await PaymentService.create_payment_record(
-                db=db,
+                db=self.db,
                 invoice_id=invoice.id,
                 patient_id=invoice.patient_id,
                 amount=float(payment_intent["amount"] / 100),
@@ -108,37 +100,36 @@ class StripePaymentProcessor:
                 status=PaymentStatus.COMPLETED,
                 notes=f"Stripe payment: {payment_intent['id']}",
             )
-            
+
             logger.info(f"Processed successful Stripe payment: {payment_intent['id']}")
             return payment
-            
+
         except Exception as e:
             logger.error(f"Error handling payment succeeded: {str(e)}")
             raise
     
-    @staticmethod
     async def handle_payment_failed(
-        db: AsyncSession,
+        self,
         payment_intent: Dict[str, Any],
     ) -> Optional[Payment]:
         """Handle failed Stripe payment"""
         invoice_id = payment_intent.get("metadata", {}).get("invoice_id")
-        
+
         if not invoice_id:
             logger.warning("No invoice_id in payment intent metadata")
             return None
-        
+
         try:
             invoice_uuid = UUID(invoice_id)
-            invoice = await PaymentService.get_invoice(db, invoice_uuid)
-            
+            invoice = await PaymentService.get_invoice(self.db, invoice_uuid)
+
             if not invoice:
                 logger.warning(f"Invoice not found: {invoice_id}")
                 return None
-            
+
             # Create failed payment record
             payment = await PaymentService.create_payment_record(
-                db=db,
+                db=self.db,
                 invoice_id=invoice.id,
                 patient_id=invoice.patient_id,
                 amount=float(payment_intent["amount"] / 100),
@@ -147,41 +138,49 @@ class StripePaymentProcessor:
                 status=PaymentStatus.FAILED,
                 notes=f"Failed: {payment_intent.get('last_payment_error', {}).get('message', 'Unknown error')}",
             )
-            
+
             logger.info(f"Recorded failed Stripe payment: {payment_intent['id']}")
             return payment
-            
+
         except Exception as e:
             logger.error(f"Error handling payment failed: {str(e)}")
             raise
     
-    @staticmethod
     async def process_refund(
-        db: AsyncSession,
-        transaction_id: str,
+        self,
+        payment_id: UUID,
         amount: Optional[float] = None,
+        reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Process a Stripe refund"""
         if not settings.STRIPE_API_KEY:
             raise ValueError("Stripe API key not configured")
-        
-        stripe_lib.api_key = settings.STRIPE_API_KEY
-        
+
         try:
-            refund_params = {"payment_intent": transaction_id}
+            # Get payment to find stripe transaction_id
+            from sqlalchemy import select
+            from app.models.billing import Payment
+            result = await self.db.execute(select(Payment).where(Payment.id == payment_id))
+            payment = result.scalar_one_or_none()
+            if not payment:
+                raise ValueError("Payment not found")
+
+            refund_params = {"payment_intent": payment.transaction_id}
             if amount:
                 refund_params["amount"] = int(amount * 100)
-            
+            if reason:
+                refund_params["reason"] = reason
+
             refund = stripe_lib.Refund.create(**refund_params)
-            
+
             logger.info(f"Processed Stripe refund: {refund.id}")
-            
+
             return {
                 "refund_id": refund.id,
                 "amount": float(refund.amount / 100),
                 "status": refund.status,
             }
-            
+
         except stripe_lib.error.StripeError as e:
             logger.error(f"Stripe refund error: {str(e)}")
             raise
@@ -355,39 +354,38 @@ class WebhookProcessor:
     @staticmethod
     def verify_stripe_signature(
         payload: bytes,
-        sig_header: str,
+        signature: str,
+        secret: str,
     ) -> Dict[str, Any]:
         """Verify and parse Stripe webhook"""
-        if not settings.STRIPE_WEBHOOK_SECRET:
+        if not secret:
             raise ValueError("Stripe webhook secret not configured")
-        
+
         try:
             event = stripe_lib.Webhook.construct_event(
-                payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+                payload, signature, secret
             )
             return event
         except ValueError:
             raise ValueError("Invalid payload")
         except stripe_lib.error.SignatureVerificationError:
-            raise ValueError("Invalid signature")
+            raise
     
     @staticmethod
     def verify_razorpay_signature(
-        body: bytes,
+        payload: bytes,
         signature: str,
-    ) -> Dict[str, Any]:
-        """Verify and parse Razorpay webhook"""
-        if not settings.RAZORPAY_WEBHOOK_SECRET:
+        secret: str,
+    ) -> bool:
+        """Verify Razorpay webhook signature"""
+        if not secret:
             raise ValueError("Razorpay webhook secret not configured")
-        
-        expected_signature = hmac.new(
-            settings.RAZORPAY_WEBHOOK_SECRET.encode(),
-            body,
-            hashlib.sha256,
-        ).hexdigest()
-        
-        if signature != expected_signature:
-            raise ValueError("Invalid webhook signature")
-        
-        payload = json.loads(body)
-        return payload
+
+        try:
+            client = razorpay.Client(auth=("dummy", secret))
+            result = client.utility.verify_webhook_signature(payload, signature, secret)
+            if result is False:
+                return False
+            return True
+        except Exception:
+            raise ValueError("Razorpay webhook signature verification failed")

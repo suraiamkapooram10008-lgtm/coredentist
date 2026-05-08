@@ -1,5 +1,6 @@
 // Analytics Integration
 // PostHog for product analytics
+import { logger } from '@/lib/logger';
 
 interface AnalyticsEvent {
   event: string;
@@ -58,7 +59,7 @@ class Analytics {
 
     // Log in development only
     if (import.meta.env.DEV) {
-      console.log('[Analytics]', event, eventData.properties);
+      logger.debug('Analytics event:', { event, properties: eventData.properties });
     }
   }
 

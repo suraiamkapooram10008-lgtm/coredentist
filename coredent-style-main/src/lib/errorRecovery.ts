@@ -2,6 +2,7 @@
 // Handles transient failures with exponential backoff
 
 import { logger } from './logger';
+import type { AsyncFunction } from '@/types/utils';
 
 interface RetryOptions {
   maxAttempts?: number;
@@ -176,15 +177,15 @@ export function withTimeout<T>(
 /**
  * Debounce async operations
  */
-export function debounceAsync<T extends (...args: any[]) => Promise<any>>(
-  fn: T,
+export function debounceAsync<TArgs extends unknown[] = unknown[], TReturn = unknown>(
+  fn: AsyncFunction<TArgs, TReturn>,
   delay: number
-): (...args: Parameters<T>) => Promise<ReturnType<T>> {
+): (...args: TArgs) => Promise<TReturn> {
   let timeoutId: NodeJS.Timeout;
-  let latestResolve: (value: any) => void;
-  let latestReject: (error: any) => void;
+  let latestResolve: (value: TReturn) => void;
+  let latestReject: (error: unknown) => void;
 
-  return (...args: Parameters<T>): Promise<ReturnType<T>> => {
+  return (...args: TArgs): Promise<TReturn> => {
     clearTimeout(timeoutId);
 
     return new Promise((resolve, reject) => {
@@ -206,14 +207,14 @@ export function debounceAsync<T extends (...args: any[]) => Promise<any>>(
 /**
  * Throttle async operations
  */
-export function throttleAsync<T extends (...args: any[]) => Promise<any>>(
-  fn: T,
+export function throttleAsync<TArgs extends unknown[] = unknown[], TReturn = unknown>(
+  fn: AsyncFunction<TArgs, TReturn>,
   limit: number
-): (...args: Parameters<T>) => Promise<ReturnType<T>> {
+): (...args: TArgs) => Promise<TReturn> {
   let inThrottle = false;
-  let lastResult: ReturnType<T>;
+  let lastResult: TReturn;
 
-  return async (...args: Parameters<T>): Promise<ReturnType<T>> => {
+  return async (...args: TArgs): Promise<TReturn> => {
     if (!inThrottle) {
       inThrottle = true;
       lastResult = await fn(...args);

@@ -207,7 +207,7 @@ async def create_lab_case(
         )
     
     # Generate case number
-    today = datetime.now()
+    today = datetime.now(timezone.utc)
     count_result = await db.execute(
         select(func.count(LabCase.id)).where(
             LabCase.practice_id == current_user.practice_id,

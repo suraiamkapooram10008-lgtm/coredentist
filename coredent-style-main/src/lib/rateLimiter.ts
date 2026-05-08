@@ -1,5 +1,6 @@
 // Client-side rate limiting to prevent API abuse
 import { logger } from './logger';
+import type { DebouncedFunction, ThrottledFunction } from '@/types/utils';
 
 interface RateLimitConfig {
   maxRequests: number;
@@ -95,13 +96,13 @@ export const authRateLimiter = new RateLimiter({
 });
 
 // Debounce helper for search inputs
-export function debounce<T extends (...args: any[]) => any>(
-  func: T,
+export function debounce<TArgs extends unknown[] = unknown[]>(
+  func: (...args: TArgs) => void,
   wait: number
-): (...args: Parameters<T>) => void {
+): DebouncedFunction<TArgs> {
   let timeout: NodeJS.Timeout | null = null;
 
-  return function executedFunction(...args: Parameters<T>) {
+  return function executedFunction(...args: TArgs) {
     const later = () => {
       timeout = null;
       func(...args);
@@ -115,13 +116,13 @@ export function debounce<T extends (...args: any[]) => any>(
 }
 
 // Throttle helper for scroll/resize events
-export function throttle<T extends (...args: any[]) => any>(
-  func: T,
+export function throttle<TArgs extends unknown[] = unknown[], TReturn = void>(
+  func: (...args: TArgs) => TReturn,
   limit: number
-): (...args: Parameters<T>) => void {
+): ThrottledFunction<TArgs, TReturn> {
   let inThrottle: boolean;
 
-  return function executedFunction(...args: Parameters<T>) {
+  return function executedFunction(...args: TArgs) {
     if (!inThrottle) {
       func(...args);
       inThrottle = true;

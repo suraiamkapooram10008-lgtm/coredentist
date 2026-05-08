@@ -52,6 +52,8 @@ const LabLogistics = React.lazy(() => import('@/pages/LabLogistics'));
 const Subscriptions = React.lazy(() => import('@/pages/Subscriptions'));
 const NotFound = React.lazy(() => import('@/pages/NotFound'));
 const PatientPortal = React.lazy(() => import('@/pages/PatientPortal'));
+const Prescriptions = React.lazy(() => import('@/pages/Prescriptions'));
+const Payroll = React.lazy(() => import('@/pages/Payroll'));
 
 /**
  * Public routes (no authentication required)
@@ -96,7 +98,7 @@ export const protectedRoutes: RouteConfig[] = [
 
   // Scheduling
   { 
-    path: '/schedule/*', 
+    path: '/schedule', 
     component: Schedule,
     roles: ['owner', 'admin', 'dentist', 'front_desk'],
     title: 'Schedule',
@@ -109,12 +111,6 @@ export const protectedRoutes: RouteConfig[] = [
     roles: ['owner', 'admin', 'dentist'],
     title: 'Dental Chart',
   },
-  { 
-    path: '/chart/*', 
-    component: DentalChart,
-    roles: ['owner', 'admin', 'dentist'],
-    title: 'Dental Chart',
-  },
 
   // Treatment Plans
   { 
@@ -123,28 +119,10 @@ export const protectedRoutes: RouteConfig[] = [
     roles: ['owner', 'admin', 'dentist'],
     title: 'Treatment Plans',
   },
-  { 
-    path: '/treatment-plans/*', 
-    component: TreatmentPlans,
-    roles: ['owner', 'admin', 'dentist'],
-    title: 'Treatment Plans',
-  },
 
-  // Clinical Notes
+  // Clinical Notes - Single entry covers all note paths
   { 
     path: '/notes', 
-    component: ClinicalNotes,
-    roles: ['owner', 'admin', 'dentist'],
-    title: 'Clinical Notes',
-  },
-  { 
-    path: '/notes/:id', 
-    component: ClinicalNotes,
-    roles: ['owner', 'admin', 'dentist'],
-    title: 'Clinical Notes',
-  },
-  { 
-    path: '/notes/*', 
     component: ClinicalNotes,
     roles: ['owner', 'admin', 'dentist'],
     title: 'Clinical Notes',
@@ -157,12 +135,6 @@ export const protectedRoutes: RouteConfig[] = [
     roles: ['owner', 'admin', 'front_desk'],
     title: 'Billing',
   },
-  { 
-    path: '/billing/*', 
-    component: Billing,
-    roles: ['owner', 'admin', 'front_desk'],
-    title: 'Billing',
-  },
 
   // Reports - Owner and Admin only
   { 
@@ -171,22 +143,10 @@ export const protectedRoutes: RouteConfig[] = [
     roles: ['owner', 'admin'],
     title: 'Reports',
   },
-  { 
-    path: '/reports/*', 
-    component: Reports,
-    roles: ['owner', 'admin'],
-    title: 'Reports',
-  },
 
   // Settings
   { 
     path: '/settings', 
-    component: Settings,
-    roles: ['owner', 'admin'],
-    title: 'Settings',
-  },
-  { 
-    path: '/settings/*', 
     component: Settings,
     roles: ['owner', 'admin'],
     title: 'Settings',
@@ -247,22 +207,10 @@ export const protectedRoutes: RouteConfig[] = [
     roles: ['owner', 'admin', 'front_desk'],
     title: 'Insurance',
   },
-  { 
-    path: '/insurance/*', 
-    component: Insurance,
-    roles: ['owner', 'admin', 'front_desk'],
-    title: 'Insurance',
-  },
 
   // Imaging Management
   { 
     path: '/imaging', 
-    component: Imaging,
-    roles: ['owner', 'admin', 'dentist'],
-    title: 'Imaging',
-  },
-  { 
-    path: '/imaging/*', 
     component: Imaging,
     roles: ['owner', 'admin', 'dentist'],
     title: 'Imaging',
@@ -346,6 +294,22 @@ export const protectedRoutes: RouteConfig[] = [
     component: Subscriptions,
     roles: ['owner', 'admin'],
     title: 'Subscriptions',
+  },
+
+  // Prescriptions
+  { 
+    path: '/prescriptions', 
+    component: Prescriptions,
+    roles: ['owner', 'admin', 'dentist'],
+    title: 'Prescriptions',
+  },
+
+  // Payroll
+  { 
+    path: '/payroll', 
+    component: Payroll,
+    roles: ['owner', 'admin', 'dentist'], // Only management and providers see payroll/commission data
+    title: 'Payroll & Commissions',
   },
 ];
 

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import List, Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.core.database import get_db
 from app.api.deps import get_current_user, require_role
@@ -47,9 +47,9 @@ async def get_group_analytics(
     
     # Defaults
     if not start_date:
-        start_date = datetime.now() - timedelta(days=30)
+        start_date = datetime.now(timezone.utc) - timedelta(days=30)
     if not end_date:
-        end_date = datetime.now()
+        end_date = datetime.now(timezone.utc)
         
     # 2. Get all practices in group
     result = await db.execute(

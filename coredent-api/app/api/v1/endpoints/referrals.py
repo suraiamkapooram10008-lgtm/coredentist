@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, case
 from sqlalchemy.orm import selectinload
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Any
 from pydantic import BaseModel
 import uuid
@@ -28,12 +28,22 @@ from app.models.referral import (
 )
 from app.api.deps import verify_csrf
 
+from app.schemas.referral import (
+    ReferralCreate,
+    ReferralUpdate,
+    ReferralSourceCreate,
+    ReferralSourceUpdate,
+    ReferralResponse,
+    ReferralSourceResponse,
+)
+from app.core.email import email_service
+
 router = APIRouter()
 
 
 # Referral Source Endpoints
 
-@router.get("/sources/")
+@router.get("/sources/", response_model=dict)
 async def list_referral_sources(
     search: Optional[str] = Query(None, description="Search by name"),
     source_type: Optional[ReferralSource] = Query(None, description="Filter by source type"),
@@ -55,7 +65,6 @@ async def list_referral_sources(
         query = query.where(ReferralSource1.source_type == source_type)
     
     if search:
-        # Use parameterized query to prevent SQL injection
         search_pattern = f"%{search}%"
         query = query.where(ReferralSource1.name.ilike(search_pattern))
     
@@ -67,19 +76,30 @@ async def list_referral_sources(
     return {"sources": sources, "count": len(sources)}
 
 
-@router.post("/sources/")
+@router.post("/sources/", response_model=ReferralSourceResponse)
 async def create_referral_source(
-    source_data: dict,
+    source_data: ReferralSourceCreate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
     """
     Create new referral source
+    CRIT-15 FIX: Prevent cross-tenant injection via explicit field mapping
     """
     source = ReferralSource1(
         practice_id=current_user.practice_id,
-        **source_data
+        name=source_data.name,
+        source_type=source_data.source_type,
+        contact_name=source_data.contact_name,
+        email=source_data.email,
+        phone=source_data.phone,
+        address=source_data.address,
+        specialty=source_data.specialty,
+        license_number=source_data.license_number,
+        is_active=source_data.is_active,
+        is_track_referrals=source_data.is_track_referrals,
+        notes=source_data.notes,
     )
     db.add(source)
     await db.commit()
@@ -90,12 +110,12 @@ async def create_referral_source(
 
 # Referral Endpoints
 
-@router.get("/")
+@router.get("/", response_model=dict)
 async def list_referrals(
     status: Optional[ReferralStatus] = Query(None, description="Filter by status"),
     referral_type: Optional[ReferralType] = Query(None, description="Filter by type"),
-    patient_id: Optional[str] = Query(None, description="Filter by patient"),
-    source_id: Optional[str] = Query(None, description="Filter by source"),
+    patient_id: Optional[uuid.UUID] = Query(None, description="Filter by patient"),
+    source_id: Optional[uuid.UUID] = Query(None, description="Filter by source"),
     start_date: Optional[datetime] = Query(None, description="Start date"),
     end_date: Optional[datetime] = Query(None, description="End date"),
     request: Request = None,
@@ -107,7 +127,10 @@ async def list_referrals(
     """
     query = (
         select(Referral)
-        .where(Referral.practice_id == current_user.practice_id)
+        .where(
+            Referral.practice_id == current_user.practice_id,
+            Referral.is_deleted == False  # B-10 FIX: Filter out soft-deleted
+        )
         .options(selectinload(Referral.patient))
     )
     
@@ -134,19 +157,17 @@ async def list_referrals(
     result = await db.execute(query)
     referrals = result.scalars().all()
     
-    # HIPAA: Log referrals list access
     await log_audit_event(
         db, current_user, "list_referrals", "referral", None, request
     )
-    await db.commit()
     
     return {"referrals": referrals, "count": len(referrals)}
 
 
-@router.get("/{referral_id}")
+@router.get("/{referral_id}", response_model=ReferralResponse)
 async def get_referral(
     request: Request,
-    referral_id: str,
+    referral_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -157,6 +178,7 @@ async def get_referral(
         select(Referral).where(
             Referral.id == referral_id,
             Referral.practice_id == current_user.practice_id,
+            Referral.is_deleted == False
         )
     )
     referral = result.scalar_one_or_none()
@@ -167,30 +189,28 @@ async def get_referral(
             detail="Referral not found",
         )
     
-    # HIPAA: Log referral access
     await log_audit_event(
         db, current_user, "view_referral", "referral", referral.id, request
     )
-    await db.commit()
     
     return referral
 
 
-@router.post("/")
+@router.post("/", response_model=ReferralResponse)
 async def create_referral(
-    referral_data: dict,
+    referral_data: ReferralCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
     """
     Create new referral
+    CRIT-15 FIX: Explicit field mapping to prevent injection
     """
     # Verify patient exists
-    patient_id = referral_data.get("patient_id")
     result = await db.execute(
         select(Patient).where(
-            Patient.id == patient_id,
+            Patient.id == referral_data.patient_id,
             Patient.practice_id == current_user.practice_id,
         )
     )
@@ -203,7 +223,7 @@ async def create_referral(
         )
     
     # Generate referral number
-    today = datetime.now()
+    today = datetime.now(timezone.utc)
     count_result = await db.execute(
         select(func.count(Referral.id)).where(
             Referral.practice_id == current_user.practice_id,
@@ -215,9 +235,22 @@ async def create_referral(
     
     referral = Referral(
         practice_id=current_user.practice_id,
+        patient_id=referral_data.patient_id,
         referring_provider_id=current_user.id,
+        referral_source_id=referral_data.referral_source_id,
         referral_number=referral_number,
-        **referral_data
+        referral_type=referral_data.referral_type,
+        status=referral_data.status,
+        reason=referral_data.reason,
+        clinical_notes=referral_data.clinical_notes,
+        specialist_name=referral_data.specialist_name,
+        specialist_address=referral_data.specialist_address,
+        specialist_phone=referral_data.specialist_phone,
+        specialist_fax=referral_data.specialist_fax,
+        appointment_date=referral_data.appointment_date,
+        referral_fee=referral_data.referral_fee,
+        is_urgent=referral_data.is_urgent,
+        urgent_reason=referral_data.urgent_reason,
     )
     db.add(referral)
     await db.commit()
@@ -226,10 +259,10 @@ async def create_referral(
     return referral
 
 
-@router.put("/{referral_id}")
+@router.put("/{referral_id}", response_model=ReferralResponse)
 async def update_referral(
-    referral_id: str,
-    referral_data: dict,
+    referral_id: uuid.UUID,
+    referral_data: ReferralUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
@@ -241,6 +274,7 @@ async def update_referral(
         select(Referral).where(
             Referral.id == referral_id,
             Referral.practice_id == current_user.practice_id,
+            Referral.is_deleted == False
         )
     )
     referral = result.scalar_one_or_none()
@@ -251,12 +285,14 @@ async def update_referral(
             detail="Referral not found",
         )
     
-    for field, value in referral_data.items():
+    # Update fields securely
+    update_data = referral_data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
         setattr(referral, field, value)
     
     # Update completed date if status changed to completed
-    if referral_data.get("status") == ReferralStatus.COMPLETED and not referral.completed_date:
-        referral.completed_date = datetime.utcnow()
+    if update_data.get("status") == ReferralStatus.COMPLETED and not referral.completed_date:
+        referral.completed_date = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(referral)
@@ -266,8 +302,8 @@ async def update_referral(
 
 @router.delete("/{referral_id}")
 async def delete_referral(
-    referral_id: str,
-    current_user: User = Depends(get_current_user),
+    referral_id: uuid.UUID,
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
@@ -278,6 +314,7 @@ async def delete_referral(
         select(Referral).where(
             Referral.id == referral_id,
             Referral.practice_id == current_user.practice_id,
+            Referral.is_deleted == False
         )
     )
     referral = result.scalar_one_or_none()
@@ -288,9 +325,9 @@ async def delete_referral(
             detail="Referral not found",
         )
     
-    # HIPAA Hardening: Soft-delete only to preserve audit trail
+    # HIPAA Hardening: Soft-delete only to preserve audit trail (CRIT-16 FIX)
     referral.is_deleted = True
-    referral.deleted_at = datetime.utcnow()
+    referral.deleted_at = datetime.now(timezone.utc)
     await db.commit()
     
     return {"message": "Referral deleted successfully"}
@@ -300,7 +337,7 @@ async def delete_referral(
 
 @router.get("/{referral_id}/communications")
 async def list_referral_communications(
-    referral_id: str,
+    referral_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -312,6 +349,7 @@ async def list_referral_communications(
         select(Referral).where(
             Referral.id == referral_id,
             Referral.practice_id == current_user.practice_id,
+            Referral.is_deleted == False
         )
     )
     referral = result.scalar_one_or_none()
@@ -334,7 +372,7 @@ async def list_referral_communications(
 
 @router.post("/{referral_id}/communications")
 async def add_referral_communication(
-    referral_id: str,
+    referral_id: uuid.UUID,
     comm_data: dict,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -348,6 +386,7 @@ async def add_referral_communication(
         select(Referral).where(
             Referral.id == referral_id,
             Referral.practice_id == current_user.practice_id,
+            Referral.is_deleted == False
         )
     )
     referral = result.scalar_one_or_none()
@@ -392,7 +431,10 @@ async def get_referral_summary(
         func.sum(case((Referral.status == ReferralStatus.NO_SHOW, 1), else_=0)).label('no_shows'),
         func.sum(Referral.referral_fee).label('total_fees'),
         func.sum(case((Referral.referral_received == True, Referral.referral_fee), else_=0)).label('collected_fees')
-    ).where(Referral.practice_id == current_user.practice_id)
+    ).where(
+        Referral.practice_id == current_user.practice_id,
+        Referral.is_deleted == False
+    )
     
     if start_date:
         stats_stmt = stats_stmt.where(Referral.referral_date >= start_date)
@@ -435,7 +477,7 @@ class ReferralEmailRequest(BaseModel):
 
 @router.post("/{referral_id}/email")
 async def send_referral_email(
-    referral_id: str,
+    referral_id: uuid.UUID,
     email_data: ReferralEmailRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -443,12 +485,14 @@ async def send_referral_email(
 ) -> Any:
     """
     Send email to referral specialist
+    CRIT-14 FIX: Sanitize message to prevent HTML injection and validate recipient
     """
     # Verify referral exists
     result = await db.execute(
         select(Referral).where(
             Referral.id == referral_id,
             Referral.practice_id == current_user.practice_id,
+            Referral.is_deleted == False
         )
     )
     referral = result.scalar_one_or_none()
@@ -472,6 +516,9 @@ async def send_referral_email(
     )
     practice = result.scalar_one_or_none()
     
+    # CRIT-14: Sanitize message (Basic text escaping)
+    safe_message = email_data.message.replace("<", "&lt;").replace(">", "&gt;")
+    
     # Build email content
     html_content = f"""
     <html>
@@ -480,8 +527,8 @@ async def send_referral_email(
             <p><strong>From:</strong> {practice.name if practice else 'CoreDent Practice'}</p>
             <p><strong>Re:</strong> Patient Referral - {patient.first_name if patient else ''} {patient.last_name if patient else ''}</p>
             <hr>
-            <div style="margin: 20px 0;">
-                {email_data.message}
+            <div style="margin: 20px 0; white-space: pre-wrap;">
+                {safe_message}
             </div>
             <hr>
             <p><strong>Referral Number:</strong> {referral.referral_number}</p>
@@ -509,7 +556,7 @@ async def send_referral_email(
             communication_type="email",
             direction="outgoing",
             subject=email_data.subject,
-            notes=email_data.message,
+            content=email_data.message, # Store original in DB
         )
         db.add(communication)
         await db.commit()
@@ -520,3 +567,4 @@ async def send_referral_email(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to send email: {str(e)}",
         )
+

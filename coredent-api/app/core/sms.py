@@ -6,7 +6,7 @@ Twilio integration for SMS messaging
 import os
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ class SMSService:
         return {
             "success": True,
             "provider": "console",
-            "message_id": f"dev-sms-{datetime.now().timestamp()}",
+            "message_id": f"dev-sms-{datetime.now(timezone.utc).timestamp()}",
             "status": "sent",
             "to": to,
             "from": self.from_number,

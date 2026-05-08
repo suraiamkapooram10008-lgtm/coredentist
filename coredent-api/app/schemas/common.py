@@ -4,9 +4,14 @@ Standardized API response structures
 """
 
 from typing import Any, Generic, TypeVar, Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 T = TypeVar("T")
+
+
+class BaseSchema(BaseModel):
+    """Base schema with ORM mode enabled for all Pydantic models"""
+    model_config = ConfigDict(from_attributes=True)
 
 
 class APIResponse(BaseModel, Generic[T]):

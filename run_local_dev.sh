@@ -2,11 +2,15 @@
 
 # CoreDent Local Development Runner
 # Runs both backend and frontend in the same terminal
+# NOTE: Admin credentials are set via environment variables or seeded in dev mode
 
 echo "🚀 Starting CoreDent Local Development..."
 echo ""
 echo "Backend: http://localhost:8080"
 echo "Frontend: http://localhost:5173"
+echo ""
+echo "Login credentials are configured via environment variables."
+echo "In development, use the seed script to create an admin account."
 echo ""
 echo "Press Ctrl+C to stop both services"
 echo ""
@@ -41,10 +45,6 @@ cd ..
 
 echo ""
 echo "✅ Both services are running!"
-echo ""
-echo "Login credentials:"
-echo "  Email: admin@coredent.com"
-echo "  Password: Admin123!@#"
 echo ""
 
 # Wait for both processes
