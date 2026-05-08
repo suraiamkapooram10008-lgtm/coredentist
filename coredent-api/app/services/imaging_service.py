@@ -3,7 +3,7 @@ Imaging Service
 Core business logic for imaging operations
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 import logging
@@ -115,7 +115,7 @@ class ImagingService:
             file_name=file_name,
             file_size=file_size,
             mime_type=mime_type,
-            acquisition_date=datetime.now(timezone.utc),
+            acquisition_date=datetime.now(),
             **kwargs
         )
         db.add(image)
@@ -163,7 +163,7 @@ class ImagingService:
             return False
         
         image.is_deleted = True
-        image.deleted_at = datetime.now(timezone.utc)
+        image.deleted_at = datetime.now()
         await db.commit()
         logger.info(f"Deleted image: {image_id}")
         return True

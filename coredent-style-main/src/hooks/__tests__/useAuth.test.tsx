@@ -62,7 +62,7 @@ describe('useAuth hook', () => {
 
   it('should return initial unauthenticated state', async () => {
     server.use(
-      http.get('*/api/v1/auth/me', () => {
+      http.get('/api/v1/auth/me', () => {
         return HttpResponse.json(
           { message: 'Unauthorized' },
           { status: 401 }
@@ -74,10 +74,9 @@ describe('useAuth hook', () => {
       wrapper: createWrapper(),
     });
 
-    // Wait for loading to complete
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
-    }, { timeout: 3000 });
+    });
 
     expect(result.current.isAuthenticated).toBe(false);
     expect(result.current.user).toBeNull();
@@ -101,14 +100,14 @@ describe('useAuth hook', () => {
 
   it('should handle login failure', async () => {
     server.use(
-      http.post('*/api/v1/auth/login', () => {
+      http.post('/api/v1/auth/login', () => {
         return HttpResponse.json(
           { message: 'Invalid credentials' },
           { status: 401 }
         );
       }),
       // Also mock getCurrentUser to return null/unauthorized after failed login
-      http.get('*/api/v1/auth/me', () => {
+      http.get('/api/v1/auth/me', () => {
         return HttpResponse.json(
           { message: 'Unauthorized' },
           { status: 401 }
@@ -122,7 +121,7 @@ describe('useAuth hook', () => {
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
-    }, { timeout: 3000 });
+    });
 
     const loginResult = await result.current.login({
       email: 'test@example.com',
@@ -146,10 +145,10 @@ describe('useAuth hook', () => {
     };
 
     server.use(
-      http.get('*/api/v1/auth/me', () => {
+      http.get('/api/v1/auth/me', () => {
         return HttpResponse.json(mockUser);
       }),
-      http.post('*/api/v1/auth/logout', () => {
+      http.post('/api/v1/auth/logout', () => {
         return HttpResponse.json({ message: 'Successfully logged out' });
       })
     );
@@ -161,7 +160,7 @@ describe('useAuth hook', () => {
     // Wait for initial session check
     await waitFor(() => {
       expect(result.current.isAuthenticated).toBe(true);
-    }, { timeout: 3000 });
+    });
 
     // Perform logout
     await result.current.logout();
@@ -170,7 +169,7 @@ describe('useAuth hook', () => {
       expect(result.current.isAuthenticated).toBe(false);
       expect(result.current.user).toBeNull();
       expect(result.current.role).toBeNull();
-    }, { timeout: 3000 });
+    });
   });
 
   it('should check user roles correctly', async () => {
@@ -185,7 +184,7 @@ describe('useAuth hook', () => {
     };
 
     server.use(
-      http.get('*/api/v1/auth/me', () => {
+      http.get('/api/v1/auth/me', () => {
         return HttpResponse.json(mockUser);
       })
     );
@@ -196,7 +195,7 @@ describe('useAuth hook', () => {
 
     await waitFor(() => {
       expect(result.current.isAuthenticated).toBe(true);
-    }, { timeout: 3000 });
+    });
 
     // Test role checking
     expect(result.current.hasRole('admin')).toBe(true);
@@ -208,11 +207,11 @@ describe('useAuth hook', () => {
 
   it('should handle network errors during login', async () => {
     server.use(
-      http.post('*/api/v1/auth/login', () => {
+      http.post('/api/v1/auth/login', () => {
         return HttpResponse.error();
       }),
       // Mock getCurrentUser to return unauthorized after network error
-      http.get('*/api/v1/auth/me', () => {
+      http.get('/api/v1/auth/me', () => {
         return HttpResponse.json(
           { message: 'Unauthorized' },
           { status: 401 }
@@ -226,7 +225,7 @@ describe('useAuth hook', () => {
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
-    }, { timeout: 3000 });
+    });
 
     const loginResult = await result.current.login({
       email: 'test@example.com',
@@ -249,7 +248,7 @@ describe('useAuth hook', () => {
     };
 
     server.use(
-      http.get('*/api/v1/auth/me', () => {
+      http.get('/api/v1/auth/me', () => {
         return HttpResponse.json(mockUser);
       })
     );
@@ -265,14 +264,13 @@ describe('useAuth hook', () => {
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
       expect(result.current.isAuthenticated).toBe(true);
-    }, { timeout: 3000 });
-    
-    expect(result.current.user).toEqual(mockUser);
+      expect(result.current.user).toEqual(mockUser);
+    });
   });
 
   it('should handle failed session restoration', async () => {
     server.use(
-      http.get('*/api/v1/auth/me', () => {
+      http.get('/api/v1/auth/me', () => {
         return HttpResponse.json(
           { message: 'Session expired' },
           { status: 401 }
@@ -286,7 +284,7 @@ describe('useAuth hook', () => {
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
-    }, { timeout: 3000 });
+    });
 
     expect(result.current.isAuthenticated).toBe(false);
     expect(result.current.user).toBeNull();
@@ -323,10 +321,10 @@ describe('useAuth hook', () => {
     };
 
     server.use(
-      http.get('*/api/v1/auth/me', () => {
+      http.get('/api/v1/auth/me', () => {
         return HttpResponse.json(mockUser);
       }),
-      http.post('*/api/v1/auth/logout', () => {
+      http.post('/api/v1/auth/logout', () => {
         return HttpResponse.error();
       })
     );
@@ -337,7 +335,7 @@ describe('useAuth hook', () => {
 
     await waitFor(() => {
       expect(result.current.isAuthenticated).toBe(true);
-    }, { timeout: 3000 });
+    });
 
     // Logout should still work even if API fails
     await result.current.logout();
@@ -345,6 +343,6 @@ describe('useAuth hook', () => {
     await waitFor(() => {
       expect(result.current.isAuthenticated).toBe(false);
       expect(result.current.user).toBeNull();
-    }, { timeout: 3000 });
+    });
   });
 });

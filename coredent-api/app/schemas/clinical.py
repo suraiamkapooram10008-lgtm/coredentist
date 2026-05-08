@@ -3,59 +3,10 @@ Clinical Schemas
 Pydantic models for clinical records and periodontal charts
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from uuid import UUID
-
-# Charting Schemas
-class ToothConditionCreate(BaseModel):
-    tooth_number: str
-    surface: Optional[str] = None
-    condition_type: str
-    status: Optional[str] = "existing"
-    severity: Optional[str] = None
-    material: Optional[str] = None
-    notes: Optional[str] = None
-
-class ToothConditionResponse(ToothConditionCreate):
-    id: UUID
-    patient_id: UUID
-    provider_id: Optional[UUID] = None
-    noted_date: Optional[datetime] = None
-    created_at: datetime
-    class Config:
-        from_attributes = True
-
-class ChartingEntryResponse(BaseModel):
-    id: UUID
-    patient_id: UUID
-    tooth_number: Optional[str] = None
-    entry_type: str
-    data: Dict[str, Any] = {}
-    created_at: datetime
-    provider_id: Optional[UUID] = None
-    class Config:
-        from_attributes = True
-
-class DentalChartResponse(BaseModel):
-    chart_id: UUID
-    base_data: Dict[str, Any] = {}
-    conditions: List[ToothConditionResponse] = []
-
-class ChartingSymbolCreate(BaseModel):
-    name: str
-    symbol_type: Optional[str] = None
-    category: Optional[str] = None
-    svg_data: Optional[str] = None
-    color: Optional[str] = None
-
-class ChartingSymbolResponse(ChartingSymbolCreate):
-    id: UUID
-    practice_id: UUID
-    is_active: bool = True
-    class Config:
-        from_attributes = True
 
 # Perio Chart Entry Schema
 class PerioChartEntryBase(BaseModel):

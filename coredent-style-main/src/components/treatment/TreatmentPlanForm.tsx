@@ -33,7 +33,6 @@ type PlanFormValues = z.infer<typeof planSchema>;
 
 interface TreatmentPlanFormProps {
   plan?: TreatmentPlan | null;
-  patientId?: string; // Optional patientId for creating new plans
   onSubmit: (data: PlanFormValues) => void;
   onCancel: () => void;
 }
@@ -43,7 +42,6 @@ interface TreatmentPlanFormProps {
  */
 export const TreatmentPlanForm = React.memo(function TreatmentPlanForm({
   plan,
-  patientId: propPatientId,
   onSubmit,
   onCancel,
 }: TreatmentPlanFormProps) {
@@ -54,7 +52,7 @@ export const TreatmentPlanForm = React.memo(function TreatmentPlanForm({
     defaultValues: {
       title: plan?.title || '',
       description: plan?.description || '',
-      patientId: plan?.patientId || propPatientId || '',
+      patientId: plan?.patientId || '',
       patientName: plan?.patientName || '',
       notes: plan?.notes || '',
     },
@@ -65,11 +63,11 @@ export const TreatmentPlanForm = React.memo(function TreatmentPlanForm({
     form.reset({
       title: plan?.title || '',
       description: plan?.description || '',
-      patientId: plan?.patientId || propPatientId || '',
+      patientId: plan?.patientId || '',
       patientName: plan?.patientName || '',
       notes: plan?.notes || '',
     });
-  }, [plan, propPatientId, form]);
+  }, [plan, form]);
 
   const handleSubmit = (values: PlanFormValues) => {
     onSubmit(values);
@@ -78,9 +76,6 @@ export const TreatmentPlanForm = React.memo(function TreatmentPlanForm({
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
-        {/* Hidden patientId field */}
-        <input type="hidden" {...form.register('patientId')} />
-        
         <FormField
           control={form.control}
           name="title"

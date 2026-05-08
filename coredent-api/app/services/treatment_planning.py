@@ -3,7 +3,7 @@ Treatment Planning Service
 Treatment planning logic and phase management
 """
 
-from datetime import datetime, date, timezone
+from datetime import datetime, date
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 import logging

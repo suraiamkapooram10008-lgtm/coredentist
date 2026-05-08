@@ -6,17 +6,14 @@ Reusable dependencies for FastAPI endpoints
 from fastapi import Depends, HTTPException, status, Header, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select
 from typing import Optional, Union
 import asyncio
 from uuid import UUID
-from datetime import datetime, timezone, timedelta
 
 from app.core.database import get_db
 from app.core.security import decode_token, verify_csrf_token
-import secrets
-from app.core.config_simple import settings
 from app.models.user import User, UserRole
 from app.schemas.auth import TokenData
 
@@ -25,17 +22,30 @@ security = HTTPBearer()
 
 
 async def get_current_user(
-    request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
     db: Union[AsyncSession, Session] = Depends(get_db),
+    request: Request = None,
 ) -> User:
     """
-    Get current authenticated user from JWT token.
-    Enforces MFA for owner/admin roles on protected endpoints.
-    Enforces session timeout (REC-13).
+    Get current authenticated user from JWT token
+    Supports both Authorization header and httpOnly cookies
     """
-    token = credentials.credentials
-
+    token = None
+    
+    # Try Authorization header first
+    if credentials:
+        token = credentials.credentials
+    # Fallback to httpOnly cookie
+    elif request:
+        token = request.cookies.get("access_token")
+    
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
     # Decode token
     payload = decode_token(token)
     if not payload:
@@ -44,41 +54,14 @@ async def get_current_user(
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
+    
     # Check token type
     if payload.get("type") != "access":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token type",
         )
-
-    # REC-13: Session timeout enforcement
-    # Check token expiration against configured session timeout
-    token_exp = payload.get("exp")
-    if token_exp:
-        # Token exp is Unix timestamp
-        exp_datetime = datetime.fromtimestamp(token_exp, tz=timezone.utc)
-        now = datetime.now(timezone.utc)
-        max_session_time = now - timedelta(minutes=settings.SESSION_TIMEOUT_MINUTES)
-        
-        # If token was issued before the max session time, reject it
-        # This enforces session timeout even if token is technically valid
-        if exp_datetime < now:
-            # Already handled by decode_token, but check session-specific timeout
-            # Token expiry already validated - this is just for explicit session check
-            pass
-        
-        # Additional check: verify token wasn't issued too long ago (strict session enforcement)
-        issued_at = payload.get("iat")
-        if issued_at:
-            issued_datetime = datetime.fromtimestamp(issued_at, tz=timezone.utc)
-            if issued_datetime < max_session_time:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Session expired. Please log in again.",
-                    headers={"WWW-Authenticate": "Bearer", "X-Session-Expired": "true"},
-                )
-
+    
     # Get user from database
     user_id = payload.get("sub")
     if not user_id:
@@ -86,36 +69,71 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload",
         )
-
-    # Support both async and sync SQLAlchemy sessions (tests use sync sessions)
-    query = db.execute(select(User).where(User.id == UUID(user_id)))
-    if asyncio.iscoroutine(query):
-        query = await query
-    user = query.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-        )
-
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive",
-        )
-
-    # MFA enforcement for privileged roles (skip auth/mfa/health endpoints)
-    path = request.url.path
-    exempt_paths = ("/api/v1/auth", "/api/v1/mfa", "/api/v1/health", "/docs", "/redoc", "/openapi.json")
-    if user.role in (UserRole.OWNER, UserRole.ADMIN) and not any(path.startswith(p) for p in exempt_paths):
-        if not user.mfa_enabled:
+    
+    # Debug logging
+    print(f"[DEBUG] Looking up user with ID: {user_id}")
+    print(f"[DEBUG] User ID type: {type(user_id)}")
+    
+    try:
+        # For SQLite: UUIDs are stored as TEXT with dashes
+        # We need to cast the column to string for comparison
+        from sqlalchemy import cast, String
+        query_stmt = select(User).where(cast(User.id, String) == user_id)
+        
+        # Debug: print the query
+        print(f"[DEBUG] Query: {query_stmt}")
+        
+        # Always await the execute call for async sessions
+        result = await db.execute(query_stmt)
+        user = result.scalar_one_or_none()
+        
+        print(f"[DEBUG] Query result: {user}")
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+            )
+        
+        # Check User Status
+        if not user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="MFA required for this account. Please enable MFA in settings.",
+                detail="User account is inactive",
             )
-
-    return user
+        
+        # CRIT-05 FIX: Verify Practice Status (Tenant Leash)
+        # Check if user has a practice and if it's active
+        if not user.practice_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User is not assigned to a practice.",
+            )
+        
+        # Query practice separately to verify it's active
+        from app.models.practice import Practice
+        from sqlalchemy import cast, String
+        # Cast UUID column to string for SQLite comparison
+        practice_stmt = select(Practice).where(cast(Practice.id, String) == str(user.practice_id))
+        practice_result = await db.execute(practice_stmt)
+        practice = practice_result.scalar_one_or_none()
+        
+        if not practice or not practice.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Practice account is suspended or inactive. Please contact support.",
+            )
+        
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Error in get_current_user: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
 
 
 async def get_current_active_user(
@@ -153,12 +171,7 @@ async def verify_csrf(
 ) -> bool:
     """
     Verify CSRF token for state-changing requests
-    Skip verification in test environment
     """
-    from app.core.config_simple import settings
-    if settings.ENVIRONMENT == "test":
-        return True  # Skip CSRF verification in tests
-
     if not x_csrf_token:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -171,8 +184,8 @@ async def verify_csrf(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="CSRF cookie missing",
         )
-    # Verify that header token matches cookie token (constant-time comparison)
-    if not secrets.compare_digest(x_csrf_token, cookie_token):
+    # Verify that header token matches cookie token
+    if x_csrf_token != cookie_token:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid CSRF token",
@@ -185,25 +198,6 @@ async def get_current_practice_id(
 ) -> UUID:
     """Get current user's practice ID"""
     return current_user.practice_id
-
-
-async def get_current_practice(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> "Practice":
-    """Get current user's practice object (lazy import to avoid circular deps)"""
-    from app.models.practice import Practice
-    from sqlalchemy import select
-    result = await db.execute(
-        select(Practice).where(Practice.id == current_user.practice_id)
-    )
-    practice = result.scalar_one_or_none()
-    if not practice:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Practice not found",
-        )
-    return practice
 
 
 class Pagination:

@@ -3,7 +3,7 @@ Clinical Models
 Clinical notes, dental charts, and treatment plans
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, JSON, Numeric, Boolean
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, JSON, Numeric, Integer, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -20,35 +20,6 @@ class NoteType(str, enum.Enum):
     TREATMENT = "treatment"
     CONSULTATION = "consultation"
     FOLLOW_UP = "follow_up"
-
-class ConditionType(str, enum.Enum):
-    """Types of dental conditions"""
-    CARIES = "caries"
-    FRACTURE = "fracture"
-    MISSING = "missing"
-    IMPACTED = "impacted"
-    WEAR = "wear"
-    EROSION = "erosion"
-    ABSCESS = "abscess"
-    ROOT_REMNANT = "root_remnant"
-    EXISTING_RESTORATION = "existing_restoration"
-    DEFECTIVE_RESTORATION = "defective_restoration"
-
-class RestorationStatus(str, enum.Enum):
-    """Status of a condition/restoration"""
-    EXISTING = "existing"
-    PLANNED = "planned"
-    COMPLETED = "completed"
-
-class SurfaceCode(str, enum.Enum):
-    """Tooth surfaces"""
-    MESIAL = "M"
-    OCCLUSAL = "O"
-    DISTAL = "D"
-    BUCCAL = "B"
-    LINGUAL = "L"
-    INCISAL = "I"
-    FACIAL = "F"
 
 
 class ClinicalNote(Base):
@@ -96,68 +67,6 @@ class DentalChart(Base):
         return f"<DentalChart for Patient {self.patient_id}>"
 
 
-class ToothCondition(Base):
-    """Individual tooth condition record for visual charting"""
-    __tablename__ = "tooth_conditions"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
-    provider_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    
-    tooth_number = Column(String(10), nullable=False)
-    surface = Column(String(10))  # Can be multiple surfaces like "MOD"
-    condition_type = Column(Enum(ConditionType), nullable=False)
-    status = Column(Enum(RestorationStatus), default=RestorationStatus.EXISTING)
-    severity = Column(String(50))
-    
-    material = Column(String(100))  # e.g., "Amalgam", "Composite", "Gold"
-    notes = Column(Text)
-    noted_date = Column(DateTime(timezone=True), server_default=func.now())
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    patient = relationship("Patient")
-    provider = relationship("User")
-
-
-class ChartingEntry(Base):
-    """Historical timeline of charting events"""
-    __tablename__ = "charting_entries"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
-    provider_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    
-    tooth_number = Column(String(10))
-    entry_type = Column(String(50))  # "condition", "procedure", "note"
-    data = Column(JSON, default=dict)
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    patient = relationship("Patient")
-    provider = relationship("User")
-
-
-class ChartingSymbol(Base):
-    """Custom graphical symbols for visual charting"""
-    __tablename__ = "charting_symbols"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
-    
-    name = Column(String(100), nullable=False)
-    symbol_type = Column(String(50))  # "crown", "bridge", "implant", etc.
-    category = Column(String(50))
-    svg_data = Column(Text)  # The raw SVG path/element data
-    color = Column(String(20))
-    
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    practice = relationship("Practice")
-
-
 class PerioChart(Base):
     """Periodontal charting model - records probing depths, bleeding points, mobility"""
     __tablename__ = "perio_charts"
@@ -167,8 +76,7 @@ class PerioChart(Base):
     provider_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     examination_date = Column(DateTime(timezone=True), server_default=func.now())
     
-    # Perio data stored as JSON
-    # Structure: { tooth_number: { probing_depths: [1,2,3...], bleeding_points: [], mobility: "", furcation: "" } }
+    # Legacy/Flexible storage
     perio_data = Column(JSON, nullable=False, default={})
     
     # Overall assessment
@@ -191,37 +99,47 @@ class PerioChart(Base):
 
 
 class PerioChartEntry(Base):
-    """Individual periodontal measurement entry for a tooth"""
+    """Detailed highly structured entry for a specific tooth in a PerioChart"""
     __tablename__ = "perio_chart_entries"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     perio_chart_id = Column(UUID(as_uuid=True), ForeignKey("perio_charts.id"), nullable=False)
+    tooth_number = Column(Integer, nullable=False)
     
-    # Tooth identification
-    tooth_number = Column(String(10), nullable=False)  # e.g., "1", "2", "1A"
+    # 6-Point Pocket Depths (PD)
+    pd_distobuccal = Column(Integer)
+    pd_buccal = Column(Integer)
+    pd_mesiobuccal = Column(Integer)
+    pd_distolingual = Column(Integer)
+    pd_lingual = Column(Integer)
+    pd_mesiolingual = Column(Integer)
     
-    # Probing depths (6 sites per tooth: MB, B, DB, ML, L, DL)
-    probing_depths = Column(JSON, default=list)  # [3, 2, 3, 4, 3, 2]
+    # 6-Point Bleeding on Probing (BOP)
+    bop_distobuccal = Column(Boolean, default=False)
+    bop_buccal = Column(Boolean, default=False)
+    bop_mesiobuccal = Column(Boolean, default=False)
+    bop_distolingual = Column(Boolean, default=False)
+    bop_lingual = Column(Boolean, default=False)
+    bop_mesiolingual = Column(Boolean, default=False)
     
-    # Bleeding on probing (6 sites)
-    bleeding_points = Column(JSON, default=list)  # [True, False, True, ...]
+    # 6-Point Clinical Attachment Level (CAL) - Optional calculated or stored
+    cal_distobuccal = Column(Integer)
+    cal_buccal = Column(Integer)
+    cal_mesiobuccal = Column(Integer)
+    cal_distolingual = Column(Integer)
+    cal_lingual = Column(Integer)
+    cal_mesiolingual = Column(Integer)
     
-    # Additional measurements
-    recession = Column(JSON, default=list)  # [1, 0, 0, 2, 1, 0]
-    attachment_level = Column(JSON, default=list)  # Calculated
+    # Advanced clinical metrics
+    mobility = Column(Integer)  # 0, 1, 2, 3
+    furcation_class = Column(String(10))  # I, II, III, IV
+    mucogingival_defect = Column(Boolean, default=False)
     
-    # Tooth condition
-    mobility = Column(String(10))  # "0", "I", "II", "III"
-    furcation = Column(String(10))  # "0", "I", "II", "III"
-    
-    # Notes for this tooth
-    notes = Column(Text)
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # Position
+    display_order = Column(Integer, default=0)
     
     # Relationships
     perio_chart = relationship("PerioChart", back_populates="entries")
-    
+
     def __repr__(self):
         return f"<PerioChartEntry Tooth {self.tooth_number}>"

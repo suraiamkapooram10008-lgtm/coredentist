@@ -56,6 +56,9 @@ global.IntersectionObserver = vi.fn().mockImplementation(() => ({
 // Mock scrollTo
 window.scrollTo = vi.fn();
 
+// Mock fetch globally
+global.fetch = vi.fn();
+
 // Mock sessionStorage
 const mockSessionStorage = (() => {
   let store: Record<string, string> = {};

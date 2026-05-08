@@ -6,7 +6,7 @@ Handles file uploads, downloads, and management
 import boto3
 from botocore.exceptions import ClientError
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import uuid
 import os
 import logging
@@ -103,7 +103,7 @@ class S3StorageService:
             # Prepare metadata
             metadata = {
                 'original_filename': filename,
-                'uploaded_at': datetime.now(timezone.utc).isoformat()
+                'uploaded_at': datetime.utcnow().isoformat()
             }
             if file_hash:
                 metadata['sha256_hash'] = file_hash

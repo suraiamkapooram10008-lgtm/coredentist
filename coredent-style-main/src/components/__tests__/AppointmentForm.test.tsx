@@ -2,8 +2,7 @@
  * AppointmentForm Component Tests
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AppointmentForm } from '../appointments/AppointmentForm';
 import type { Appointment } from '@/services/appointmentsApi';
@@ -19,8 +18,8 @@ describe('AppointmentForm', () => {
     render(
       <AppointmentForm
         appointmentTypes={mockAppointmentTypes}
-        onSubmit={vi.fn()}
-        onCancel={vi.fn()}
+        onSubmit={jest.fn()}
+        onCancel={jest.fn()}
       />
     );
 
@@ -44,8 +43,8 @@ describe('AppointmentForm', () => {
       <AppointmentForm
         appointment={appointment}
         appointmentTypes={mockAppointmentTypes}
-        onSubmit={vi.fn()}
-        onCancel={vi.fn()}
+        onSubmit={jest.fn()}
+        onCancel={jest.fn()}
       />
     );
 
@@ -56,13 +55,13 @@ describe('AppointmentForm', () => {
 
   it('should call onSubmit with form data', async () => {
     const user = userEvent.setup();
-    const onSubmit = vi.fn();
+    const onSubmit = jest.fn();
 
     render(
       <AppointmentForm
         appointmentTypes={mockAppointmentTypes}
         onSubmit={onSubmit}
-        onCancel={vi.fn()}
+        onCancel={jest.fn()}
       />
     );
 
@@ -80,12 +79,12 @@ describe('AppointmentForm', () => {
 
   it('should call onCancel when cancel button is clicked', async () => {
     const user = userEvent.setup();
-    const onCancel = vi.fn();
+    const onCancel = jest.fn();
 
     render(
       <AppointmentForm
         appointmentTypes={mockAppointmentTypes}
-        onSubmit={vi.fn()}
+        onSubmit={jest.fn()}
         onCancel={onCancel}
       />
     );
@@ -96,59 +95,43 @@ describe('AppointmentForm', () => {
     expect(onCancel).toHaveBeenCalled();
   });
 
-  it('should display appointment types in select', () => {
+  it('should display appointment types in select', async () => {
+    const user = userEvent.setup();
+
     render(
       <AppointmentForm
         appointmentTypes={mockAppointmentTypes}
-        onSubmit={vi.fn()}
-        onCancel={vi.fn()}
+        onSubmit={jest.fn()}
+        onCancel={jest.fn()}
       />
     );
 
-    // Check that appointment type options are available in the hidden select
-    // The options are in a hidden select element for accessibility
-    const hiddenSelect = document.querySelector('select[aria-hidden="true"]');
-    expect(hiddenSelect).toBeInTheDocument();
-    
-    // Check options are present
-    expect(hiddenSelect).toContainHTML('<option value="Checkup">Checkup (30 min)</option>');
-    expect(hiddenSelect).toContainHTML('<option value="Cleaning">Cleaning (45 min)</option>');
-    expect(hiddenSelect).toContainHTML('<option value="Root Canal">Root Canal (60 min)</option>');
+    const typeSelect = screen.getByDisplayValue('Select type');
+    await user.click(typeSelect);
+
+    expect(screen.getByText('Checkup (30 min)')).toBeInTheDocument();
+    expect(screen.getByText('Cleaning (45 min)')).toBeInTheDocument();
+    expect(screen.getByText('Root Canal (60 min)')).toBeInTheDocument();
   });
 
-  it('should display status options', () => {
+  it('should display status options', async () => {
+    const user = userEvent.setup();
+
     render(
       <AppointmentForm
         appointmentTypes={mockAppointmentTypes}
-        onSubmit={vi.fn()}
-        onCancel={vi.fn()}
+        onSubmit={jest.fn()}
+        onCancel={jest.fn()}
       />
     );
 
-    // There are two hidden select elements - one for appointment type and one for status
-    // The second one is for status
-    const hiddenSelects = document.querySelectorAll('select[aria-hidden="true"]');
-    expect(hiddenSelects.length).toBe(2);
-    
-    const statusSelect = hiddenSelects[1];
-    expect(statusSelect).toBeInTheDocument();
-    
-    // Check status options are present - using querySelector to find options
-    const pendingOption = statusSelect.querySelector('option[value="Pending"]');
-    const confirmedOption = statusSelect.querySelector('option[value="Confirmed"]');
-    const completedOption = statusSelect.querySelector('option[value="Completed"]');
-    const cancelledOption = statusSelect.querySelector('option[value="Cancelled"]');
-    
-    expect(pendingOption).toBeInTheDocument();
-    expect(confirmedOption).toBeInTheDocument();
-    expect(completedOption).toBeInTheDocument();
-    expect(cancelledOption).toBeInTheDocument();
-    
-    // Check text content
-    expect(pendingOption).toHaveTextContent('Pending');
-    expect(confirmedOption).toHaveTextContent('Confirmed');
-    expect(completedOption).toHaveTextContent('Completed');
-    expect(cancelledOption).toHaveTextContent('Cancelled');
+    const statusSelect = screen.getByDisplayValue('Pending');
+    await user.click(statusSelect);
+
+    expect(screen.getByText('Pending')).toBeInTheDocument();
+    expect(screen.getByText('Confirmed')).toBeInTheDocument();
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(screen.getByText('Cancelled')).toBeInTheDocument();
   });
 
   it('should show Update button for existing appointment', () => {
@@ -167,8 +150,8 @@ describe('AppointmentForm', () => {
       <AppointmentForm
         appointment={appointment}
         appointmentTypes={mockAppointmentTypes}
-        onSubmit={vi.fn()}
-        onCancel={vi.fn()}
+        onSubmit={jest.fn()}
+        onCancel={jest.fn()}
       />
     );
 
@@ -179,8 +162,8 @@ describe('AppointmentForm', () => {
     render(
       <AppointmentForm
         appointmentTypes={mockAppointmentTypes}
-        onSubmit={vi.fn()}
-        onCancel={vi.fn()}
+        onSubmit={jest.fn()}
+        onCancel={jest.fn()}
       />
     );
 
@@ -193,8 +176,8 @@ describe('AppointmentForm', () => {
     render(
       <AppointmentForm
         appointmentTypes={mockAppointmentTypes}
-        onSubmit={vi.fn()}
-        onCancel={vi.fn()}
+        onSubmit={jest.fn()}
+        onCancel={jest.fn()}
       />
     );
 
@@ -208,8 +191,8 @@ describe('AppointmentForm', () => {
     render(
       <AppointmentForm
         appointmentTypes={[]}
-        onSubmit={vi.fn()}
-        onCancel={vi.fn()}
+        onSubmit={jest.fn()}
+        onCancel={jest.fn()}
       />
     );
 

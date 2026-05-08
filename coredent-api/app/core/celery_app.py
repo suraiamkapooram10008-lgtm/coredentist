@@ -4,7 +4,7 @@ Handles automated tasks like sending reminders
 """
 
 from celery import Celery
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import logging
 
 from app.core.config import settings

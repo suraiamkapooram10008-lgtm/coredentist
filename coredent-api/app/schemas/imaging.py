@@ -3,7 +3,7 @@ Imaging Schemas
 Pydantic models for imaging data validation
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, validator
 from uuid import UUID

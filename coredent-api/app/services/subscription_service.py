@@ -29,300 +29,259 @@ logger = logging.getLogger(__name__)
 
 class SubscriptionService:
     """Service for subscription management operations"""
-
-    def __init__(self, db: AsyncSession):
-        self.db = db
-
+    
+    @staticmethod
     def calculate_period_start_end(
-        self,
-        start_date: datetime,
-        billing_cycle: SubscriptionInterval,
+        interval: SubscriptionInterval,
+        from_date: Optional[datetime] = None
     ) -> Tuple[datetime, datetime]:
         """Calculate current period start and end based on interval"""
-        period_start = start_date or datetime.now(timezone.utc)
-        interval = billing_cycle
-
+        now = from_date or datetime.now(timezone.utc)
+        
         if interval == SubscriptionInterval.WEEKLY:
+            period_start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=now.weekday())
             period_end = period_start + timedelta(days=7)
-
+        
         elif interval == SubscriptionInterval.MONTHLY:
-            if period_start.month == 12:
-                period_end = period_start.replace(year=period_start.year + 1, month=1)
-            else:
-                period_end = period_start.replace(month=period_start.month + 1)
-
+            period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            next_month = period_start.replace(day=28) + timedelta(days=4)
+            period_end = next_month - timedelta(days=next_month.day - 1, hours=1, seconds=1)
+        
         elif interval == SubscriptionInterval.QUARTERLY:
-            if period_start.month <= 9:
-                period_end = period_start.replace(month=period_start.month + 3)
-            else:
-                period_end = period_start.replace(year=period_start.year + 1, month=period_start.month - 9)
-
-        elif interval in (SubscriptionInterval.ANNUAL, SubscriptionInterval.YEARLY):
-            period_end = period_start.replace(year=period_start.year + 1)
-
+            quarter = (now.month - 1) // 3
+            period_start = now.replace(month=quarter * 3 + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            next_quarter_start = (
+                period_start.replace(month=period_start.month + 3)
+                if period_start.month <= 9
+                else period_start.replace(year=period_start.year + 1, month=1)
+            )
+            period_end = next_quarter_start - timedelta(seconds=1)
+        
+        elif interval == SubscriptionInterval.ANNUAL:
+            period_start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            period_end = period_start.replace(year=period_start.year + 1) - timedelta(seconds=1)
+        
         else:  # semi_annual
-            if period_start.month <= 6:
-                period_end = period_start.replace(month=period_start.month + 6)
-            else:
-                period_end = period_start.replace(year=period_start.year + 1, month=period_start.month - 6)
-
+            half = 0 if now.month <= 6 else 6
+            period_start = now.replace(month=half + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            next_start = (
+                period_start.replace(month=period_start.month + 6)
+                if period_start.month <= 6
+                else period_start.replace(year=period_start.year + 1, month=1)
+            )
+            period_end = next_start - timedelta(seconds=1)
+        
         return period_start, period_end
     
+    @staticmethod
     def calculate_proration_amount(
-        self,
-        old_price: Decimal,
-        new_price: Decimal,
+        old_amount: Decimal,
+        new_amount: Decimal,
         days_remaining: int,
         total_days: int
     ) -> Decimal:
         """Calculate proration amount for plan change"""
-        old_amount = old_price
-        new_amount = new_price
         if total_days == 0:
             return Decimal(0)
         daily_diff = (new_amount - old_amount) / Decimal(total_days)
         return daily_diff * Decimal(days_remaining)
     
+    @staticmethod
     async def create_stripe_subscription(
-        self,
+        db: AsyncSession,
+        plan: SubscriptionPlan,
+        user_email: str,
+        user_full_name: str,
         practice_id: UUID,
-        plan_id: UUID,
-        stripe_customer_id: str,
-        stripe_price_id: str,
-    ) -> Subscription:
-        """Create a Stripe subscription and local record"""
-        # Get plan
-        plan_result = await self.db.execute(
-            select(SubscriptionPlan).where(SubscriptionPlan.id == plan_id)
-        )
-        plan = plan_result.scalar_one_or_none()
-        if not plan:
-            raise ValueError("Plan not found")
-
-        # Create Stripe subscription
-        if settings.STRIPE_API_KEY and stripe_price_id:
-            try:
-                sub_params = {
-                    "customer": stripe_customer_id,
-                    "items": [{"price": stripe_price_id}],
-                    "metadata": {
-                        "coredent_plan_id": str(plan_id),
+        user_id: UUID,
+        payment_card_id: Optional[UUID] = None,
+        trial_days: int = 0,
+    ) -> Tuple[str, str]:
+        """
+        Create a Stripe subscription
+        Returns: (stripe_subscription_id, stripe_customer_id)
+        """
+        if not settings.STRIPE_API_KEY or not plan.stripe_price_id:
+            return None, None
+        
+        try:
+            # Get or create Stripe customer
+            stripe_cust_id = None
+            if payment_card_id:
+                card_result = await db.execute(
+                    select(PaymentCard).where(PaymentCard.id == payment_card_id)
+                )
+                card = card_result.scalar_one_or_none()
+                if card and card.processor_customer_id:
+                    stripe_cust_id = card.processor_customer_id
+            
+            if not stripe_cust_id:
+                customer = stripe_lib.Customer.create(
+                    email=user_email,
+                    name=user_full_name,
+                    metadata={
                         "practice_id": str(practice_id),
+                        "user_id": str(user_id),
                     },
-                }
-                stripe_sub = stripe_lib.Subscription.create(**sub_params)
-                stripe_sub_id = stripe_sub.id
-                status = stripe_sub.status
-            except stripe_lib.error.StripeError as e:
-                logger.error(f"Stripe subscription creation error: {e}")
-                raise
-        else:
-            # Stripe not configured - generate a unique local ID
-            import uuid as _uuid
-            stripe_sub_id = f"local_{_uuid.uuid4().hex[:12]}"
-            status = "active"
-            logger.warning(f"Stripe not configured, creating local subscription {stripe_sub_id}")
-
-        # Create local subscription record
-        period_start, period_end = self.calculate_period_start_end(
-            start_date=datetime.now(timezone.utc),
-            billing_cycle=plan.interval,
-        )
-
-        subscription = Subscription(
-            practice_id=practice_id,
-            plan_id=plan_id,
-            status=SubscriptionStatus(status) if status else SubscriptionStatus.ACTIVE,
-            interval=plan.interval,
-            current_period_start=period_start,
-            current_period_end=period_end,
-            stripe_subscription_id=stripe_sub_id,
-            stripe_customer_id=stripe_customer_id,
-        )
-        self.db.add(subscription)
-        await self.db.commit()
-        await self.db.refresh(subscription)
-
-        return subscription
+                )
+                stripe_cust_id = customer.id
+            
+            # Create subscription with trial
+            sub_params = {
+                "customer": stripe_cust_id,
+                "items": [{"price": plan.stripe_price_id}],
+                "metadata": {
+                    "coredent_plan_id": str(plan.id),
+                    "practice_id": str(practice_id),
+                },
+            }
+            
+            if trial_days > 0:
+                sub_params["trial_period_days"] = trial_days
+            
+            stripe_sub = stripe_lib.Subscription.create(**sub_params)
+            return stripe_sub.id, stripe_cust_id
+        
+        except stripe_lib.error.StripeError as e:
+            logger.error(f"Stripe subscription creation error: {e}")
+            raise
     
+    @staticmethod
     async def get_subscription_with_plan(
-        self,
+        db: AsyncSession,
         subscription_id: UUID,
+        practice_id: UUID,
     ) -> Optional[Subscription]:
         """Get subscription with related plan"""
-        result = await self.db.execute(
+        result = await db.execute(
             select(Subscription).where(
                 Subscription.id == subscription_id,
+                Subscription.practice_id == practice_id,
             )
         )
         return result.scalar_one_or_none()
     
+    @staticmethod
     async def change_plan(
-        self,
-        subscription_id: UUID,
-        new_plan_id: UUID,
-        stripe_price_id: Optional[str] = None,
-    ) -> Subscription:
-        """Change subscription plan with proration"""
-        # Get subscription
-        subscription = await self.get_subscription_with_plan(subscription_id)
-        if not subscription:
-            raise ValueError("Subscription not found")
-
-        # Get new plan
-        plan_result = await self.db.execute(
-            select(SubscriptionPlan).where(SubscriptionPlan.id == new_plan_id)
-        )
-        new_plan = plan_result.scalar_one_or_none()
-        if not new_plan:
-            raise ValueError("Plan not found")
-
+        db: AsyncSession,
+        subscription: Subscription,
+        new_plan: SubscriptionPlan,
+        proration_behavior: str = "create_prorations",
+    ) -> Decimal:
+        """
+        Change subscription plan with proration
+        Returns: proration_amount
+        """
         now = datetime.now(timezone.utc)
-        # Handle naive vs aware datetimes
-        if subscription.current_period_end and subscription.current_period_end.tzinfo is None:
-            now = now.replace(tzinfo=None)
-
+        
         # Calculate proration
         if subscription.current_period_end:
             days_remaining = int((subscription.current_period_end - now).total_seconds() / 86400)
         else:
             days_remaining = 30
-
-        proration_amount = self.calculate_proration_amount(
+        
+        proration_amount = SubscriptionService.calculate_proration_amount(
             subscription.plan.amount if subscription.plan else Decimal(0),
             new_plan.amount,
             days_remaining,
             30
         )
-
+        
         # Update Stripe subscription
-        if settings.STRIPE_API_KEY and subscription.stripe_subscription_id and stripe_price_id:
+        if settings.STRIPE_API_KEY and subscription.stripe_subscription_id and new_plan.stripe_price_id:
             try:
                 stripe_sub = stripe_lib.Subscription.retrieve(subscription.stripe_subscription_id)
                 stripe_lib.Subscription.modify(
                     subscription.stripe_subscription_id,
                     items=[{
                         "id": stripe_sub["items"]["data"][0]["id"],
-                        "price": stripe_price_id,
+                        "price": new_plan.stripe_price_id,
                     }],
-                    proration_behavior="create_prorations",
+                    proration_behavior=proration_behavior,
                 )
             except stripe_lib.error.StripeError as e:
                 logger.error(f"Stripe plan change error: {e}")
                 raise
-
+        
         # Update local subscription
         subscription.plan_id = new_plan.id
         subscription.interval = new_plan.interval
-        subscription.proration_behavior = ProrationBehavior.CREATE_PRORATIONS
+        subscription.proration_behavior = ProrationBehavior(proration_behavior)
         subscription.proration_date = now
-
-        await self.db.commit()
-        await self.db.refresh(subscription)
-
-        return subscription
+        
+        return proration_amount
     
+    @staticmethod
     async def record_usage(
-        self,
-        subscription_id: UUID,
-        metric_name: str,
+        db: AsyncSession,
+        subscription: Subscription,
         quantity: Decimal,
+        description: str = "",
+        metadata: Optional[dict] = None,
     ) -> UsageRecord:
         """Record usage for usage-based billing"""
-        # Get subscription
-        sub_result = await self.db.execute(
-            select(Subscription).where(Subscription.id == subscription_id)
-        )
-        subscription = sub_result.scalar_one_or_none()
-        if not subscription:
-            raise ValueError("Subscription not found")
-
         record = UsageRecord(
             subscription_id=subscription.id,
             quantity=quantity,
-            description=metric_name,
-            metric_name=metric_name,
+            description=description,
+            metadata=metadata or {},
         )
-        self.db.add(record)
-
+        db.add(record)
+        
         # Update current usage on subscription
         subscription.current_usage = (subscription.current_usage or 0) + quantity
         if subscription.plan and subscription.plan.is_usage_based:
             if subscription.current_usage > (subscription.plan.included_usage or 0):
                 subscription.current_overage = subscription.current_usage - (subscription.plan.included_usage or 0)
-
-        await self.db.commit()
-        await self.db.refresh(record)
+        
+        await db.commit()
+        await db.refresh(record)
         return record
     
+    @staticmethod
     async def get_usage_records(
-        self,
+        db: AsyncSession,
         subscription_id: UUID,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
+        period_start: Optional[datetime] = None,
     ) -> List[UsageRecord]:
         """Get usage records for a subscription"""
         query = select(UsageRecord).where(UsageRecord.subscription_id == subscription_id)
-
-        if start_date:
-            query = query.where(UsageRecord.timestamp >= start_date)
-        if end_date:
-            query = query.where(UsageRecord.timestamp <= end_date)
-
+        
+        if period_start:
+            query = query.where(UsageRecord.timestamp >= period_start)
+        
         query = query.order_by(UsageRecord.timestamp)
-        result = await self.db.execute(query)
+        result = await db.execute(query)
         return result.scalars().all()
     
+    @staticmethod
     async def cancel_stripe_subscription(
-        self,
-        subscription_id: UUID,
+        subscription: Subscription,
         cancel_at_period_end: bool = True,
     ) -> bool:
         """Cancel Stripe subscription"""
-        # Get subscription
-        sub_result = await self.db.execute(
-            select(Subscription).where(Subscription.id == subscription_id)
-        )
-        subscription = sub_result.scalar_one_or_none()
-        if not subscription:
-            return False
-
         if not settings.STRIPE_API_KEY or not subscription.stripe_subscription_id:
             return False
-
+        
         try:
             if cancel_at_period_end:
                 stripe_lib.Subscription.modify(
                     subscription.stripe_subscription_id,
                     cancel_at_period_end=True,
                 )
-                subscription.cancel_at_period_end = True
             else:
                 stripe_lib.Subscription.cancel(subscription.stripe_subscription_id)
-                subscription.status = SubscriptionStatus.CANCELED
-
-            await self.db.commit()
             return True
         except stripe_lib.error.StripeError as e:
-            logger.error(f"Stripe cancellation error for sub {subscription_id}: {e}")
-            # Update local state even if Stripe call fails
-            subscription.status = SubscriptionStatus.CANCELED
-            subscription.canceled_at = datetime.now(timezone.utc)
-            await self.db.commit()
+            logger.error(f"Stripe cancellation error: {e}")
             return False
     
-    async def pause_stripe_subscription(self, subscription_id: UUID) -> bool:
+    @staticmethod
+    async def pause_stripe_subscription(subscription: Subscription) -> bool:
         """Pause Stripe subscription"""
-        sub_result = await self.db.execute(
-            select(Subscription).where(Subscription.id == subscription_id)
-        )
-        subscription = sub_result.scalar_one_or_none()
-        if not subscription:
-            return False
-
         if not settings.STRIPE_API_KEY or not subscription.stripe_subscription_id:
             return False
-
+        
         try:
             stripe_lib.Subscription.modify(
                 subscription.stripe_subscription_id,
@@ -332,19 +291,13 @@ class SubscriptionService:
         except stripe_lib.error.StripeError as e:
             logger.error(f"Stripe pause error: {e}")
             return False
-
-    async def resume_stripe_subscription(self, subscription_id: UUID) -> bool:
+    
+    @staticmethod
+    async def resume_stripe_subscription(subscription: Subscription) -> bool:
         """Resume paused Stripe subscription"""
-        sub_result = await self.db.execute(
-            select(Subscription).where(Subscription.id == subscription_id)
-        )
-        subscription = sub_result.scalar_one_or_none()
-        if not subscription:
-            return False
-
         if not settings.STRIPE_API_KEY or not subscription.stripe_subscription_id:
             return False
-
+        
         try:
             stripe_lib.Subscription.modify(
                 subscription.stripe_subscription_id,

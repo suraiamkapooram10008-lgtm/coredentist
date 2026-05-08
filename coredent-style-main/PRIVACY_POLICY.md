@@ -1,8 +1,7 @@
 # Privacy Policy
 
-**Effective Date:** April 24, 2026  
-**Last Updated:** April 24, 2026  
-**Jurisdiction:** India (DPDPA 2023 Compliant)
+**Effective Date:** February 12, 2026  
+**Last Updated:** February 12, 2026
 
 ## Introduction
 
@@ -38,21 +37,17 @@ CoreDent PMS ("we," "our," or "us") is committed to protecting your privacy. Thi
 ### Secondary Uses
 - **Analytics:** Improve features, understand usage patterns
 - **Security:** Detect fraud, prevent abuse, ensure data security
-- **Legal Compliance:** Comply with DPDPA 2023 (India), and other regulations
+- **Legal Compliance:** Comply with HIPAA, GDPR, and other regulations
 
-## DPDPA 2023 Compliance (India)
+## HIPAA Compliance
 
-CoreDent PMS is designed to comply with India's Digital Personal Data Protection Act, 2023:
+CoreDent PMS is designed to be HIPAA-compliant:
 
-- **Consent Management:** Explicit consent obtained before processing personal data
-- **Data Minimization:** We collect only what is necessary for dental practice management
-- **Purpose Limitation:** Data is used only for the purposes disclosed at collection
-- **Data Security:** AES-256 encryption, MFA, role-based access controls
-- **Breach Notification:** We will notify affected users and the Data Protection Board of India within reasonable time
-- **Cross-Border Transfers:** Data may be stored on servers outside India with appropriate safeguards
-
-### Data Fiduciary
-CoreDent acts as a Data Fiduciary under DPDPA 2023. The dental practice (you) is also a Data Fiduciary for your patients.
+- **Business Associate Agreement (BAA):** Available upon request
+- **PHI Protection:** All patient health information is encrypted and secured
+- **Access Controls:** Role-based permissions limit data access
+- **Audit Logs:** All PHI access is logged and monitored
+- **Breach Notification:** We will notify you of any data breaches within 60 days
 
 ## Data Sharing and Disclosure
 

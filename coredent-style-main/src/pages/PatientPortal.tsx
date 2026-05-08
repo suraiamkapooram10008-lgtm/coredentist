@@ -28,7 +28,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import type { AppError } from '@/types/errors';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
@@ -115,9 +114,8 @@ function PortalLogin({ onLogin }: { onLogin: (session: PortalSession) => void })
       }
       const session: PortalSession = await res.json();
       onLogin(session);
-    } catch (err: unknown) {
-      const error = err as AppError;
-      setError(error.message || 'Unable to verify. Please contact your dental office.');
+    } catch (err: any) {
+      setError(err.message || 'Unable to verify. Please contact your dental office.');
     } finally {
       setLoading(false);
     }

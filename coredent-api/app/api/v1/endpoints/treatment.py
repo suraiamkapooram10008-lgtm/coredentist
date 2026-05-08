@@ -8,10 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy import select, and_, or_
-from datetime import datetime, date, timezone
+from datetime import datetime, date
 from typing import List, Optional, Any
 import logging
-import uuid
 
 from app.core.database import get_db
 from app.api.deps import get_current_user, verify_csrf, require_role
@@ -73,11 +72,11 @@ logger = logging.getLogger(__name__)
 
 # Treatment Plan Endpoints
 
-@router.get("/plans", response_model=TreatmentPlanListResponse)
+@router.get("/plans/", response_model=TreatmentPlanListResponse)
 async def list_treatment_plans(
-    patient_id: Optional[uuid.UUID] = Query(None, description="Filter by patient"),
+    patient_id: Optional[str] = Query(None, description="Filter by patient"),
     status_filter: Optional[TreatmentPlanStatus] = Query(None, description="Filter by status"),
-    provider_id: Optional[uuid.UUID] = Query(None, description="Filter by provider"),
+    provider_id: Optional[str] = Query(None, description="Filter by provider"),
     start_date: Optional[date] = Query(None, description="Start date"),
     end_date: Optional[date] = Query(None, description="End date"),
     request: Request = None,
@@ -100,123 +99,16 @@ async def list_treatment_plans(
         await log_audit_event(db, current_user, "list_treatment_plans", "treatment_plan", None, request)
         await db.commit()
         
+        logger.info(f"Listed {len(plans)} treatment plans")
         return TreatmentPlanListResponse(plans=plans, count=len(plans))
     except Exception as e:
         logger.error(f"Error listing treatment plans: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
-@router.post("/plans", response_model=TreatmentPlanResponse, status_code=status.HTTP_201_CREATED)
-async def create_treatment_plan(
-    plan_data: TreatmentPlanCreate,
-    request: Request = None,
-    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
-    db: AsyncSession = Depends(get_db),
-    _csrf: bool = Depends(verify_csrf),
-) -> Any:
-    """
-    Create a new treatment plan
-    CRIT-19 FIX: Explicit field mapping to prevent Cross-Tenant ID injection
-    """
-    try:
-        # 1. Verify patient belongs to practice
-        result = await db.execute(
-            select(Patient).where(
-                Patient.id == plan_data.patient_id,
-                Patient.practice_id == current_user.practice_id,
-            )
-        )
-        patient = result.scalar_one_or_none()
-        if not patient:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
-
-        # 2. Verify provider belongs to practice (if provided)
-        if plan_data.provider_id:
-            result = await db.execute(
-                select(User).where(
-                    User.id == plan_data.provider_id,
-                    User.practice_id == current_user.practice_id,
-                )
-            )
-            if not result.scalar_one_or_none():
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
-
-        # 3. Create plan with explicit field assignment
-        plan = TreatmentPlan(
-            practice_id=current_user.practice_id,
-            patient_id=plan_data.patient_id,
-            provider_id=plan_data.provider_id or current_user.id,
-            plan_name=plan_data.plan_name,
-            status=plan_data.status,
-            chief_complaint=plan_data.chief_complaint,
-            diagnosis=plan_data.diagnosis,
-            treatment_goals=plan_data.treatment_goals,
-            target_start_date=plan_data.target_start_date or plan_data.start_date,
-            target_completion_date=plan_data.target_completion_date or plan_data.estimated_completion_date,
-            notes=plan_data.notes or plan_data.description,
-            visual_config=plan_data.visual_config,
-            total_estimated_cost=plan_data.estimated_cost or plan_data.total_cost or 0,
-            total_insurance_estimate=plan_data.insurance_coverage or 0,
-        )
-        db.add(plan)
-        await db.flush()
-        
-        # HIPAA: Log creation
-        await log_audit_event(db, current_user, "create_treatment_plan", "treatment_plan", plan.id, request)
-        await db.commit()
-        await db.refresh(plan)
-        
-        return plan
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error creating treatment plan: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
-
-
-@router.patch("/plans/{plan_id}", response_model=TreatmentPlanResponse)
-async def patch_treatment_plan(
-    plan_id: uuid.UUID,
-    plan_data: TreatmentPlanUpdate,
-    request: Request = None,
-    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
-    db: AsyncSession = Depends(get_db),
-    _csrf: bool = Depends(verify_csrf),
-) -> Any:
-    """
-    Partially update a treatment plan
-    B-15 FIX: Added HIPAA audit logging
-    """
-    try:
-        plan = await TreatmentService.get_treatment_plan(db, plan_id, current_user.practice_id)
-        if not plan:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treatment plan not found")
-
-        update_data = plan_data.model_dump(exclude_unset=True)
-        # Prevent ID/Practice manipulation
-        update_data.pop('id', None)
-        update_data.pop('practice_id', None)
-        update_data.pop('patient_id', None)
-
-        for field, value in update_data.items():
-            if hasattr(plan, field):
-                setattr(plan, field, value)
-
-        # HIPAA: Log modification
-        await log_audit_event(db, current_user, "update_treatment_plan", "treatment_plan", plan.id, request, {"patch": True})
-        await db.commit()
-        await db.refresh(plan)
-        return plan
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error patching treatment plan: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
-
-
 @router.get("/patients/{patient_id}/plans", response_model=TreatmentPlanListResponse)
 async def list_patient_treatment_plans(
-    patient_id: uuid.UUID,
+    patient_id: str,
     status_filter: Optional[TreatmentPlanStatus] = Query(None, description="Filter by status"),
     request: Request = None,
     current_user: User = Depends(get_current_user),
@@ -256,9 +148,64 @@ async def list_patient_treatment_plans(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
+@router.post("/plans/", response_model=TreatmentPlanResponse)
+async def create_treatment_plan(
+    plan_data: TreatmentPlanCreate,
+    request: Request = None,
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> Any:
+    """Create a new treatment plan"""
+    try:
+        # Verify patient belongs to practice
+        result = await db.execute(
+            select(Patient).where(
+                Patient.id == plan_data.patient_id,
+                Patient.practice_id == current_user.practice_id,
+            )
+        )
+        patient = result.scalar_one_or_none()
+        
+        if not patient:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
+        
+        # Verify provider belongs to practice
+        result = await db.execute(
+            select(User).where(
+                User.id == plan_data.provider_id,
+                User.practice_id == current_user.practice_id,
+            )
+        )
+        provider = result.scalar_one_or_none()
+        
+        if not provider:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found")
+        
+        plan = await TreatmentService.create_treatment_plan(
+            db,
+            current_user.practice_id,
+            plan_data.patient_id,
+            plan_data.provider_id,
+            **plan_data.dict(exclude={"patient_id", "provider_id"})
+        )
+        
+        # HIPAA: Log creation
+        await log_audit_event(db, current_user, "create_treatment_plan", "treatment_plan", plan.id, request)
+        await db.commit()
+        
+        logger.info(f"Created treatment plan: {plan.id}")
+        return plan
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating treatment plan: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+
 @router.get("/plans/{plan_id}", response_model=TreatmentPlanResponse)
 async def get_treatment_plan(
-    plan_id: uuid.UUID,
+    plan_id: str,
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -285,7 +232,7 @@ async def get_treatment_plan(
 
 @router.put("/plans/{plan_id}", response_model=TreatmentPlanResponse)
 async def update_treatment_plan(
-    plan_id: uuid.UUID,
+    plan_id: str,
     plan_data: TreatmentPlanUpdate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
@@ -316,7 +263,7 @@ async def update_treatment_plan(
 
 @router.delete("/plans/{plan_id}")
 async def delete_treatment_plan(
-    plan_id: uuid.UUID,
+    plan_id: str,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
@@ -347,7 +294,7 @@ async def delete_treatment_plan(
 
 @router.get("/plans/{plan_id}/phases", response_model=TreatmentPhaseListResponse)
 async def list_treatment_phases(
-    plan_id: uuid.UUID,
+    plan_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
@@ -372,7 +319,7 @@ async def list_treatment_phases(
 
 @router.post("/plans/{plan_id}/phases", response_model=TreatmentPhaseResponse)
 async def create_treatment_phase(
-    plan_id: uuid.UUID,
+    plan_id: str,
     phase_data: TreatmentPhaseCreate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
@@ -403,7 +350,7 @@ async def create_treatment_phase(
 
 @router.put("/phases/{phase_id}", response_model=TreatmentPhaseResponse)
 async def update_treatment_phase(
-    phase_id: uuid.UUID,
+    phase_id: str,
     phase_data: TreatmentPhaseUpdate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
@@ -441,8 +388,8 @@ async def update_treatment_phase(
 
 @router.get("/plans/{plan_id}/procedures", response_model=TreatmentProcedureListResponse)
 async def list_treatment_procedures(
-    plan_id: uuid.UUID,
-    phase_id: Optional[uuid.UUID] = Query(None, description="Filter by phase"),
+    plan_id: str,
+    phase_id: Optional[str] = Query(None, description="Filter by phase"),
     status_filter: Optional[str] = Query(None, description="Filter by status"),
     procedure_type: Optional[ProcedureType] = Query(None, description="Filter by type"),
     current_user: User = Depends(get_current_user),
@@ -485,16 +432,13 @@ async def list_treatment_procedures(
 
 @router.post("/plans/{plan_id}/procedures", response_model=TreatmentProcedureResponse)
 async def create_treatment_procedure(
-    plan_id: uuid.UUID,
+    plan_id: str,
     procedure_data: TreatmentProcedureCreate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> Any:
-    """
-    Create a new treatment procedure
-    CRIT-19 FIX: Explicit field mapping to prevent injection
-    """
+    """Create a new treatment procedure"""
     try:
         # Verify plan belongs to practice
         plan = await TreatmentService.get_treatment_plan(db, plan_id, current_user.practice_id)
@@ -505,25 +449,13 @@ async def create_treatment_procedure(
         # Verify phase belongs to plan if provided
         if procedure_data.phase_id:
             phase = await TreatmentPlanningService.get_treatment_phase(db, procedure_data.phase_id)
+            
             if not phase or phase.treatment_plan_id != plan_id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treatment phase not found")
         
-        # Explicit mapping (Prevent ID injection)
         procedure = TreatmentProcedure(
             treatment_plan_id=plan_id,
-            ada_code=procedure_data.ada_code,
-            description=procedure_data.description,
-            tooth_number=procedure_data.tooth_number,
-            surface=procedure_data.surface,
-            fee=procedure_data.fee,
-            status=procedure_data.status,
-            phase_id=procedure_data.phase_id,
-            procedure_type=procedure_data.procedure_type,
-            notes=procedure_data.notes,
-            display_order=procedure_data.display_order,
-            is_completed=procedure_data.is_completed,
-            completion_date=procedure_data.completion_date,
-            provider_id=procedure_data.provider_id or plan.provider_id,
+            **procedure_data.dict()
         )
         
         db.add(procedure)
@@ -533,6 +465,7 @@ async def create_treatment_procedure(
         # Update plan totals
         await TreatmentCostingService.update_plan_totals(db, plan_id)
         
+        logger.info(f"Created treatment procedure: {procedure.id}")
         return procedure
     except HTTPException:
         raise
@@ -543,7 +476,7 @@ async def create_treatment_procedure(
 
 @router.put("/procedures/{procedure_id}", response_model=TreatmentProcedureResponse)
 async def update_treatment_procedure(
-    procedure_id: uuid.UUID,
+    procedure_id: str,
     procedure_data: TreatmentProcedureUpdate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
@@ -586,7 +519,7 @@ async def update_treatment_procedure(
 
 @router.delete("/procedures/{procedure_id}")
 async def delete_treatment_procedure(
-    procedure_id: uuid.UUID,
+    procedure_id: str,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
@@ -716,7 +649,7 @@ async def create_procedure_library_entry(
 
 @router.put("/library/{procedure_id}", response_model=ProcedureLibraryResponse)
 async def update_procedure_library_entry(
-    procedure_id: uuid.UUID,
+    procedure_id: str,
     procedure_data: ProcedureLibraryUpdate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
@@ -759,30 +692,16 @@ async def estimate_costs(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Any:
-    """
-    Estimate costs for treatment procedures
-    CRIT-20 FIX: Ownership verification for Insurance ID
-    """
+    """Estimate costs for treatment procedures"""
     try:
-        # Verify insurance belongs to practice (CRIT-20)
-        result = await db.execute(
-            select(PatientInsurance).join(Patient).where(
-                PatientInsurance.id == estimate_request.patient_insurance_id,
-                Patient.practice_id == current_user.practice_id
-            )
-        )
-        if not result.scalar_one_or_none():
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Insurance record not found")
-
         result = await TreatmentCostingService.estimate_insurance_coverage(
             db,
             estimate_request.patient_insurance_id,
             estimate_request.procedures,
         )
         
+        logger.info(f"Generated cost estimate for {len(estimate_request.procedures)} procedures")
         return CostEstimateResponse(**result)
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error estimating costs: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
@@ -792,7 +711,7 @@ async def estimate_costs(
 
 @router.post("/plans/{plan_id}/accept", response_model=PlanAcceptanceResponse)
 async def accept_treatment_plan(
-    plan_id: uuid.UUID,
+    plan_id: str,
     acceptance_data: PlanAcceptanceRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -807,7 +726,7 @@ async def accept_treatment_plan(
         
         # Update plan status
         plan.status = TreatmentPlanStatus.ACCEPTED
-        plan.accepted_date = datetime.now(timezone.utc).date()
+        plan.accepted_date = datetime.now().date()
         plan.acceptance_method = acceptance_data.acceptance_method
         plan.acceptance_notes = acceptance_data.acceptance_notes
         

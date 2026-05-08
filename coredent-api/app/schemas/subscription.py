@@ -5,7 +5,7 @@ Pydantic models for subscription operations
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator, EmailStr
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 from decimal import Decimal
 
@@ -244,9 +244,9 @@ class SubscriptionStats(BaseModel):
     total_past_due: int
     total_canceled_this_month: int
     mrr: Decimal  # Monthly Recurring Revenue
-    mrr_growth_percent: float = 0.0
+    mrr_growth_percent: float
     churn_rate: float  # Monthly churn rate
-    trial_conversion_rate: float = 0.0
+    trial_conversion_rate: float
     average_lifetime_days: float
 
 

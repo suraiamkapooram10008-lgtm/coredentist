@@ -3,7 +3,7 @@ Communication Schemas
 Patient messaging, SMS/email reminders, two-way messaging
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List, Optional, Dict, Any
 from enum import Enum
 from pydantic import BaseModel, Field, validator

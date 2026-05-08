@@ -30,6 +30,8 @@ export function useApiRequest<T>(
       try {
         const response = await apiFunc(...args);
         
+        console.log('[useApiRequest] Response:', { success: response.success, hasData: !!response.data, error: response.error });
+        
         // Check for success - data can be null/undefined for valid empty responses
         if (response.success) {
           setData(response.data || null);
@@ -43,7 +45,7 @@ export function useApiRequest<T>(
           return response.data || null;
         } else {
           const message = response.error?.message || options.errorMessage || 'An error occurred';
-          logger.error('API request failed', undefined, { message, error: response.error });
+          console.error('[useApiRequest] Error:', message, response.error);
           setError(message);
           toast({
             variant: 'destructive',
@@ -55,8 +57,9 @@ export function useApiRequest<T>(
         }
       } catch (err) {
         const message = options.errorMessage || 'Network error occurred';
+        console.error('[useApiRequest] Exception:', err);
         setError(message);
-        logger.error('API request hook failed', err as Error);
+        logger.error('API Request hook failed', err as Error);
         toast({
           variant: 'destructive',
           title: 'Error',

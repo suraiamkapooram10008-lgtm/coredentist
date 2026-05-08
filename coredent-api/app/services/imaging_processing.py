@@ -8,7 +8,7 @@ from uuid import UUID
 import logging
 import os
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import UploadFile
@@ -154,7 +154,7 @@ class ImageSharingProcessor:
     @staticmethod
     def get_share_expiry() -> datetime:
         """Get share link expiry time"""
-        expiry = datetime.now(timezone.utc) + timedelta(days=30)
+        expiry = datetime.now() + timedelta(days=30)
         logger.debug(f"Share link expires at: {expiry}")
         return expiry
     
@@ -214,7 +214,7 @@ class ImageMetadataProcessor:
             "file_name": file_name,
             "file_size": file_size,
             "mime_type": mime_type,
-            "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "uploaded_at": datetime.now().isoformat(),
         }
         logger.debug(f"Extracted metadata: {metadata}")
         return metadata

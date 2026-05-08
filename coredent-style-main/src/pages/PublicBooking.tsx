@@ -28,8 +28,28 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { toast } from '@/components/ui/use-toast';
 import { PageLoader } from '@/components/ui/spinner';
-import type { BookingFormData, TimeSlot, BookingPage } from '@/types/forms';
-import type { AppointmentTypeSelection } from '@/types/state';
+
+// --- Types ---
+interface BookingPage {
+  page_slug: string;
+  page_title: string;
+  welcome_message?: string;
+  logo_url?: string;
+  primary_color?: string;
+  background_image_url?: string;
+  allow_new_patients: boolean;
+  allow_existing_patients: boolean;
+  booking_window_days: number;
+  min_notice_hours: number;
+  business_hours: any;
+  intake_form_fields: any[];
+}
+
+interface TimeSlot {
+  start_time: string;
+  end_time: string;
+  is_available: boolean;
+}
 
 // --- Mock Data / API Helpers ---
 const fetchPublicPage = async (slug: string): Promise<BookingPage> => {
@@ -70,7 +90,7 @@ export default function PublicBooking() {
   const [currentStep, setCurrentStep] = useState(0);
   
   // Selection State
-  const [selectedType, setSelectedType] = useState<AppointmentTypeSelection | null>(null);
+  const [selectedType, setSelectedType] = useState<any>(null);
   const [selectedDate, setSelectedDate] = useState<Date>(startOfToday());
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [formData, setFormData] = useState({

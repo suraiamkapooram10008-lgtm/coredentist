@@ -7,12 +7,11 @@ import {
   Tooltip 
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import type { ChartDataPoint, ChartFormatter } from '@/types/state';
 
 interface BaseChartProps {
   title: string;
   description?: string;
-  data: ChartDataPoint[];
+  data: any[];
   children: ReactNode;
   height?: number | string;
 }
@@ -47,10 +46,10 @@ BaseChart.displayName = 'BaseChart';
 // Shared chart components to reduce duplication in individual chart files
 export const ChartGrid = () => <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />;
 export const ChartXAxis = ({ dataKey }: { dataKey: string }) => <XAxis dataKey={dataKey} className="text-xs" />;
-export const ChartYAxis = ({ formatter }: { formatter?: ChartFormatter }) => (
+export const ChartYAxis = ({ formatter }: { formatter?: (v: any) => string }) => (
   <YAxis className="text-xs" tickFormatter={formatter} />
 );
-export const ChartTooltip = ({ formatter }: { formatter?: ChartFormatter }) => (
+export const ChartTooltip = ({ formatter }: { formatter?: (v: any) => string }) => (
   <Tooltip
     formatter={formatter}
     contentStyle={{

@@ -3,7 +3,7 @@ Practice Model
 Represents dental practices/clinics
 """
 
-from sqlalchemy import Column, String, DateTime, JSON, ForeignKey
+from sqlalchemy import Column, String, DateTime, JSON, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -13,45 +13,68 @@ from app.core.base import Base
 
 
 class PracticeGroup(Base):
-    """Practice Group/Enterprise model for multi-practice organizations"""
+    """Enterprise-level practice group/DSO model"""
     __tablename__ = "practice_groups"
-
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
-    email = Column(String(255))
-    phone = Column(String(20))
+    address_street = Column(String(255))
+    address_city = Column(String(100))
+    address_state = Column(String(100))
+    address_zip = Column(String(20))
+    country = Column(String(2), default="US")
+    logo_url = Column(String)
     settings = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
+    
     # Relationships
     practices = relationship("Practice", back_populates="group")
-    users = relationship("User", back_populates="group")
-
-    def __repr__(self):
-        return f"<PracticeGroup {self.name}>"
 
 
 class Practice(Base):
     """Practice/Clinic model"""
     __tablename__ = "practices"
-
+    
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    group_id = Column(UUID(as_uuid=True), ForeignKey("practice_groups.id"), nullable=True)
     name = Column(String(255), nullable=False)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("practice_groups.id"), nullable=True)
     email = Column(String(255))
     phone = Column(String(20))
+    address = Column(String(255))  # Combined address field
     address_street = Column(String(255))
     address_city = Column(String(100))
-    address_state = Column(String(2))
-    address_zip = Column(String(10))
+    address_state = Column(String(100)) # Expanded for Global compatibility
+    address_zip = Column(String(20))
+    city = Column(String(100))  # Alias for address_city
+    state = Column(String(100))  # Alias for address_state
+    zip_code = Column(String(20))  # Alias for address_zip
+    country = Column(String(2), default="US") # Region Switch: US, IN, etc.
     timezone = Column(String(50), default="America/New_York")
     currency = Column(String(3), default="USD")
+    website = Column(String(255))
     logo_url = Column(String)
     settings = Column(JSON, default={})
+    
+    # Billing preferences
+    tax_rate = Column(JSON, default=0.0)  # Can be float or dict for multiple tax rates
+    invoice_prefix = Column(String(10), default="INV")
+    payment_terms = Column(JSON, default=30)  # Days
+    late_fee_percentage = Column(JSON, default=0.0)
+    accepted_payment_methods = Column(JSON, default=["cash", "card", "check"])
+    auto_send_invoices = Column(Boolean, default=False)
+    auto_send_reminders = Column(Boolean, default=False)
+    reminder_days_before = Column(JSON, default=3)
+    
+    # Working hours and appointment configuration
+    working_hours = Column(JSON, default={})
+    appointment_types = Column(JSON, default=[])  # Stored as JSON for flexibility
+    chairs = Column(JSON, default=[])  # Stored as JSON for flexibility
+    
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
+    
     # Relationships
     group = relationship("PracticeGroup", back_populates="practices")
     users = relationship("User", back_populates="practice")
@@ -74,7 +97,7 @@ class Practice(Base):
     lab_cases = relationship("LabCase", back_populates="practice")
     lab_invoices = relationship("LabInvoice", back_populates="practice")
     referral_sources = relationship("ReferralSource1", back_populates="practice")
-    referrals = relationship("Referral", back_populates="practice")
+    referrals = relationship("Referral", back_populates="practice", foreign_keys="[Referral.practice_id]")
     referral_reports = relationship("ReferralReport", back_populates="practice")
     message_templates = relationship("MessageTemplate", back_populates="practice")
     patient_messages = relationship("PatientMessage", back_populates="practice")
@@ -92,8 +115,8 @@ class Practice(Base):
     recurring_billing = relationship("RecurringBilling", back_populates="practice")
     payment_terminals = relationship("PaymentTerminal", back_populates="practice")
     payment_settings = relationship("PaymentSettings", back_populates="practice")
-    fee_schedules = relationship("FeeSchedule", back_populates="practice")
-    payment_plans = relationship("PaymentPlan", back_populates="practice")
+
+    # Subscription Relationships
     subscription_plans = relationship("SubscriptionPlan", back_populates="practice")
     subscriptions = relationship("Subscription", back_populates="practice")
 

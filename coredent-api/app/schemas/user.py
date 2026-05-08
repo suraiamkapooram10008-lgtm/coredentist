@@ -5,7 +5,7 @@ Pydantic models for request/response validation
 
 from pydantic import BaseModel, EmailStr, Field, validator
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 
 from app.models.user import UserRole
@@ -50,7 +50,6 @@ class UserInDB(UserBase):
 class UserResponse(UserInDB):
     """Schema for user response"""
     full_name: str
-    role: str  # Override as str to avoid enum serialization warnings
     
     class Config:
         from_attributes = True

@@ -76,14 +76,8 @@ describe('useTreatmentPlanForm', () => {
   it('should validate title length', () => {
     const { result } = renderHook(() => useTreatmentPlanForm());
 
-    // Update fields first
     act(() => {
       result.current.updateField('title', 'a'.repeat(101));
-      result.current.updateField('patientName', 'John Doe');
-    });
-
-    // Then validate (state is now updated)
-    act(() => {
       const isValid = result.current.validate();
       expect(isValid).toBe(false);
     });
@@ -94,15 +88,10 @@ describe('useTreatmentPlanForm', () => {
   it('should validate description length', () => {
     const { result } = renderHook(() => useTreatmentPlanForm());
 
-    // Update fields first
     act(() => {
       result.current.updateField('title', 'Valid Title');
       result.current.updateField('patientName', 'John Doe');
       result.current.updateField('description', 'a'.repeat(501));
-    });
-
-    // Then validate
-    act(() => {
       const isValid = result.current.validate();
       expect(isValid).toBe(false);
     });
@@ -113,15 +102,10 @@ describe('useTreatmentPlanForm', () => {
   it('should validate notes length', () => {
     const { result } = renderHook(() => useTreatmentPlanForm());
 
-    // Update fields first
     act(() => {
       result.current.updateField('title', 'Valid Title');
       result.current.updateField('patientName', 'John Doe');
       result.current.updateField('notes', 'a'.repeat(1001));
-    });
-
-    // Then validate
-    act(() => {
       const isValid = result.current.validate();
       expect(isValid).toBe(false);
     });
@@ -132,16 +116,11 @@ describe('useTreatmentPlanForm', () => {
   it('should pass validation with valid data', () => {
     const { result } = renderHook(() => useTreatmentPlanForm());
 
-    // Update fields first
     act(() => {
       result.current.updateField('title', 'Root Canal');
       result.current.updateField('patientName', 'John Doe');
       result.current.updateField('description', 'Complex treatment');
       result.current.updateField('notes', 'Follow up required');
-    });
-
-    // Then validate
-    act(() => {
       const isValid = result.current.validate();
       expect(isValid).toBe(true);
     });
@@ -155,9 +134,6 @@ describe('useTreatmentPlanForm', () => {
     act(() => {
       result.current.updateField('title', 'Root Canal');
       result.current.updateField('patientName', 'John Doe');
-    });
-
-    act(() => {
       result.current.reset();
     });
 

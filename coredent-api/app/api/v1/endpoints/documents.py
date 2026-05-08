@@ -4,11 +4,10 @@ Manages document templates, patient forms, and e-signatures
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select, and_
 from typing import List, Any
 import datetime
-import uuid
 
 from app.api.deps import get_db, get_current_user, get_current_practice
 from app.models.user import User
@@ -20,18 +19,15 @@ router = APIRouter()
 # ── Templates ─────────────────────────────────────────────────────────
 
 @router.get("/templates")
-async def list_templates(
-    db: AsyncSession = Depends(get_db),
+def list_templates(
+    db: Session = Depends(get_db),
     current_practice: Practice = Depends(get_current_practice)
 ):
     """List document templates (Intake forms, consents, etc)"""
-    result = await db.execute(
-        select(DocumentTemplate).where(
-            DocumentTemplate.practice_id == current_practice.id
-        )
-    )
-    templates = result.scalars().all()
-
+    templates = db.query(DocumentTemplate).filter(
+        DocumentTemplate.practice_id == current_practice.id
+    ).all()
+    
     return [
         {
             "id": str(t.id),
@@ -46,18 +42,15 @@ async def list_templates(
 # ── Documents (Forms) ──────────────────────────────────────────────────
 
 @router.get("/")
-async def list_documents(
-    db: AsyncSession = Depends(get_db),
+def list_documents(
+    db: Session = Depends(get_db),
     current_practice: Practice = Depends(get_current_practice)
 ):
     """List patient documents"""
-    result = await db.execute(
-        select(Document).where(
-            Document.practice_id == current_practice.id
-        ).order_by(Document.created_at.desc())
-    )
-    docs = result.scalars().all()
-
+    docs = db.query(Document).filter(
+        Document.practice_id == current_practice.id
+    ).order_by(Document.created_at.desc()).all()
+    
     return [
         {
             "id": str(d.id),
@@ -71,21 +64,18 @@ async def list_documents(
     ]
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_document(
-    patient_id: uuid.UUID,
-    template_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+def create_document(
+    patient_id: str,
+    template_id: str,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     current_practice: Practice = Depends(get_current_practice)
 ):
     """Assign a form template to a patient"""
-    result = await db.execute(
-        select(DocumentTemplate).where(DocumentTemplate.id == template_id)
-    )
-    template = result.scalar_one_or_none()
+    template = db.query(DocumentTemplate).get(template_id)
     if not template:
         raise HTTPException(404, "Template not found")
-
+        
     doc = Document(
         practice_id=current_practice.id,
         patient_id=patient_id,
@@ -98,10 +88,9 @@ async def create_document(
         is_completed=False
     )
     db.add(doc)
-
+    
     # Increment usage
     template.times_used = (template.times_used or 0) + 1
-
-    await db.commit()
-    await db.refresh(doc)
+    
+    db.commit()
     return {"status": "success", "id": str(doc.id)}

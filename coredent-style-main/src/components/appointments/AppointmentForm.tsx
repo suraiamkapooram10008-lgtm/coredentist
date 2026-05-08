@@ -16,7 +16,12 @@ import {
 } from '@/components/ui/select';
 import { DialogFooter } from '@/components/ui/dialog';
 import type { Appointment } from '@/services/appointmentsApi';
-import type { AppointmentFormData, AppointmentType } from '@/types/forms';
+
+interface AppointmentType {
+  id: string;
+  name: string;
+  duration: number;
+}
 
 interface AppointmentFormProps {
   appointment?: Appointment | null;

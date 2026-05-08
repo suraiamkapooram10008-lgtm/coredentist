@@ -9,11 +9,10 @@ psycopg2-binary==2.9.11
 asyncpg==0.29.0
 
 # Authentication & Security
-# L-1 FIX: Replaced unmaintained python-jose with PyJWT
-PyJWT>=2.8.0
+python-jose[cryptography]==3.4.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.9
-bcrypt==4.0.1  # passlib 1.7.4+ supports bcrypt 4.x
+bcrypt==3.2.2  # Pin to <4.0 for passlib compatibility
 
 # Encryption (for API keys and sensitive data)
 cryptography==42.0.0
@@ -26,9 +25,9 @@ email-validator==2.1.0
 # Rate Limiting
 slowapi==0.1.9
 
-# Redis (for caching and rate limiting)
+# Redis (optional, for caching)
 redis==5.0.1
-redis[hiredis]==5.0.1
+hiredis==2.3.2
 
 # AWS S3 (for file storage)
 boto3==1.34.34
@@ -73,12 +72,7 @@ mkdocs-material==9.5.6
 # Utilities
 python-dotenv==1.0.0
 pytz==2024.1
-psutil==5.9.8
 setuptools==69.0.3  # Required by razorpay (provides pkg_resources)
-
-# MFA / TOTP
-pyotp==2.9.0
-qrcode==7.4.2
 
 # SMS Service
 twilio>=8.0.0

@@ -56,10 +56,6 @@ class RecurringBillingStatus(str, enum.Enum):
     FAILED = "failed"
 
 
-# Alias for backward compatibility
-RecurringStatus = RecurringBillingStatus
-
-
 class PaymentCard(Base):
     """Saved payment card model"""
     __tablename__ = "payment_cards"

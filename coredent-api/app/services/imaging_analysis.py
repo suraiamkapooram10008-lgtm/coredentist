@@ -6,7 +6,7 @@ Handles imaging statistics, analysis, and reporting
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -31,9 +31,9 @@ class ImagingAnalysisService:
         try:
             # Default to last 30 days if not specified
             if not start_date:
-                start_date = datetime.now(timezone.utc) - timedelta(days=30)
+                start_date = datetime.now() - timedelta(days=30)
             if not end_date:
-                end_date = datetime.now(timezone.utc)
+                end_date = datetime.now()
             
             # Total images
             total_result = await db.execute(
@@ -218,7 +218,7 @@ class ImagingAnalysisService:
     ) -> Dict[str, Any]:
         """Get imaging trends over time"""
         try:
-            start_date = datetime.now(timezone.utc) - timedelta(days=days)
+            start_date = datetime.now() - timedelta(days=days)
             
             # Get daily image counts
             result = await db.execute(

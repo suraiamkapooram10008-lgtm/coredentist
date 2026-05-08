@@ -1,7 +1,6 @@
 @echo off
 REM CoreDent Local Development Runner
 REM Runs both backend and frontend in separate terminal windows
-REM NOTE: Admin credentials are set via environment variables or seeded in dev mode
 
 echo.
 echo 🚀 Starting CoreDent Local Development...
@@ -9,8 +8,9 @@ echo.
 echo Backend: http://localhost:8080
 echo Frontend: http://localhost:5173
 echo.
-echo Login credentials are configured via environment variables.
-echo In development, use the seed script to create an admin account.
+echo Login credentials:
+echo   Email: admin@coredent.com
+echo   Password: Admin123!@#
 echo.
 
 REM Start backend in a new window

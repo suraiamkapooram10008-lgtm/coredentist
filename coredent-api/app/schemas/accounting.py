@@ -5,7 +5,7 @@ QuickBooks request/response models
 
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 
 

@@ -134,15 +134,15 @@ describe("Utils", () => {
 
   describe("getInitials", () => {
     it("should get initials from name", () => {
-      expect(getInitials("John", "Doe")).toBe("JD");
+      expect(getInitials("John Doe")).toBe("JD");
     });
 
     it("should handle single name", () => {
-      expect(getInitials("John", "")).toBe("J");
+      expect(getInitials("John")).toBe("J");
     });
 
     it("should handle empty string", () => {
-      expect(getInitials("", "")).toBe("");
+      expect(getInitials("")).toBe("");
     });
   });
 
@@ -211,7 +211,7 @@ describe("Utils", () => {
         return "success";
       };
 
-      const result = await retry(fn, 3, 10);
+      const result = await retry(fn, { maxAttempts: 3, delay: 10 });
       expect(result).toBe("success");
       expect(attempts).toBe(2);
     });
@@ -221,7 +221,7 @@ describe("Utils", () => {
         throw new Error("Always fails");
       };
 
-      await expect(retry(fn, 2, 10)).rejects.toThrow();
+      await expect(retry(fn, { maxAttempts: 2, delay: 10 })).rejects.toThrow();
     });
   });
 });

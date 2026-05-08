@@ -122,13 +122,6 @@ async def check_eligibility(
         
         if response.status_code == 200:
             data = response.json()
-            
-            # HIPAA: Log successful eligibility check BEFORE return
-            await log_audit_event(
-                db, current_user, "check_eligibility_success", "patient", patient.id, request
-            )
-            await db.commit()
-            
             return EligibilityCheckResponse(
                 eligible=data.get("eligible", False),
                 coverage_status=data.get("coverageStatus", "Unknown"),
@@ -160,8 +153,11 @@ async def check_eligibility(
             detail=f"Unable to verify eligibility: {str(e)}",
         )
     
-    # HIPAA: Log successful eligibility check (always reaches here on failure path)
-    # Note: Success path logs BEFORE return above
+    # HIPAA: Log successful eligibility check
+    await log_audit_event(
+        db, current_user, "check_eligibility_success", "patient", patient.id, request
+    )
+    await db.commit()
 
 
 @router.post("/claims/submit", response_model=ClaimSubmitResponse)

@@ -1,27 +1,23 @@
 """
 Communications API Endpoints
-Patient messaging, SMS/email reminders, two-way messaging, and conversation management.
-Includes message templates, scheduling, and communication statistics.
+Patient messaging, SMS/email reminders, two-way messaging
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import List, Optional
-from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, Form
 from sqlalchemy.orm import Session
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, or_
 
-from app.api.deps import get_db, get_current_user, get_current_practice, require_role, verify_csrf
+from app.api.deps import get_db, get_current_user, get_current_practice
 from app.services.communications_service import CommunicationsEngine
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.models.practice import Practice
 from app.models.communication import (
     MessageTemplate, PatientMessage, ReminderSchedule, 
     Conversation, ConversationMessage, MessageType, MessageStatus, ReminderType
 )
 from app.models.patient import Patient
-from app.models import communication as communication_models
 from app.schemas.communication import (
     MessageTemplateCreate, MessageTemplateUpdate, MessageTemplate,
     PatientMessageCreate, PatientMessageUpdate, PatientMessage,
@@ -34,40 +30,35 @@ from app.schemas.communication import (
 router = APIRouter()
 
 
+# ============================================
+# Message Templates
+# ============================================
+
 @router.get("/templates", response_model=List[MessageTemplate], tags=["Communications - Templates"])
-async def list_templates(
+def list_templates(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
     category: Optional[str] = None,
     is_active: Optional[bool] = None,
     message_type: Optional[MessageType] = None,
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     current_practice: Practice = Depends(get_current_practice)
 ):
-    """
-    List all message templates for the current practice.
-    
-    Supports filtering by category, active status, and message type.
-    Default templates are listed first.
-    """
-    query = select(communication_models.MessageTemplate).where(
-        communication_models.MessageTemplate.practice_id == current_practice.id
+    """List all message templates for the current practice"""
+    query = db.query(MessageTemplate).filter(
+        MessageTemplate.practice_id == current_practice.id
     )
     
     if category:
-        query = query.where(communication_models.MessageTemplate.category == category)
+        query = query.filter(MessageTemplate.category == category)
     if is_active is not None:
-        query = query.where(communication_models.MessageTemplate.is_active == is_active)
+        query = query.filter(MessageTemplate.is_active == is_active)
     if message_type:
-        query = query.where(communication_models.MessageTemplate.message_type == message_type)
+        query = query.filter(MessageTemplate.message_type == message_type)
     
-    query = query.order_by(
-        communication_models.MessageTemplate.is_default.desc(),
-        communication_models.MessageTemplate.name,
-    ).offset(skip).limit(limit)
-    result = await db.execute(query)
-    return [_message_template_response(template) for template in result.scalars().all()]
+    templates = query.order_by(MessageTemplate.is_default.desc(), MessageTemplate.name).offset(skip).limit(limit).all()
+    return templates
 
 
 @router.get("/templates/{template_id}", response_model=MessageTemplate, tags=["Communications - Templates"])
@@ -77,11 +68,7 @@ def get_template(
     current_user: User = Depends(get_current_user),
     current_practice: Practice = Depends(get_current_practice)
 ):
-    """
-    Retrieve a specific message template by ID.
-    
-    Verifies the template belongs to the current practice.
-    """
+    """Get a specific template by ID"""
     template = db.query(MessageTemplate).filter(
         and_(
             MessageTemplate.id == template_id,
@@ -102,11 +89,8 @@ def create_template(
     current_user: User = Depends(get_current_user),
     current_practice: Practice = Depends(get_current_practice)
 ):
-    """
-    Create a new message template.
-    
-    If marked as default, unsets other default templates of the same type.
-    """
+    """Create a new message template"""
+    # If this is set as default, unset other defaults
     if template.is_default:
         db.query(MessageTemplate).filter(
             and_(
@@ -336,52 +320,6 @@ def update_message(
     return db_message
 
 
-@router.post("/send", status_code=status.HTTP_202_ACCEPTED, tags=["Communications - Messages"])
-async def send_simple_message(
-    payload: dict,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    current_practice: Practice = Depends(get_current_practice)
-):
-    patient_id = payload.get("patient_id")
-    if not patient_id:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="patient_id is required")
-    try:
-        patient_uuid = UUID(str(patient_id))
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
-    
-    patient_result = await db.execute(
-        select(Patient).where(
-            Patient.id == patient_uuid,
-            Patient.practice_id == current_practice.id
-        )
-    )
-    patient = patient_result.scalar_one_or_none()
-    if not patient:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
-    
-    return {"status": "accepted", "patient_id": str(patient.id)}
-
-
-def _message_template_response(template: communication_models.MessageTemplate) -> dict:
-    return {
-        "id": str(template.id),
-        "practice_id": str(template.practice_id),
-        "name": template.name,
-        "message_type": template.message_type,
-        "subject": template.subject,
-        "content": template.content,
-        "category": template.category,
-        "variables": [],
-        "is_active": template.is_active,
-        "is_default": template.is_default,
-        "times_used": template.times_used or 0,
-        "created_at": template.created_at,
-        "updated_at": template.updated_at,
-    }
-
-
 # ============================================
 # Reminder Schedules
 # ============================================
@@ -520,30 +458,27 @@ def delete_reminder(
 # ============================================
 
 @router.get("/conversations", response_model=List[Conversation], tags=["Communications - Conversations"])
-async def list_conversations(
+def list_conversations(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
     status: Optional[str] = None,
     patient_id: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     current_practice: Practice = Depends(get_current_practice)
 ):
     """List all conversations"""
-    query = select(communication_models.Conversation).where(
-        communication_models.Conversation.practice_id == current_practice.id
+    query = db.query(Conversation).filter(
+        Conversation.practice_id == current_practice.id
     )
     
     if status:
-        query = query.where(communication_models.Conversation.status == status)
+        query = query.filter(Conversation.status == status)
     if patient_id:
-        query = query.where(communication_models.Conversation.patient_id == patient_id)
+        query = query.filter(Conversation.patient_id == patient_id)
     
-    query = query.order_by(
-        communication_models.Conversation.last_message_at.desc().nullsfirst()
-    ).offset(skip).limit(limit)
-    result = await db.execute(query)
-    return result.scalars().all()
+    conversations = query.order_by(Conversation.last_message_at.desc().nullsfirst()).offset(skip).limit(limit).all()
+    return conversations
 
 
 @router.get("/conversations/{conversation_id}", response_model=Conversation, tags=["Communications - Conversations"])
@@ -737,15 +672,10 @@ async def twilio_inbound_sms(
     return "<Response></Response>"
 
 @router.post("/engine/run-recalls", tags=["Communications - Engine"])
-def trigger_recall_engine(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
-    _csrf: bool = Depends(verify_csrf),
-):
+def trigger_recall_engine(db: Session = Depends(get_db)):
     """
     Manually trigger the Automated Recall System Engine.
     In production, this is called by a cron job (e.g. AWS EventBridge) daily at 8AM.
-    Only accessible to Owner/Admin roles.
     """
     engine = CommunicationsEngine(db)
     engine.process_automated_recalls()
@@ -764,7 +694,7 @@ def get_communication_settings(
 ):
     """Get communication settings and statistics"""
     # Message stats
-    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     week_ago = today - timedelta(days=7)
     
     messages_sent = db.query(PatientMessage).filter(
@@ -821,7 +751,7 @@ def get_communication_settings(
             Conversation.practice_id == current_practice.id,
             Conversation.status == 'active'
         )
-    ).with_entities(func.coalesce(func.sum(Conversation.unread_count), 0)).scalar() or 0
+    ).with_entities(Conversation.unread_count).scalar() or 0
     
     return CommunicationSummary(
         messages=MessageStats(

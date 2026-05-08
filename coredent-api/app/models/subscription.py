@@ -23,7 +23,6 @@ class SubscriptionInterval(str, enum.Enum):
     QUARTERLY = "quarterly"
     SEMI_ANNUAL = "semi_annual"
     ANNUAL = "annual"
-    YEARLY = "yearly"
 
 
 class SubscriptionStatus(str, enum.Enum):
@@ -197,10 +196,10 @@ class Subscription(Base):
     patient = relationship("Patient", back_populates="subscriptions")
     plan = relationship("SubscriptionPlan", back_populates="subscriptions")
     payment_card = relationship("PaymentCard")
-    latest_invoice = relationship("Invoice", back_populates="subscription")
+    latest_invoice = relationship("Invoice")
     usage_records = relationship("UsageRecord", back_populates="subscription", cascade="all, delete-orphan")
     dunning_events = relationship("DunningEvent", back_populates="subscription", cascade="all, delete-orphan")
-    invoices = relationship("Invoice", back_populates="subscription", overlaps="latest_invoice")
+    invoices = relationship("Invoice", back_populates="subscription")
 
     def __repr__(self):
         return f"<Subscription {self.id} - {self.status}>"
@@ -242,7 +241,6 @@ class UsageRecord(Base):
     # Usage data
     quantity = Column(Numeric(10, 2), nullable=False)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
-    metric_name = Column(String(255))
 
     # Metadata (renamed from 'metadata' to avoid SQLAlchemy reserved word)
     description = Column(String(500))

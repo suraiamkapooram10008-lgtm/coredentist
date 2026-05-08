@@ -5,7 +5,7 @@ Pydantic models for treatment planning API
 
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime
-from pydantic import BaseModel, Field, validator, model_validator
+from pydantic import BaseModel, Field, validator
 import uuid as uuid_lib
 from enum import Enum
 
@@ -30,38 +30,10 @@ class TreatmentPlanBase(BaseModel):
     visual_config: Dict[str, Any] = Field(default_factory=dict)
 
 
-class TreatmentPlanCreate(BaseModel):
+class TreatmentPlanCreate(TreatmentPlanBase):
     """Schema for creating a treatment plan"""
     patient_id: uuid_lib.UUID
     provider_id: uuid_lib.UUID
-    plan_name: Optional[str] = Field(None, min_length=1, max_length=255)
-    title: Optional[str] = Field(None, min_length=1, max_length=255)
-    status: TreatmentPlanStatus = TreatmentPlanStatus.DRAFT
-    description: Optional[str] = None
-    total_cost: Optional[float] = None
-    chief_complaint: Optional[str] = None
-    diagnosis: Optional[str] = None
-    treatment_goals: Optional[str] = None
-    start_date: Optional[date] = None
-    target_start_date: Optional[date] = None
-    estimated_completion_date: Optional[date] = None
-    target_completion_date: Optional[date] = None
-    notes: Optional[str] = None
-    visual_config: Dict[str, Any] = Field(default_factory=dict)
-    estimated_cost: Optional[float] = None
-    insurance_coverage: Optional[float] = None
-    patient_responsibility: Optional[float] = None
-    priority: Optional[str] = None
-
-    @model_validator(mode='before')
-    @classmethod
-    def set_plan_name_from_title(cls, data):
-        if isinstance(data, dict):
-            if not data.get('plan_name') and data.get('title'):
-                data['plan_name'] = data['title']
-            if not data.get('plan_name'):
-                data['plan_name'] = 'Untitled Plan'
-        return data
 
 
 class TreatmentPlanUpdate(BaseModel):
@@ -93,25 +65,7 @@ class TreatmentPlanResponse(TreatmentPlanBase):
     accepted_date: Optional[date] = None
     created_at: datetime
     updated_at: datetime
-    # Alias for test compatibility
-    title: Optional[str] = None
-    description: Optional[str] = None
-    estimated_cost: Optional[float] = None
-    insurance_coverage: Optional[float] = None
-    priority: Optional[str] = None
-
-    @model_validator(mode='after')
-    def set_aliases(self):
-        if not self.title:
-            self.title = self.plan_name
-        if not self.description:
-            self.description = self.notes
-        if self.estimated_cost is None:
-            self.estimated_cost = self.total_estimated_cost
-        if self.insurance_coverage is None:
-            self.insurance_coverage = self.total_insurance_estimate
-        return self
-
+    
     class Config:
         from_attributes = True
 
@@ -203,51 +157,9 @@ class TreatmentProcedureBase(BaseModel):
     display_order: int = 0
 
 
-class TreatmentProcedureCreate(BaseModel):
+class TreatmentProcedureCreate(TreatmentProcedureBase):
     """Schema for creating a treatment procedure"""
     phase_id: Optional[uuid_lib.UUID] = None
-    procedure_type: Optional[ProcedureType] = None
-    ada_code: Optional[str] = None
-    procedure_code: Optional[str] = None
-    description: Optional[str] = None
-    procedure_name: Optional[str] = None
-    tooth_number: Optional[str] = None
-    surfaces: Optional[str] = None
-    quadrant: Optional[int] = Field(None, ge=1, le=4)
-    fee: Optional[float] = None
-    cost: Optional[float] = None
-    insurance_estimate: float = Field(0, ge=0)
-    patient_responsibility: float = Field(0, ge=0)
-    is_covered: bool = True
-    coverage_percentage: int = Field(0, ge=0, le=100)
-    requires_pre_auth: bool = False
-    priority: int = Field(1, ge=1, le=3)
-    complexity: Optional[str] = None
-    duration_minutes: int = Field(30, ge=1)
-    status: str = "pending"
-    is_accepted: bool = False
-    acceptance_notes: Optional[str] = None
-    display_order: int = 0
-
-    @model_validator(mode='before')
-    @classmethod
-    def map_aliases(cls, data):
-        if isinstance(data, dict):
-            if not data.get('ada_code') and data.get('procedure_code'):
-                data['ada_code'] = data['procedure_code']
-            if not data.get('ada_code'):
-                data['ada_code'] = 'D0000'
-            if not data.get('description') and data.get('procedure_name'):
-                data['description'] = data['procedure_name']
-            if not data.get('description'):
-                data['description'] = 'Procedure'
-            if data.get('cost') is not None and data.get('fee') is None:
-                data['fee'] = data['cost']
-            if data.get('fee') is None:
-                data['fee'] = 0
-            if not data.get('procedure_type'):
-                data['procedure_type'] = 'diagnostic'
-        return data
 
 
 class TreatmentProcedureUpdate(BaseModel):

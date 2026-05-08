@@ -1,5 +1,6 @@
 # Multi-stage build for production
-# Updated: 2026-05-07 - Added non-root USER, security headers include
+# Updated: 2026-03-24 - Fixed healthcheck and PWA config
+# Force fresh build by including build timestamp file
 
 # Stage 1: Build
 FROM node:20-alpine AS builder
@@ -36,9 +37,6 @@ RUN apk add --no-cache wget curl
 # Copy nginx config FIRST
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy security headers snippet (referenced via include in nginx.conf)
-COPY security-headers.conf /etc/nginx/security-headers.conf
-
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 
@@ -49,16 +47,6 @@ RUN ls -la /usr/share/nginx/html/ && \
 
 # Verify nginx config is valid
 RUN nginx -t
-
-# F-2 SECURITY FIX: Run as non-root user (container hardening)
-RUN addgroup -g 1001 -S appgroup && \
-    adduser -u 1001 -S appuser -G appgroup && \
-    chown -R appuser:appgroup /usr/share/nginx/html && \
-    chown -R appuser:appgroup /var/cache/nginx && \
-    chown -R appuser:appgroup /var/log/nginx && \
-    touch /var/run/nginx.pid && \
-    chown appuser:appgroup /var/run/nginx.pid
-USER appuser
 
 # Expose port 8080 (Railway default)
 EXPOSE 8080

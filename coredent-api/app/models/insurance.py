@@ -3,7 +3,7 @@ Insurance Models
 Insurance carriers, patient insurance, claims, and payments
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Numeric, Date, Boolean, Text, Integer
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Numeric, Date, Boolean, Text, Integer, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -41,6 +41,45 @@ class RelationshipToSubscriber(str, enum.Enum):
     OTHER = "other"
 
 
+class FeeSchedule(Base):
+    """Fee schedule for specific insurance plans or cash prices"""
+    __tablename__ = "fee_schedules"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    is_active = Column(Boolean, default=True)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    practice = relationship("Practice")
+    entries = relationship("FeeScheduleEntry", back_populates="fee_schedule", cascade="all, delete-orphan")
+    carriers = relationship("InsuranceCarrier", back_populates="fee_schedule")
+
+
+class FeeScheduleEntry(Base):
+    """Specific fee for an ADA code in a fee schedule"""
+    __tablename__ = "fee_schedule_entries"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    fee_schedule_id = Column(UUID(as_uuid=True), ForeignKey("fee_schedules.id"), nullable=False)
+    
+    # Can link either by ADA code string or by explicit foreign key to procedure_library
+    ada_code = Column(String(10), nullable=False, index=True)
+    fee = Column(Numeric(10, 2), nullable=False)
+    is_allowed_amount = Column(Boolean, default=True)
+    
+    __table_args__ = (
+        UniqueConstraint('fee_schedule_id', 'ada_code', name='uix_fee_schedule_ada_code'),
+    )
+    
+    # Relationships
+    fee_schedule = relationship("FeeSchedule", back_populates="entries")
+
+
 class InsuranceCarrier(Base):
     """Insurance carrier/company model"""
     __tablename__ = "insurance_carriers"
@@ -63,6 +102,9 @@ class InsuranceCarrier(Base):
     payer_id = Column(String(50), unique=True, index=True)  # Electronic payer ID
     edi_enabled = Column(Boolean, default=False)
     
+    # Fee Schedule Link
+    fee_schedule_id = Column(UUID(as_uuid=True), ForeignKey("fee_schedules.id"))
+    
     # Notes
     notes = Column(Text)
     is_active = Column(Boolean, default=True)
@@ -74,6 +116,7 @@ class InsuranceCarrier(Base):
     patient_insurances = relationship("PatientInsurance", back_populates="carrier")
     claims = relationship("InsuranceClaim", back_populates="carrier")
     eligibility = relationship("Eligibility", back_populates="carrier")
+    fee_schedule = relationship("FeeSchedule", back_populates="carriers")
     
     def __repr__(self):
         return f"<InsuranceCarrier {self.name}>"
@@ -273,43 +316,3 @@ class ExplanationOfBenefits(Base):
 
     def __repr__(self):
         return f"<EOB {self.id} for Claim {self.claim_id}>"
-
-
-class FeeSchedule(Base):
-    """Fee schedule for insurance reimbursement rates"""
-    __tablename__ = "fee_schedules"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
-    name = Column(String(255), nullable=False)
-    description = Column(Text)
-    is_active = Column(Boolean, default=True)
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    # Relationships
-    practice = relationship("Practice", back_populates="fee_schedules")
-    entries = relationship("FeeScheduleEntry", back_populates="fee_schedule", cascade="all, delete-orphan")
-    
-    def __repr__(self):
-        return f"<FeeSchedule {self.name}>"
-
-
-class FeeScheduleEntry(Base):
-    """Individual procedure entry in a fee schedule"""
-    __tablename__ = "fee_schedule_entries"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    fee_schedule_id = Column(UUID(as_uuid=True), ForeignKey("fee_schedules.id"), nullable=False)
-    procedure_code = Column(String(20), nullable=False)
-    description = Column(String(500))
-    fee = Column(Numeric(10, 2), nullable=False)
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    # Relationships
-    fee_schedule = relationship("FeeSchedule", back_populates="entries")
-    
-    def __repr__(self):
-        return f"<FeeScheduleEntry {self.procedure_code} - ${self.fee}>"

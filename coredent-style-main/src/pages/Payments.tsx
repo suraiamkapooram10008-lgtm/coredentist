@@ -41,6 +41,8 @@ import {
   createRazorpayOrder, 
   verifyRazorpayPayment, 
   loadRazorpayScript,
+  type RazorpayOrderCreate,
+  type RazorpayPaymentVerify 
 } from "@/services/paymentApi";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -49,11 +51,18 @@ import {
   useRecurringPlans,
   useTerminals,
 } from "@/hooks/usePayments";
-import type {
-  RazorpayOrderCreate,
-  RazorpayPaymentVerify,
-  RazorpayPaymentResponse,
-} from "@/types/forms";
+
+// Razorpay response type
+interface RazorpayResponse {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+// Razorpay window type
+interface RazorpayWindow extends Window {
+  Razorpay: new (options: Record<string, unknown>) => { open: () => void };
+}
 
 export default function Payments() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -130,7 +139,7 @@ export default function Payments() {
           name: "CoreDent PMS",
           description: `Payment for ${patientName}`,
           order_id: order.order_id,
-          handler: async (response: RazorpayPaymentResponse) => {
+          handler: async (response: RazorpayResponse) => {
             // Step 3: Verify payment
             const verifyData: RazorpayPaymentVerify = {
               razorpay_order_id: response.razorpay_order_id,

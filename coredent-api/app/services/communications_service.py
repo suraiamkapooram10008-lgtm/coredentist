@@ -26,7 +26,7 @@ class CommunicationsEngine:
     
     def __init__(self, db: Session):
         self.db = db
-        # TODO: Initialize Twilio client when credentials are available (Priority: High, Effort: 1 hour)
+        # In a real system, you would initialize twilio_client here:
         # self.twilio_client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
         
     def _replace_variables(self, template: str, context: dict) -> str:
@@ -37,17 +37,23 @@ class CommunicationsEngine:
         return result
 
     def send_sms(self, to_phone: str, body: str, practice: Practice) -> Dict[str, Any]:
-        """
-        Send an SMS via Twilio.
-        
-        Currently returns mock response. When Twilio credentials are configured,
-        will send actual SMS messages.
-        """
+        """Send an SMS via Twilio (mock for production readiness unless keys exist)"""
         if not to_phone:
             return {"status": "failed", "error": "No phone number provided"}
+            
+        # Optional: Twilio Implementation
+        # try:
+        #     message = self.twilio_client.messages.create(
+        #         body=body,
+        #         from_=practice.twilio_phone_number, # Need this setting
+        #         to=to_phone
+        #     )
+        #     return {"status": "sent", "external_id": message.sid}
+        # except Exception as e:
+        #     return {"status": "failed", "error": str(e)}
         
         logger.info(f"MOCK SMS to {to_phone}: {body}")
-        return {"status": "sent", "external_id": f"mock_ext_id_{datetime.now(timezone.utc).timestamp()}"}
+        return {"status": "sent", "external_id": f"mock_ext_id_{datetime.now().timestamp()}"}
 
     def process_automated_recalls(self):
         """

@@ -13,14 +13,7 @@ import string
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 
-from app.models.booking import (
-    BookingPage,
-    OnlineBooking,
-    Waitlist,
-    BookingPageStatus,
-    BookingStatus,
-    WaitlistStatus,
-)
+from app.models.booking import BookingPage, OnlineBooking, Waitlist
 from app.models.appointment import Appointment
 from app.models.user import User
 from app.models.patient import Patient
@@ -56,26 +49,12 @@ class BookingService:
         is_active: bool = True,
     ) -> BookingPage:
         """Create a new booking page"""
-        status = BookingPageStatus.ACTIVE if is_active else BookingPageStatus.INACTIVE
-        base_slug = name.lower().replace(" ", "-")
-        slug = base_slug
-        # Ensure slug uniqueness
-        counter = 1
-        while True:
-            result = await db.execute(
-                select(BookingPage).where(BookingPage.page_slug == slug)
-            )
-            if result.scalar_one_or_none() is None:
-                break
-            slug = f"{base_slug}-{counter}"
-            counter += 1
-
         booking_page = BookingPage(
             practice_id=practice_id,
-            page_title=name,
-            welcome_message=description,
-            status=status,
-            page_slug=slug,
+            name=name,
+            description=description,
+            is_active=is_active,
+            slug=name.lower().replace(" ", "-"),
         )
         db.add(booking_page)
         await db.commit()
@@ -106,8 +85,8 @@ class BookingService:
         """Get a public booking page by slug"""
         result = await db.execute(
             select(BookingPage).where(
-                BookingPage.page_slug == slug,
-                BookingPage.status == BookingPageStatus.ACTIVE,
+                BookingPage.slug == slug,
+                BookingPage.is_active == True,
             )
         )
         return result.scalar_one_or_none()
@@ -127,21 +106,10 @@ class BookingService:
         if not page:
             return None
         
-        # Map legacy field names to model field names
-        field_mapping = {
-            "name": "page_title",
-            "description": "welcome_message",
-        }
-
         for key, value in kwargs.items():
-            mapped_key = field_mapping.get(key, key)
-            if mapped_key == "is_active":
-                page.status = BookingPageStatus.ACTIVE if value else BookingPageStatus.INACTIVE
-            elif mapped_key and hasattr(page, mapped_key):
-                setattr(page, mapped_key, value)
-            elif hasattr(page, key):
+            if hasattr(page, key):
                 setattr(page, key, value)
-
+        
         await db.commit()
         await db.refresh(page)
         logger.info(f"Updated booking page: {page_id}")
@@ -161,41 +129,18 @@ class BookingService:
         """Create a new online booking"""
         confirmation_code = BookingService.generate_confirmation_code()
         verification_token = BookingService.generate_verification_token()
-
-        # Split patient name
-        name_parts = patient_name.split(" ", 1)
-        first_name = name_parts[0]
-        last_name = name_parts[1] if len(name_parts) > 1 else ""
-
-        # Extract date and time
-        if isinstance(appointment_date, datetime):
-            requested_date = appointment_date.date()
-            requested_time = appointment_date.time()
-        else:
-            from datetime import time as dt_time
-            requested_date = appointment_date
-            requested_time = dt_time(9, 0)
-
-        # Get practice_id from booking page
-        page_result = await db.execute(
-            select(BookingPage).where(BookingPage.id == booking_page_id)
-        )
-        booking_page = page_result.scalar_one_or_none()
-        practice_id = booking_page.practice_id if booking_page else None
-
+        
         booking = OnlineBooking(
             booking_page_id=booking_page_id,
-            practice_id=practice_id,
-            first_name=first_name,
-            last_name=last_name,
-            email=patient_email,
-            phone=patient_phone,
-            requested_date=requested_date,
-            requested_time=requested_time,
-            reason=notes,
+            patient_name=patient_name,
+            patient_email=patient_email,
+            patient_phone=patient_phone,
+            appointment_date=appointment_date,
+            appointment_type=appointment_type,
+            notes=notes,
             confirmation_code=confirmation_code,
-            email_verification_token=verification_token,
-            status=BookingStatus.PENDING,
+            verification_token=verification_token,
+            status="pending",
         )
         db.add(booking)
         await db.commit()
@@ -225,24 +170,14 @@ class BookingService:
             select(OnlineBooking).where(OnlineBooking.id == booking_id)
         )
         booking = result.scalar_one_or_none()
-
+        
         if not booking:
             return None
-
-        # Map legacy field names to model field names
-        field_mapping = {
-            "patient_email": "email",
-            "patient_phone": "phone",
-            "notes": "reason",
-        }
-
+        
         for key, value in kwargs.items():
-            mapped_key = field_mapping.get(key, key)
-            if mapped_key and hasattr(booking, mapped_key):
-                setattr(booking, mapped_key, value)
-            elif hasattr(booking, key):
+            if hasattr(booking, key):
                 setattr(booking, key, value)
-
+        
         await db.commit()
         await db.refresh(booking)
         logger.info(f"Updated online booking: {booking_id}")
@@ -266,7 +201,7 @@ class BookingService:
             logger.warning(f"Invalid verification code for booking: {booking_id}")
             return False
         
-        booking.status = BookingStatus.CONFIRMED
+        booking.status = "confirmed"
         booking.confirmed_at = datetime.now(timezone.utc)
         
         await db.commit()
@@ -284,36 +219,14 @@ class BookingService:
         notes: Optional[str] = None,
     ) -> Waitlist:
         """Add a patient to the waitlist"""
-        # Split patient name
-        name_parts = patient_name.split(" ", 1)
-        first_name = name_parts[0]
-        last_name = name_parts[1] if len(name_parts) > 1 else ""
-
-        # Get practice_id from booking page
-        page_result = await db.execute(
-            select(BookingPage).where(BookingPage.id == booking_page_id)
-        )
-        booking_page = page_result.scalar_one_or_none()
-        practice_id = booking_page.practice_id if booking_page else None
-
-        # Prepare preferred_dates as JSON array
-        preferred_dates = []
-        if preferred_date:
-            if isinstance(preferred_date, datetime):
-                preferred_dates = [preferred_date.date().isoformat()]
-            else:
-                preferred_dates = [preferred_date.isoformat()]
-
         waitlist_entry = Waitlist(
             booking_page_id=booking_page_id,
-            practice_id=practice_id,
-            first_name=first_name,
-            last_name=last_name,
-            email=patient_email,
-            phone=patient_phone,
-            preferred_dates=preferred_dates,
-            reason=notes,
-            status=WaitlistStatus.ACTIVE,
+            patient_name=patient_name,
+            patient_email=patient_email,
+            patient_phone=patient_phone,
+            preferred_date=preferred_date,
+            notes=notes,
+            status="active",
         )
         db.add(waitlist_entry)
         await db.commit()
@@ -358,7 +271,7 @@ class BookingService:
         confirmed_result = await db.execute(
             select(OnlineBooking).where(
                 OnlineBooking.booking_page_id == booking_page_id,
-                OnlineBooking.status == BookingStatus.CONFIRMED,
+                OnlineBooking.status == "confirmed",
             )
         )
         confirmed_bookings = len(confirmed_result.scalars().all())
@@ -367,7 +280,7 @@ class BookingService:
         pending_result = await db.execute(
             select(OnlineBooking).where(
                 OnlineBooking.booking_page_id == booking_page_id,
-                OnlineBooking.status == BookingStatus.PENDING,
+                OnlineBooking.status == "pending",
             )
         )
         pending_bookings = len(pending_result.scalars().all())
@@ -376,7 +289,7 @@ class BookingService:
         waitlist_result = await db.execute(
             select(Waitlist).where(
                 Waitlist.booking_page_id == booking_page_id,
-                Waitlist.status == WaitlistStatus.ACTIVE,
+                Waitlist.status == "active",
             )
         )
         waitlist_count = len(waitlist_result.scalars().all())

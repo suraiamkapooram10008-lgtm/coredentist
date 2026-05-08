@@ -115,10 +115,11 @@ export default function Billing() {
   }) => {
     try {
       const newInvoice = await billingApi.createInvoice(data);
-      queryClient.setQueryData(['billing', 'invoices'], (old: Invoice[] = []) => [newInvoice, ...old]);
+      setInvoices(prev => [newInvoice, ...prev]);
       
       // Refresh summary
-      queryClient.invalidateQueries({ queryKey: ['billing', 'summary'] });
+      const summaryData = await billingApi.getSummary();
+      setSummary(summaryData);
       
       toast({
         title: 'Invoice created',
@@ -155,15 +156,14 @@ export default function Billing() {
     
     try {
       const updated = await billingApi.recordPayment(paymentInvoice.id, data);
-      queryClient.setQueryData(['billing', 'invoices'], (old: Invoice[] = []) =>
-        old.map(inv => inv.id === updated.id ? updated : inv)
-      );
+      setInvoices(prev => prev.map(inv => inv.id === updated.id ? updated : inv));
       if (viewingInvoice?.id === updated.id) {
         setViewingInvoice(updated);
       }
       
       // Refresh summary
-      queryClient.invalidateQueries({ queryKey: ['billing', 'summary'] });
+      const summaryData = await billingApi.getSummary();
+      setSummary(summaryData);
       
       toast({
         title: 'Payment recorded',
@@ -213,9 +213,7 @@ export default function Billing() {
   const handleSend = async (invoice: Invoice) => {
     try {
       const updated = await billingApi.updateStatus(invoice.id, 'sent');
-      queryClient.setQueryData(['billing', 'invoices'], (old: Invoice[] = []) =>
-        old.map(inv => inv.id === updated.id ? updated : inv)
-      );
+      setInvoices(prev => prev.map(inv => inv.id === updated.id ? updated : inv));
       
       toast({
         title: 'Invoice sent',
@@ -236,15 +234,14 @@ export default function Billing() {
     
     try {
       await billingApi.deleteInvoice(deletingInvoice.id);
-      queryClient.setQueryData(['billing', 'invoices'], (old: Invoice[] = []) =>
-        old.filter(inv => inv.id !== deletingInvoice.id)
-      );
+      setInvoices(prev => prev.filter(inv => inv.id !== deletingInvoice.id));
       if (viewingInvoice?.id === deletingInvoice.id) {
         setViewingInvoice(null);
       }
       
       // Refresh summary
-      queryClient.invalidateQueries({ queryKey: ['billing', 'summary'] });
+      const summaryData = await billingApi.getSummary();
+      setSummary(summaryData);
       
       setDeletingInvoice(null);
       toast({

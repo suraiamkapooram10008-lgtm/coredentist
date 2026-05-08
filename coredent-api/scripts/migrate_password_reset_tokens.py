@@ -8,7 +8,7 @@ import sys
 from datetime import datetime
 import uuid
 
-# Add pare, timezonent directory to path for imports
+# Add parent directory to path for imports
 sys.path.insert(0, '.')
 
 from sqlalchemy import select, update
@@ -48,7 +48,7 @@ async def migrate_password_reset_tokens():
                     continue
                 
                 # Skip if token has already expired
-                if user.password_reset_expires < datetime.now(timezone.utc):
+                if user.password_reset_expires < datetime.utcnow():
                     print(f"Skipping expired token for user {user.email}")
                     continue
                 
@@ -125,7 +125,7 @@ async def rollback_migration():
                 )
                 user = user_result.scalar_one_or_none()
                 
-                if user and token.expires_at > datetime.now(timezone.utc):
+                if user and token.expires_at > datetime.utcnow():
                     # Check if user already has a token
                     if not user.password_reset_token:
                         user.password_reset_token = token.token

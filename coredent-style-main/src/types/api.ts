@@ -14,27 +14,10 @@ export interface LoginCredentials {
 
 export interface LoginResponse {
   access_token: string;
-  refresh_token?: string; // Now sent via httpOnly cookie only
+  refresh_token: string;
   token_type: string;
   expires_in: number;
   csrf_token: string;
-  message?: string;
-}
-
-export interface MfaChallengeResponse {
-  mfa_required: true;
-  mfa_token: string;
-  email: string;
-  message: string;
-}
-
-export interface MfaVerifyResponse {
-  access_token: string;
-  token_type: string;
-  expires_in: number;
-  csrf_token: string;
-  mfa_verified: boolean;
-  warning?: string;
 }
 
 export interface InvitationDetails {

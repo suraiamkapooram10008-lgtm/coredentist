@@ -3,7 +3,7 @@ Payment Service
 Core business logic for payment operations
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 import logging
@@ -143,15 +143,13 @@ class PaymentService:
         if end_date:
             query = query.where(Payment.created_at <= end_date)
         
-        # Get total count using func.count() for O(1) memory
-        from sqlalchemy import func as sa_func
+        # Get total count
         count_result = await db.execute(
-            select(sa_func.count())  # O(1) memory instead of loading all
-            .select_from(Payment)
+            select(Payment)
             .join(Invoice)
             .where(Invoice.practice_id == practice_id)
         )
-        total = count_result.scalar() or 0
+        total = len(count_result.scalars().all())
         
         # Apply pagination
         query = query.offset(offset).limit(limit)
@@ -166,7 +164,7 @@ class PaymentService:
         practice_id: UUID,
     ) -> Dict[str, Any]:
         """Get payment statistics for the practice"""
-        now = datetime.now(timezone.utc)
+        now = datetime.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         last_month_start = (month_start - timedelta(days=1)).replace(day=1)
@@ -180,7 +178,7 @@ class PaymentService:
             )
         )
         today_invoices = today_result.scalars().all()
-        today_revenue = sum(float(inv.total) for inv in today_invoices)
+        today_revenue = sum(float(inv.total_amount) for inv in today_invoices)
         today_transactions = len(today_invoices)
         
         # This month's revenue
@@ -192,7 +190,7 @@ class PaymentService:
             )
         )
         month_invoices = month_result.scalars().all()
-        month_revenue = sum(float(inv.total) for inv in month_invoices)
+        month_revenue = sum(float(inv.total_amount) for inv in month_invoices)
         
         # Last month's revenue for growth calculation
         last_month_result = await db.execute(
@@ -204,7 +202,7 @@ class PaymentService:
             )
         )
         last_month_invoices = last_month_result.scalars().all()
-        last_month_revenue = sum(float(inv.total) for inv in last_month_invoices)
+        last_month_revenue = sum(float(inv.total_amount) for inv in last_month_invoices)
         
         # Calculate growth percentage
         if last_month_revenue > 0:

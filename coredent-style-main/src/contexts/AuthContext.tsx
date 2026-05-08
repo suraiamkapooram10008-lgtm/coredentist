@@ -6,22 +6,53 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import type { User, UserRole, LoginCredentials } from '@/types/api';
-import { authApi, mfaApi } from '@/services/api';
+import { authApi } from '@/services/api';
 import { logger } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
-import { AuthContext, type AuthContextValue, type LoginResult, type PendingMfaChallenge } from '@/contexts/auth-context';
+import { AuthContext, type AuthContextValue } from '@/contexts/auth-context';
 import { refreshCsrfToken, clearCsrfToken } from '@/lib/csrf';
 import { analytics, trackLogin, trackLogout } from '@/lib/analytics';
+
+  // Development mode bypass - ONLY works in development builds, NEVER in production
+  const DEV_MODE = import.meta.env.MODE === 'development';
+  const DEV_BYPASS_AUTH = import.meta.env.MODE === 'development' && import.meta.env.VITE_DEV_BYPASS_AUTH === 'true';
+  
+  // Production safety check - this will throw if somehow bypass is enabled in production
+  if (typeof window !== 'undefined' && import.meta.env.MODE === 'production' && import.meta.env.VITE_DEV_BYPASS_AUTH === 'true') {
+    logger.error('SECURITY ERROR: Auth bypass cannot be enabled in production!');
+    throw new Error('Auth bypass enabled in production - this is a security violation');
+  }
+
+const DEV_USER: User = {
+  id: 'dev-user-1',
+  email: 'dev@coredent.com',
+  firstName: 'Dev',
+  lastName: 'User',
+  role: 'owner',
+  practiceId: 'dev-practice-1',
+  practiceName: 'Development Practice',
+  practiceCountry: 'US',
+};
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [pendingMfaChallenge, setPendingMfaChallenge] = useState<PendingMfaChallenge | null>(null);
   const { toast } = useToast();
+  
+  // CRITICAL FIX: Token storage for cross-origin auth
 
   // effect:audited — Session initialization on mount
   useEffect(() => {
     const checkSession = async () => {
+      // Development mode bypass - ONLY works in development build mode
+      if (DEV_MODE && DEV_BYPASS_AUTH) {
+        logger.debug('Development Mode: Authentication bypassed (dev build only)');
+        logger.debug(`Logged in as: ${DEV_USER.email}`);
+        setUser(DEV_USER);
+        setIsLoading(false);
+        return;
+      }
+
       // CRIT-06 FIX: No localStorage token storage - use in-memory only
       // Tokens are obtained from response body on login and stored in ApiClient memory
       // On page reload, user must re-login (more secure for HIPAA compliance)
@@ -51,22 +82,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     checkSession();
   }, []);
 
-  const login = useCallback(async (credentials: LoginCredentials): Promise<LoginResult> => {
+  const login = useCallback(async (credentials: LoginCredentials): Promise<boolean> => {
     setIsLoading(true);
-    setPendingMfaChallenge(null);
     
     try {
       const response = await authApi.login(credentials);
       
       if (response.success && response.data) {
-        if ('mfa_required' in response.data && response.data.mfa_required) {
-          setPendingMfaChallenge({
-            mfaToken: response.data.mfa_token,
-            email: response.data.email,
-            message: response.data.message,
-          });
-          return { success: false, mfaRequired: true, message: response.data.message };
-        }
         const { csrf_token, access_token } = response.data;
         
         // CRIT-06 FIX: Store token in ApiClient memory ONLY (NOT localStorage)
@@ -89,7 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             title: 'Login Failed',
             description: 'Unable to load user profile',
           });
-          return { success: false, message: 'Unable to load user profile' };
+          return false;
         }
 
         const user = userResponse.data;
@@ -109,7 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           description: `Logged in as ${user.firstName} ${user.lastName}`,
         });
         
-        return { success: true };
+        return true;
       } else {
         toast({
           variant: 'destructive',
@@ -117,7 +139,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           description: response.error?.message || 'Invalid credentials',
         });
         
-        return { success: false, message: response.error?.message || 'Invalid credentials' };
+        return false;
       }
     } catch {
       toast({
@@ -125,83 +147,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         title: 'Login Error',
         description: 'Unable to connect to server',
       });
-      return { success: false, message: 'Unable to connect to server' };
+      return false;
     } finally {
       setIsLoading(false);
     }
   }, [toast]);
-
-  const verifyMfa = useCallback(async (totpCode: string, backupCode?: string): Promise<boolean> => {
-    if (!pendingMfaChallenge) {
-      return false;
-    }
-
-    setIsLoading(true);
-    try {
-      const verifyResponse = await mfaApi.verify({
-        mfa_token: pendingMfaChallenge.mfaToken,
-        totp_code: totpCode,
-        backup_code: backupCode,
-      });
-
-      if (!verifyResponse.success || !verifyResponse.data) {
-        toast({
-          variant: 'destructive',
-          title: 'MFA Verification Failed',
-          description: verifyResponse.error?.message || 'Invalid verification code',
-        });
-        return false;
-      }
-
-      authApi.setToken(verifyResponse.data.access_token);
-      refreshCsrfToken(verifyResponse.data.csrf_token);
-
-      const userResponse = await authApi.getCurrentUser();
-      if (!userResponse.success || !userResponse.data) {
-        toast({
-          variant: 'destructive',
-          title: 'Login Failed',
-          description: 'Unable to load user profile after MFA',
-        });
-        clearCsrfToken();
-        authApi.setToken(null);
-        setPendingMfaChallenge(null);
-        return false;
-      }
-
-      const resolvedUser = userResponse.data;
-      setUser(resolvedUser);
-      setPendingMfaChallenge(null);
-
-      analytics.identify(resolvedUser.id, {
-        userId: resolvedUser.id,
-        email: resolvedUser.email,
-        role: resolvedUser.role,
-        practiceId: resolvedUser.practiceId,
-        practiceName: resolvedUser.practiceName,
-      });
-      trackLogin(resolvedUser.id, 'mfa');
-
-      toast({
-        title: 'Welcome back!',
-        description: `Logged in as ${resolvedUser.firstName} ${resolvedUser.lastName}`,
-      });
-      return true;
-    } catch {
-      toast({
-        variant: 'destructive',
-        title: 'MFA Verification Error',
-        description: 'Unable to verify MFA code',
-      });
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [pendingMfaChallenge, toast]);
-
-  const clearMfaChallenge = useCallback(() => {
-    setPendingMfaChallenge(null);
-  }, []);
 
   const logout = useCallback(async () => {
     try {
@@ -213,7 +163,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // CRIT-06 FIX: Clear in-memory tokens only (no localStorage needed)
     authApi.setToken(null);
     setUser(null);
-    setPendingMfaChallenge(null);
     
     // Clear CSRF token on logout
     clearCsrfToken();
@@ -238,9 +187,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isLoading,
     role: user?.role || null,
     login,
-    verifyMfa,
-    pendingMfaChallenge,
-    clearMfaChallenge,
     logout,
     hasRole,
   };

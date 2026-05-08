@@ -9,7 +9,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 import enum
-from datetime import datetime, timezone
+from datetime import datetime
 
 from app.core.base import Base
 
@@ -19,7 +19,6 @@ class TreatmentPlanStatus(str, enum.Enum):
     DRAFT = "draft"
     PRESENTED = "presented"
     ACCEPTED = "accepted"
-    APPROVED = "approved"  # Alias for accepted (test compatibility)
     PARTIALLY_ACCEPTED = "partially_accepted"
     DECLINED = "declined"
     IN_PROGRESS = "in_progress"

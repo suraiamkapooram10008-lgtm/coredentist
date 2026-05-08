@@ -1,10 +1,10 @@
 """
 Subscription Webhook Handler
-Processes Stripe webhook events for subscriptions with idempotency
+Processes Stripe webhook events for subscriptions
 """
 
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional
 import stripe as stripe_lib
 import logging
 
@@ -15,49 +15,13 @@ from app.models.subscription import (
     Subscription,
     SubscriptionStatus,
 )
-from app.models.webhook_event import WebhookEvent
 from app.core.config_simple import settings
 
 logger = logging.getLogger(__name__)
 
 
 class SubscriptionWebhookHandler:
-    """Handler for Stripe subscription webhooks with idempotency support"""
-    
-    # Track processed event IDs in memory for fast dedup (in addition to DB check)
-    _processed_events: Set[str] = set()
-    
-    @staticmethod
-    async def _is_event_processed(db: AsyncSession, event_id: str) -> bool:
-        """Check if event was already processed (idempotency)"""
-        # Fast in-memory check
-        if event_id in SubscriptionWebhookHandler._processed_events:
-            return True
-        
-        # Persistent DB check
-        result = await db.execute(
-            select(WebhookEvent).where(WebhookEvent.event_id == event_id)
-        )
-        existing = result.scalar_one_or_none()
-        if existing:
-            SubscriptionWebhookHandler._processed_events.add(event_id)
-            return True
-        return False
-    
-    @staticmethod
-    async def _mark_event_processed(db: AsyncSession, event_id: str, event_type: str) -> None:
-        """Mark event as processed (idempotency tracking)"""
-        try:
-            record = WebhookEvent(
-                event_id=event_id,
-                event_type=event_type,
-                processed_at=datetime.now(timezone.utc),
-            )
-            db.add(record)
-            SubscriptionWebhookHandler._processed_events.add(event_id)
-        except Exception as e:
-            # Non-critical failure - DB unique constraint on event_id provides fallback idempotency
-            logger.warning(f"Failed to record webhook event {event_id}: {e}")
+    """Handler for Stripe subscription webhooks"""
     
     @staticmethod
     async def handle_subscription_created(
@@ -90,6 +54,7 @@ class SubscriptionWebhookHandler:
                 ),
             )
             db.add(sub)
+            await db.commit()
             logger.info(f"Created subscription from webhook: {stripe_sub_id}")
     
     @staticmethod
@@ -136,6 +101,7 @@ class SubscriptionWebhookHandler:
                 tz=timezone.utc
             )
         
+        await db.commit()
         logger.info(f"Updated subscription: {stripe_sub_id}, status: {stripe_status}")
     
     @staticmethod
@@ -159,6 +125,7 @@ class SubscriptionWebhookHandler:
         sub.cancel_at_period_end = True
         sub.canceled_at = datetime.now(timezone.utc)
         
+        await db.commit()
         logger.info(f"Deleted subscription: {stripe_sub_id}")
     
     @staticmethod
@@ -185,6 +152,7 @@ class SubscriptionWebhookHandler:
         sub.dunning_retry_count = 0
         sub.last_payment_error = None
         
+        await db.commit()
         logger.info(f"Invoice succeeded for subscription: {sub_id}")
         
         return sub
@@ -216,6 +184,7 @@ class SubscriptionWebhookHandler:
         sub.dunning_retry_count = (sub.dunning_retry_count or 0) + 1
         sub.next_retry_at = datetime.now(timezone.utc)  # Immediate retry
         
+        await db.commit()
         logger.warning(f"Invoice failed for subscription: {sub_id}, error: {sub.last_payment_error}")
         
         return sub
@@ -246,25 +215,13 @@ class SubscriptionWebhookHandler:
         event: Dict[str, Any],
     ) -> bool:
         """
-        Process a Stripe webhook event with idempotency and transaction management
+        Process a Stripe webhook event
         Returns: True if handled successfully
         """
         event_type = event.get("type")
-        event_id = event.get("id")
         data_obj = event.get("data", {}).get("object", {})
         
-        if not event_id:
-            logger.error("Webhook event missing 'id' field")
-            return False
-        
-        # Idempotency check: skip if already processed
-        if await SubscriptionWebhookHandler._is_event_processed(db, event_id):
-            logger.debug(f"Webhook event {event_id} already processed, skipping")
-            return True
-        
         try:
-            # Process within a single transaction
-            # All DB operations commit together or rollback together
             if event_type == "customer.subscription.created":
                 await SubscriptionWebhookHandler.handle_subscription_created(db, data_obj)
             
@@ -287,15 +244,8 @@ class SubscriptionWebhookHandler:
                 logger.debug(f"Unhandled webhook event type: {event_type}")
                 return False
             
-            # Mark event as processed (within same transaction)
-            await SubscriptionWebhookHandler._mark_event_processed(db, event_id, event_type)
-            
-            # Single commit for the entire operation
-            await db.commit()
-            
             return True
         
         except Exception as e:
-            await db.rollback()
-            logger.error(f"Error processing webhook event {event_type} ({event_id}): {e}")
+            logger.error(f"Error processing webhook event {event_type}: {e}")
             return False

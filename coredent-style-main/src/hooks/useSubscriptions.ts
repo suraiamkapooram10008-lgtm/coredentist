@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { subscriptionApi, subscriptionPlanApi } from '@/services/subscriptionsApi';
 import { toast } from '@/hooks/use-toast';
-import type { AppError } from '@/types/errors';
 
 // ==================== Query Keys ====================
 
@@ -101,7 +100,7 @@ export function useCreateSubscription(onSuccess?: () => void) {
       toast({ title: 'Subscription activated successfully' });
       onSuccess?.();
     },
-    onError: (error: AppError) => {
+    onError: (error: any) => {
       toast({
         variant: 'destructive',
         title: 'Failed to activate subscription',
@@ -121,7 +120,7 @@ export function useCancelSubscription(onSuccess?: () => void) {
       toast({ title: 'Subscription cancelled' });
       onSuccess?.();
     },
-    onError: (error: AppError) => {
+    onError: (error: any) => {
       toast({
         variant: 'destructive',
         title: 'Failed to cancel subscription',
@@ -141,7 +140,7 @@ export function usePauseSubscription(onSuccess?: () => void) {
       toast({ title: 'Subscription paused' });
       onSuccess?.();
     },
-    onError: (error: AppError) => {
+    onError: (error: any) => {
       toast({
         variant: 'destructive',
         title: 'Failed to pause subscription',
@@ -160,7 +159,7 @@ export function useResumeSubscription(onSuccess?: () => void) {
       toast({ title: 'Subscription resumed' });
       onSuccess?.();
     },
-    onError: (error: AppError) => {
+    onError: (error: any) => {
       toast({
         variant: 'destructive',
         title: 'Failed to resume subscription',
@@ -180,7 +179,7 @@ export function useChangePlan(onSuccess?: () => void) {
       toast({ title: 'Plan changed successfully' });
       onSuccess?.();
     },
-    onError: (error: AppError) => {
+    onError: (error: any) => {
       toast({
         variant: 'destructive',
         title: 'Failed to change plan',
@@ -200,7 +199,7 @@ export function useRecordUsage(onSuccess?: () => void) {
       toast({ title: 'Usage recorded' });
       onSuccess?.();
     },
-    onError: (error: AppError) => {
+    onError: (error: any) => {
       toast({
         variant: 'destructive',
         title: 'Failed to record usage',
