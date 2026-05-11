@@ -368,9 +368,9 @@ if settings.REDIS_URL:
     try:
         from app.core.redis_rate_limit import RedisRateLimitMiddleware
         app.add_middleware(RedisRateLimitMiddleware, requests=settings.RATE_LIMIT_PER_MINUTE)
-        print("✅ Redis rate limiting enabled")
-    except Exception as e:
-        print(f"⚠️  Redis rate limiting unavailable: {e}")
+        logger.info("Redis rate limiting enabled")
+    except ImportError as e:
+        logger.warning(f"Redis rate limiting unavailable: {e}")
 
 # Trusted Host Middleware (security)
 # Only enable if ALLOWED_HOSTS is explicitly configured
@@ -386,12 +386,17 @@ if not settings.DEBUG and settings.ALLOWED_HOSTS:
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle validation errors - hide details in production"""
     if settings.DEBUG:
+        # `exc.errors()` and `exc.body` may contain Decimal/datetime values
+        # that json.dumps can't handle directly. Coerce via jsonable_encoder.
+        from fastapi.encoders import jsonable_encoder
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content={
-                "detail": exc.errors(),
-                "body": exc.body,
-            },
+            content=jsonable_encoder(
+                {
+                    "detail": exc.errors(),
+                    "body": exc.body,
+                }
+            ),
         )
     
     # Production: Don't expose internal details
@@ -480,17 +485,62 @@ async def startup_event():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
     
-    print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} started")
-    print(f"📝 Environment: {settings.ENVIRONMENT}")
+    logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} started")
+    logger.info(f"Environment: {settings.ENVIRONMENT}")
     if settings.DEBUG:
-        print(f"📚 API Docs: http://localhost:3000/docs")
+        logger.info(f"API Docs: http://localhost:3000/docs")
+
+    # Production readiness audit — log warnings for unconfigured integrations.
+    # These are soft warnings because some integrations are genuinely optional
+    # for some deployments (e.g. US-only deployments don't need Razorpay).
+    if settings.ENVIRONMENT == "production":
+        production_warnings = []
+        if not settings.SENTRY_DSN:
+            production_warnings.append(
+                "SENTRY_DSN not set — error monitoring disabled. "
+                "You will have NO visibility into production errors."
+            )
+        if not settings.SMTP_USER or settings.SMTP_HOST == "localhost":
+            production_warnings.append(
+                "SMTP not configured — password resets, email verification, "
+                "and appointment reminders will fail silently."
+            )
+        if not settings.AWS_S3_BUCKET:
+            production_warnings.append(
+                "AWS_S3_BUCKET not set — file/image uploads will fail."
+            )
+        if not settings.REDIS_URL:
+            production_warnings.append(
+                "REDIS_URL not set — rate limiting falls back to in-memory, "
+                "which does NOT work across multiple instances."
+            )
+        if not settings.ALLOWED_HOSTS or settings.ALLOWED_HOSTS == ["localhost", "127.0.0.1"]:
+            production_warnings.append(
+                "ALLOWED_HOSTS not configured for production — "
+                "TrustedHostMiddleware will not protect against Host header attacks."
+            )
+        if settings.CORS_ORIGINS and any("localhost" in o for o in settings.CORS_ORIGINS):
+            production_warnings.append(
+                "CORS_ORIGINS contains localhost — remove development origins "
+                "before going live."
+            )
+
+        if production_warnings:
+            logger.warning("=" * 70)
+            logger.warning("PRODUCTION READINESS WARNINGS")
+            logger.warning("=" * 70)
+            for w in production_warnings:
+                logger.warning(f"  • {w}")
+            logger.warning("=" * 70)
+        else:
+            logger.info("Production integrations check: all configured")
 
 
 # Shutdown event
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
-    print(f"👋 {settings.APP_NAME} shutting down")
+    logger.info(f"{settings.APP_NAME} shutting down")
 
 
 # HIGH-03 FIX: Health check endpoint - minimal info for monitoring, detailed info requires auth

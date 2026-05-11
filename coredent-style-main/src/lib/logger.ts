@@ -11,13 +11,39 @@ interface LogEntry {
 }
 
 // Error monitoring integration using Sentry.
-// Initialize Sentry in production if DSN is provided.
+// Initialize Sentry in production if DSN is provided and looks real.
 import * as Sentry from '@sentry/browser';
-if (!import.meta.env.DEV && import.meta.env.VITE_SENTRY_DSN) {
+
+function _isRealSentryDsn(dsn: string | undefined): boolean {
+  if (!dsn) return false;
+  const s = dsn.trim().toLowerCase();
+  if (!s) return false;
+  // Reject common placeholders so we don't spam console with init errors
+  if (s.includes('your-sentry-dsn') || s.includes('your_sentry_dsn')) return false;
+  if (['changeme', 'todo', 'tbd', 'placeholder'].includes(s)) return false;
+  // Must be a valid Sentry ingest URL
+  return /^https:\/\/[^@]+@[^/]+\/\d+/i.test(dsn);
+}
+
+if (!import.meta.env.DEV && _isRealSentryDsn(import.meta.env.VITE_SENTRY_DSN)) {
   Sentry.init({
     dsn: import.meta.env.VITE_SENTRY_DSN,
     environment: import.meta.env.MODE,
     tracesSampleRate: 0.1,
+    // Scrub PHI from breadcrumbs and events
+    beforeSend(event) {
+      // Drop any cookie / auth header data
+      if (event.request?.cookies) delete event.request.cookies;
+      if (event.request?.headers) {
+        const h = event.request.headers as Record<string, string>;
+        delete h.authorization;
+        delete h.Authorization;
+        delete h.cookie;
+        delete h.Cookie;
+        delete h['x-csrf-token'];
+      }
+      return event;
+    },
   });
 }
 
@@ -51,17 +77,18 @@ class Logger {
   }
 
   private sendToMonitoring(entry: LogEntry) {
-    // Send error logs to monitoring endpoint regardless of environment (required for tests)
-    if (entry.level === 'error') {
-      // Disabled for now - backend doesn't have /api/logs endpoint
-      // Use globalThis.fetch to ensure mocked fetch is used in tests
-      // globalThis.fetch('/api/logs', {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify(entry),
-      // }).catch(() => {
-      //   // Silently fail if logging endpoint is unavailable
-      // });
+    // Send errors and warnings to Sentry in production
+    // Sentry is imported at module level; capture calls are no-ops if init() was not called
+    if (!this.isDevelopment) {
+      try {
+        if (entry.level === 'error' && entry.error) {
+          Sentry.captureException(entry.error);
+        } else if (entry.level === 'warn') {
+          Sentry.captureMessage(entry.message, 'warning');
+        }
+      } catch {
+        // Silently fail if Sentry is not available or not initialized
+      }
     }
   }
 

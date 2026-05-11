@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select, and_, or_
 from datetime import datetime, timedelta
 from typing import List, Optional, Any, Union
+import uuid as uuid_lib
 import asyncio
 
 from app.core.database import get_db
@@ -47,7 +48,7 @@ async def list_appointments(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> AppointmentListResponse:
     """
     List appointments with optional filters
     """
@@ -94,11 +95,11 @@ async def list_appointments(
 
 @router.get("/{appointment_id}", response_model=AppointmentResponse)
 async def get_appointment(
-    appointment_id: str,
+    appointment_id: uuid_lib.UUID,
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> AppointmentResponse:
     """
     Get appointment by ID
     """
@@ -131,7 +132,7 @@ async def create_appointment(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> AppointmentResponse:
     """
     Create new appointment
     """
@@ -225,12 +226,12 @@ async def create_appointment(
 
 @router.put("/{appointment_id}", response_model=AppointmentResponse)
 async def update_appointment(
-    appointment_id: str,
+    appointment_id: uuid_lib.UUID,
     appointment_data: AppointmentUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> AppointmentResponse:
     """
     Update appointment
     """
@@ -289,13 +290,13 @@ async def update_appointment(
     return appointment
 
 
-@router.delete("/{appointment_id}")
+@router.delete("/{appointment_id}", response_model=dict)
 async def delete_appointment(
-    appointment_id: str,
+    appointment_id: uuid_lib.UUID,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Delete appointment (soft delete by cancelling)
     """
@@ -328,7 +329,7 @@ async def get_available_slots(
     chair_id: Optional[str] = Query(None, description="Filter by chair"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> List[AppointmentSlot]:
     """
     Get available appointment slots
     """
@@ -390,7 +391,7 @@ async def get_available_slots(
 async def get_appointment_stats(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     Get appointment statistics for today
     """
@@ -425,7 +426,7 @@ async def get_appointment_stats(
 async def get_appointment_types(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     Get available appointment types
     """
@@ -447,11 +448,11 @@ async def get_appointment_types(
 
 @router.post("/{appointment_id}/reminder", response_model=dict)
 async def send_appointment_reminder(
-    appointment_id: str,
+    appointment_id: uuid_lib.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Send appointment reminder to patient
     """

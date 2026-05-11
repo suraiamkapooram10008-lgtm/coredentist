@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy import select, and_, func
 from datetime import datetime, date, timezone, timedelta
-from typing import List, Optional, Any
+from typing import List, Optional
 from decimal import Decimal
 from uuid import UUID
 
@@ -30,6 +30,9 @@ from app.schemas.billing import (
     PaymentResponse,
     PaymentListResponse,
     BillingSummary,
+    PaymentPlanCreate,
+    PaymentPlanResponse,
+    PaymentPlanListResponse,
 )
 
 router = APIRouter()
@@ -46,7 +49,7 @@ async def list_invoices(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> InvoiceListResponse:
     """
     List invoices with optional filters
     """
@@ -81,7 +84,7 @@ async def get_invoice(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> InvoiceResponse:
     """
     Get invoice by ID
     """
@@ -111,7 +114,7 @@ async def create_invoice(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> InvoiceResponse:
     """
     Create new invoice
     """
@@ -167,7 +170,7 @@ async def update_invoice(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> InvoiceResponse:
     """
     Update invoice
     """
@@ -207,13 +210,13 @@ async def update_invoice(
     return invoice
 
 
-@router.delete("/invoices/{invoice_id}")
+@router.delete("/invoices/{invoice_id}", response_model=dict)
 async def delete_invoice(
     invoice_id: str,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Delete invoice (soft delete by cancelling)
     """
@@ -246,7 +249,7 @@ async def list_payments(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> PaymentListResponse:
     """
     List payments
     """
@@ -284,7 +287,7 @@ async def create_payment(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> PaymentResponse:
     """
     Create new payment
     """
@@ -327,7 +330,7 @@ async def get_billing_summary(
     end_date: Optional[date] = Query(None),
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> BillingSummary:
     """
     Get billing summary
     """
@@ -382,29 +385,29 @@ async def get_billing_summary(
 
 # --- Payment Plan Endpoints ---
 
-@router.post("/payment-plans/", response_model=Any)
+@router.post("/payment-plans/", response_model=PaymentPlanResponse)
 async def create_payment_plan(
-    plan_data: dict,
+    plan_data: PaymentPlanCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> PaymentPlanResponse:
     """
     Create a new installment-based payment plan
     """
     plan = PaymentPlan(
         practice_id=current_user.practice_id,
-        patient_id=UUID(plan_data.get('patient_id')),
-        invoice_id=UUID(plan_data.get('invoice_id')) if plan_data.get('invoice_id') else None,
-        total_amount=Decimal(str(plan_data.get('total_amount'))),
-        initial_deposit=Decimal(str(plan_data.get('initial_deposit', 0))),
+        patient_id=plan_data.patient_id,
+        invoice_id=plan_data.invoice_id,
+        total_amount=plan_data.total_amount,
+        initial_deposit=plan_data.initial_deposit,
         start_date=datetime.now().date(),
-        notes=plan_data.get('notes'),
+        notes=plan_data.notes,
     )
     db.add(plan)
     await db.flush()
     
-    num_months = int(plan_data.get('months', 12))
+    num_months = plan_data.months
     installment_amount = (plan.total_amount - plan.initial_deposit) / num_months
     
     for i in range(num_months):
@@ -421,12 +424,12 @@ async def create_payment_plan(
     return plan
 
 
-@router.get("/payment-plans/", response_model=List[Any])
+@router.get("/payment-plans/", response_model=PaymentPlanListResponse)
 async def list_payment_plans(
     patient_id: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> PaymentPlanListResponse:
     """
     List all payment plans for the practice
     """
@@ -435,4 +438,5 @@ async def list_payment_plans(
         query = query.where(PaymentPlan.patient_id == UUID(patient_id))
     
     result = await db.execute(query.options(joinedload(PaymentPlan.installments)))
-    return result.scalars().unique().all()
+    plans = result.scalars().unique().all()
+    return PaymentPlanListResponse(payment_plans=plans, count=len(plans))

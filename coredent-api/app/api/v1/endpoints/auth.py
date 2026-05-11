@@ -58,7 +58,7 @@ async def login(
     db: AsyncSession = Depends(get_db),
     # NOTE: CSRF is NOT required on login because user doesn't have a session yet.
     # CSRF protection applies to state-changing endpoints AFTER authentication.
-) -> Any:
+) -> LoginResponse:
     """
     Login with email and password
     Returns access and refresh tokens
@@ -189,7 +189,7 @@ async def logout(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> LoginResponse:
     """
     Logout and invalidate refresh token
     CRIT-01 FIX: Uses Authorization header for auth, no cookie cleanup needed
@@ -233,7 +233,7 @@ async def refresh_token(
     refresh_in: TokenRefreshRequest,
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),  # SECURITY FIX: Verify CSRF token
-) -> Any:
+) -> TokenResponse:
     """
     Refresh access token using refresh token
     """
@@ -266,7 +266,14 @@ async def refresh_token(
         )
         session = result.scalar_one_or_none()
     
-    if not session or session.expires_at < datetime.now(timezone.utc):
+    # Normalize expires_at to aware UTC for cross-DB compatibility (SQLite strips tz)
+    if session is not None:
+        expires_at = session.expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+    else:
+        expires_at = None
+    if not session or expires_at < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token expired or invalid",
@@ -309,7 +316,7 @@ async def refresh_token(
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
     current_user: User = Depends(get_current_user),
-) -> Any:
+) -> UserResponse:
     """
     Get current user information
     """
@@ -322,7 +329,7 @@ async def forgot_password(
     request: Request,
     forgot_in: ForgotPasswordRequest,
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     Request password reset
     Sends email with reset token
@@ -401,7 +408,7 @@ async def resend_verification_email(
     request: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> Any:
+) -> UserResponse:
     """
     Resend email verification link
     Only available for unverified users
@@ -449,7 +456,7 @@ async def resend_verification_email(
 async def verify_email(
     token: str,
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     Verify email with token
     """
@@ -486,7 +493,7 @@ async def reset_password(
     request: Request,
     reset_in: ResetPasswordRequest,
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     Reset password with token
     """

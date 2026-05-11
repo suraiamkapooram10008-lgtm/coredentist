@@ -4,7 +4,7 @@ Insurance eligibility and claims request/response models
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Union
 from uuid import UUID
 from datetime import date
 
@@ -17,19 +17,25 @@ class EligibilityCheckRequest(BaseModel):
 
 
 class EligibilityCheckResponse(BaseModel):
-    """Response from eligibility check"""
+    """Response from eligibility check.
+
+    Fields beyond the core `eligible`/`coverage_status` flags are all optional
+    because real-world clearinghouse responses (especially for terminated or
+    error states) return partial payloads.
+    """
     eligible: bool
     coverage_status: str
-    plan_name: str
-    effective_date: str
-    termination_date: str
-    copay: float
-    deductible: float
-    deductible_remaining: float
-    coinsurance: float
-    annual_max: float
-    annual_remaining: float
-    message: str
+    plan_name: Optional[str] = None
+    effective_date: Optional[str] = None
+    termination_date: Optional[str] = None
+    copay: Optional[float] = None
+    deductible: Optional[float] = None
+    deductible_remaining: Optional[float] = None
+    coinsurance: Optional[float] = None
+    annual_max: Optional[float] = None
+    annual_remaining: Optional[float] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
 
 
 class ClaimProcedure(BaseModel):
@@ -52,21 +58,22 @@ class ClaimSubmitRequest(BaseModel):
 
 
 class ClaimSubmitResponse(BaseModel):
-    """Response from claim submission"""
-    claim_id: str
-    external_claim_id: str
+    """Response from claim submission. Supports accept/reject paths."""
     status: str
-    message: str
-    submitted_at: str
+    claim_id: Optional[Union[UUID, str]] = None
+    external_claim_id: Optional[str] = None
+    submitted_at: Optional[str] = None
+    message: Optional[str] = None
 
 
 class ClaimStatusResponse(BaseModel):
-    """Response for claim status"""
-    claim_id: str
-    external_claim_id: str
+    """Response for claim status. Tolerant of partial/missing fields."""
     status: str
+    claim_id: Optional[Union[UUID, str]] = None
+    external_claim_id: Optional[str] = None
     paid_amount: float = 0
     patient_responsibility: float = 0
     denial_code: Optional[str] = None
     denial_reason: Optional[str] = None
-    processed_date: Optional[str] = None
+    processed_date: Optional[Union[date, str]] = None
+    message: Optional[str] = None

@@ -52,7 +52,7 @@ async def check_eligibility(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> EligibilityCheckResponse:
     """
     Check patient insurance eligibility in real-time.
     
@@ -167,7 +167,7 @@ async def submit_claim(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> ClaimSubmitResponse:
     """
     Submit dental claim electronically to insurance.
     
@@ -320,7 +320,7 @@ async def get_claim_status(
     claim_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> ClaimStatusResponse:
     """
     Get the status of a submitted claim.
     """

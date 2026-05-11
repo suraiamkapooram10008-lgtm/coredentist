@@ -27,7 +27,8 @@ class SimpleSettings:
         # Security
         self.SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production-for-hipaa-compliance")
         self.ALGORITHM = "HS256"
-        self.ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+        # Default 15 min per HIPAA best-practice session timeout
+        self.ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
         self.REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
         
         # CORS - Parse comma-separated string
@@ -109,6 +110,38 @@ class SimpleSettings:
         
         # Monitoring
         self.MONITORING_TOKEN = os.getenv("MONITORING_TOKEN", "")
+
+        # Reject common placeholder DSN so operators notice the mistake
+        if self.SENTRY_DSN and (
+            "your-sentry-dsn" in self.SENTRY_DSN
+            or self.SENTRY_DSN.strip().lower() in {"changeme", "todo", "tbd"}
+        ):
+            # Clear it so main.py treats it as unset rather than initializing
+            # Sentry with a DSN that will 100% fail.
+            self.SENTRY_DSN = ""
+
+        # Production safety checks
+        if self.ENVIRONMENT == "production":
+            # Detect insecure/dev defaults explicitly
+            insecure_secret = (
+                not os.getenv("SECRET_KEY")
+                or self.SECRET_KEY.startswith("dev-secret-key")
+                or len(self.SECRET_KEY) < 32
+            )
+            insecure_enc = (
+                not os.getenv("ENCRYPTION_KEY")
+                or self.ENCRYPTION_KEY.startswith("dev-encryption-key")
+            )
+            missing = []
+            if insecure_enc:
+                missing.append("ENCRYPTION_KEY")
+            if insecure_secret:
+                missing.append("SECRET_KEY")
+            if missing:
+                raise RuntimeError(
+                    f"Production requires secure values for: {', '.join(missing)}. "
+                    "Set these env vars to strong, unique production values."
+                )
 
 # Create settings instance
 settings = SimpleSettings()

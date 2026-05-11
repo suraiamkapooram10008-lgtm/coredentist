@@ -16,7 +16,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def run_migrations():
-    """Run database migrations using Alembic."""
+    """Run database migrations using Alembic.
+
+    In production, migration failure is fatal — we refuse to start with an
+    out-of-sync schema. In development, we log and continue so contributors
+    aren't blocked by transient issues.
+    """
     try:
         import os
         import alembic.config
@@ -51,12 +56,21 @@ def run_migrations():
         logger.info("=" * 60)
         return True
     except Exception as e:
+        environment = os.environ.get("ENVIRONMENT", "development").lower()
         logger.error("=" * 60)
         logger.error(f"MIGRATION FAILED: {e}")
         logger.error("=" * 60)
         import traceback
         logger.error(traceback.format_exc())
-        # Don't fail startup - table might already exist
+
+        if environment == "production":
+            # Fail fast in production — out-of-sync schema is a data-integrity risk
+            logger.critical(
+                "Refusing to start in production with failed migrations. "
+                "Fix the migration and redeploy."
+            )
+            sys.exit(1)
+
         logger.warning("Continuing with server startup despite migration warning...")
         return False
 

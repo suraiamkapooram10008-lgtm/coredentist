@@ -15,7 +15,7 @@ from app.api.deps import get_current_user, require_role, verify_csrf
 from app.models.user import User, UserRole
 from app.core.audit import log_audit_event
 from app.core.security import get_password_hash, validate_password_strength
-from app.schemas.user import UserResponse
+from app.schemas.user import UserResponse, UserCreate
 
 router = APIRouter()
 
@@ -25,7 +25,7 @@ async def list_staff(
     is_active: bool = Query(True, description="Filter by active status"),
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> List[UserResponse]:
     """
     List all staff members in the practice
     """
@@ -46,16 +46,16 @@ async def list_staff(
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_staff(
     request: Request,
-    staff_data: dict, # Simplified for demo, should use schema
+    staff_data: UserCreate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> UserResponse:
     """
     Add a new staff member to the practice
     """
     # Check if email exists
-    email = staff_data.get("email")
+    email = staff_data.email
     stmt = select(User).where(User.email == email)
     result = await db.execute(stmt)
     if result.scalar_one_or_none():
@@ -65,7 +65,7 @@ async def create_staff(
         )
 
     # Initial temporary password (staff should change on first login)
-    password = staff_data.get("password", "CoreDent123!")
+    password = staff_data.password
     is_valid, msg = validate_password_strength(password)
     if not is_valid:
         raise HTTPException(status_code=400, detail=msg)
@@ -73,9 +73,9 @@ async def create_staff(
     new_staff = User(
         email=email,
         password_hash=get_password_hash(password),
-        first_name=staff_data.get("first_name"),
-        last_name=staff_data.get("last_name"),
-        role=staff_data.get("role", UserRole.FRONT_DESK),
+        first_name=staff_data.first_name,
+        last_name=staff_data.last_name,
+        role=staff_data.role,
         practice_id=current_user.practice_id,
         is_active=True
     )
@@ -100,7 +100,7 @@ async def update_staff(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> UserResponse:
     """
     Update staff member details
     """
@@ -146,7 +146,7 @@ async def inactivate_staff(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> UserResponse:
     """
     Inactivate a staff member (Soft Delete)
     """

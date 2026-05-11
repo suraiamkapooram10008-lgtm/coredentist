@@ -209,14 +209,21 @@ class MonitoringService {
       }
     }
 
-    // Custom analytics endpoint
-    fetch('/api/analytics', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, data }),
-    }).catch(() => {
-      // Silently fail if analytics endpoint is unavailable
-    });
+    // Custom analytics endpoint — only enabled when explicitly configured,
+    // otherwise we would POST every action to a non-existent endpoint and
+    // pollute the error logs with 404s.
+    const analyticsEndpoint = import.meta.env.VITE_ANALYTICS_ENDPOINT;
+    if (analyticsEndpoint) {
+      fetch(analyticsEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, data }),
+        // Don't block user navigation on analytics
+        keepalive: true,
+      }).catch(() => {
+        // Silently fail if analytics endpoint is unavailable
+      });
+    }
   }
 }
 

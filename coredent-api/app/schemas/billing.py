@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, validator
 from uuid import UUID
 from decimal import Decimal
 
-from app.models.billing import InvoiceStatus, PaymentMethod, PaymentStatus
+from app.models.billing import InvoiceStatus, PaymentMethod, PaymentStatus, PaymentPlanStatus
 
 
 # Line Item Schemas
@@ -135,3 +135,62 @@ class BillingSummary(BaseModel):
     total_collected: float
     outstanding_balance: float
     status_breakdown: List[StatusBreakdown]
+
+
+# Payment Plan Schemas
+
+class PaymentPlanCreate(BaseModel):
+    """Schema for creating a payment plan with installment validation"""
+    patient_id: UUID
+    invoice_id: Optional[UUID] = None
+    total_amount: Decimal = Field(..., gt=0)
+    initial_deposit: Decimal = Field(Decimal('0'), ge=0)
+    months: int = Field(12, ge=1, le=60)
+    notes: Optional[str] = None
+
+    @validator('initial_deposit')
+    def _deposit_not_gt_total(cls, v, values):
+        total = values.get('total_amount')
+        if total is not None and v > total:
+            raise ValueError('initial_deposit cannot exceed total_amount')
+        return v
+
+
+class PaymentPlanInstallmentResponse(BaseModel):
+    """Schema for payment plan installment responses"""
+    id: UUID
+    plan_id: UUID
+    amount: Decimal
+    due_date: date
+    paid_at: Optional[datetime] = None
+    status: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PaymentPlanResponse(BaseModel):
+    """Schema for payment plan responses"""
+    id: UUID
+    practice_id: UUID
+    patient_id: UUID
+    invoice_id: Optional[UUID] = None
+    status: PaymentPlanStatus
+    total_amount: Decimal
+    initial_deposit: Decimal
+    interest_rate: Decimal = Decimal('0')
+    start_date: date
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    installments: List[PaymentPlanInstallmentResponse] = []
+
+    class Config:
+        from_attributes = True
+
+
+class PaymentPlanListResponse(BaseModel):
+    """Schema for list of payment plans"""
+    payment_plans: List[PaymentPlanResponse]
+    count: int
