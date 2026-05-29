@@ -7,7 +7,7 @@ from celery import Celery
 from datetime import datetime, timedelta
 import logging
 
-from app.core.config import settings
+from app.core.config_simple import settings
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,22 @@ celery_app.conf.beat_schedule = {
         'task': 'app.core.tasks.cleanup_old_notifications',
         'schedule': timedelta(hours=1),
     },
+    # Process scheduled messages every minute
+    'process-scheduled-messages': {
+        'task': 'app.core.communication_tasks.process_scheduled_messages_task',
+        'schedule': timedelta(minutes=1),
+    },
+    # Retry failed messages every 5 minutes
+    'retry-failed-messages': {
+        'task': 'app.core.communication_tasks.retry_failed_messages_task',
+        'schedule': timedelta(minutes=5),
+    },
+}
+
+celery_app.conf.task_routes = {
+    'app.core.tasks.*': {'queue': 'default'},
+    'app.core.communication_tasks.*': {'queue': 'communications'},
+    'app.core.reminder_tasks.*': {'queue': 'reminders'},
 }
 
 logger.info("Celery app initialized with scheduled tasks")

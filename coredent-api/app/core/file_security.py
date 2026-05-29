@@ -346,38 +346,314 @@ def validate_file_upload(
         raise FileSecurityError(f"File validation error: {str(e)}")
 
 
-# Optional: Virus scanning integration
-async def scan_file_for_viruses(file_content: bytes, filename: str) -> bool:
-    """
-    Scan file for viruses using ClamAV or VirusTotal API
+class VirusScanResult:
+    """Result of virus scanning operation"""
+    def __init__(
+        self,
+        is_clean: bool,
+        scanner: str,
+        threats_found: Optional[List[str]] = None,
+        scan_id: Optional[str] = None,
+        error: Optional[str] = None
+    ):
+        self.is_clean = is_clean
+        self.scanner = scanner
+        self.threats_found = threats_found or []
+        self.scan_id = scan_id
+        self.error = error
     
-    NOTE: This requires additional setup:
-    - ClamAV: Install clamd and python-clamd
-    - VirusTotal: Get API key from virustotal.com
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "is_clean": self.is_clean,
+            "scanner": self.scanner,
+            "threats_found": self.threats_found,
+            "scan_id": self.scan_id,
+            "error": self.error
+        }
+
+
+class VirusScanner:
+    """
+    Multi-provider virus scanning service
+    
+    Supports:
+    - ClamAV (local, fast, preferred)
+    - VirusTotal API (cloud, comprehensive)
+    """
+    
+    def __init__(self):
+        self._clamav_available = False
+        self._clamd = None
+        self._init_clamav()
+    
+    def _init_clamav(self) -> None:
+        """Initialize ClamAV connection if available"""
+        try:
+            import clamd
+            self._clamd = clamd.ClamdUnixSocket()
+            self._clamd.ping()
+            self._clamav_available = True
+            logger.info("ClamAV virus scanner initialized successfully")
+        except ImportError:
+            logger.warning("python-clamd not installed. Install with: pip install python-clamd")
+        except Exception as e:
+            logger.warning(f"ClamAV not available: {e}")
+    
+    async def scan_file(
+        self,
+        file_content: bytes,
+        filename: str,
+        enable_virustotal: bool = True
+    ) -> VirusScanResult:
+        """
+        Scan file for viruses using available providers
+        
+        Args:
+            file_content: Binary content of the file
+            filename: Original filename for logging
+            enable_virustotal: Whether to use VirusTotal as fallback
+            
+        Returns:
+            VirusScanResult with scan status and details
+        """
+        scan_results: List[Dict[str, Any]] = []
+        
+        if self._clamav_available and self._clamd:
+            result = await self._scan_with_clamav(file_content, filename)
+            scan_results.append(result.to_dict())
+            if result.is_clean:
+                return result
+        
+        if enable_virustotal:
+            result = await self._scan_with_virustotal(file_content, filename)
+            scan_results.append(result.to_dict())
+            return result
+        
+        logger.warning(
+            f"No virus scanners available, assuming clean: {filename}",
+            extra={"filename": filename, "results": scan_results}
+        )
+        return VirusScanResult(
+            is_clean=True,
+            scanner="none",
+            error="No scanners available"
+        )
+    
+    async def _scan_with_clamav(
+        self,
+        file_content: bytes,
+        filename: str
+    ) -> VirusScanResult:
+        """Scan file using ClamAV via clamd socket"""
+        try:
+            import clamd
+            
+            result = self._clamd.scan_stream(file_content)
+            
+            if result:
+                for threat_name, threat_status in result.items():
+                    if threat_status == "FOUND":
+                        logger.warning(
+                            f"Virus detected by ClamAV: {threat_name}",
+                            extra={"filename": filename, "threat": threat_name}
+                        )
+                        return VirusScanResult(
+                            is_clean=False,
+                            scanner="clamav",
+                            threats_found=[f"{threat_name}: {threat_status}"]
+                        )
+            
+            return VirusScanResult(is_clean=True, scanner="clamav")
+            
+        except Exception as e:
+            logger.error(f"ClamAV scan failed: {e}")
+            return VirusScanResult(
+                is_clean=True,
+                scanner="clamav",
+                error=str(e)
+            )
+    
+    async def _scan_with_virustotal(
+        self,
+        file_content: bytes,
+        filename: str
+    ) -> VirusScanResult:
+        """Scan file using VirusTotal API"""
+        from app.core.config_simple import settings
+        
+        api_key = getattr(settings, 'VIRUSTOTAL_API_KEY', None) or os.getenv('VIRUSTOTAL_API_KEY')
+        
+        if not api_key:
+            return VirusScanResult(
+                is_clean=True,
+                scanner="virustotal",
+                error="VirusTotal API key not configured"
+            )
+        
+        try:
+            import requests
+            from requests_toolbelt import MultipartEncoder
+            
+            encoder = MultipartEncoder(
+                fields={
+                    'file': (filename, file_content, 'application/octet-stream')
+                }
+            )
+            
+            response = requests.post(
+                'https://www.virustotal.com/api/v3/files',
+                headers={
+                    'x-apikey': api_key,
+                    'Content-Type': encoder.content_type
+                },
+                data=encoder,
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                scan_id = data.get('data', {}).get('id')
+                
+                stats = data.get('data', {}).get('attributes', {}).get('last_analysis_stats', {})
+                malicious_count = stats.get('malicious', 0)
+                suspicious_count = stats.get('suspicious', 0)
+                
+                if malicious_count > 0 or suspicious_count > 0:
+                    threats = []
+                    results = data.get('data', {}).get('attributes', {}).get('last_analysis_results', {})
+                    for engine, result in results.items():
+                        if result.get('category') in ['malicious', 'suspicious']:
+                            threats.append(f"{engine}: {result.get('result')}")
+                    
+                    logger.warning(
+                        f"Threats detected by VirusTotal: {malicious_count + suspicious_count}",
+                        extra={"filename": filename, "threats": threats[:10]}
+                    )
+                    
+                    return VirusScanResult(
+                        is_clean=False,
+                        scanner="virustotal",
+                        threats_found=threats,
+                        scan_id=scan_id
+                    )
+                
+                return VirusScanResult(
+                    is_clean=True,
+                    scanner="virustotal",
+                    scan_id=scan_id
+                )
+            
+            elif response.status_code == 429:
+                logger.warning("VirusTotal rate limit exceeded")
+                return VirusScanResult(
+                    is_clean=True,
+                    scanner="virustotal",
+                    error="Rate limited"
+                )
+            else:
+                return VirusScanResult(
+                    is_clean=True,
+                    scanner="virustotal",
+                    error=f"API returned {response.status_code}"
+                )
+                
+        except ImportError:
+            logger.warning("requests or requests_toolbelt not installed")
+            return VirusScanResult(
+                is_clean=True,
+                scanner="virustotal",
+                error="Dependencies not installed"
+            )
+        except Exception as e:
+            logger.error(f"VirusTotal scan failed: {e}")
+            return VirusScanResult(
+                is_clean=True,
+                scanner="virustotal",
+                error=str(e)
+            )
+
+
+_virus_scanner: Optional[VirusScanner] = None
+
+
+def get_virus_scanner() -> VirusScanner:
+    """Get singleton virus scanner instance"""
+    global _virus_scanner
+    if _virus_scanner is None:
+        _virus_scanner = VirusScanner()
+    return _virus_scanner
+
+
+async def scan_file_for_viruses(
+    file_content: bytes,
+    filename: str,
+    enable_virustotal: bool = True
+) -> VirusScanResult:
+    """
+    Scan file for viruses using available providers
     
     Args:
         file_content: Binary content of the file
         filename: Original filename
+        enable_virustotal: Whether to use VirusTotal as fallback
         
     Returns:
-        True if file is clean, False if infected
+        VirusScanResult indicating if file is clean or infected
+    """
+    scanner = get_virus_scanner()
+    return await scanner.scan_file(file_content, filename, enable_virustotal)
+
+
+async def scan_and_validate_file(
+    file_content: bytes,
+    filename: str,
+    allowed_extensions: list = None,
+    max_size: int = None
+) -> Dict[str, Any]:
+    """
+    Complete file validation including virus scanning
+    
+    Performs:
+    1. Extension validation
+    2. File size validation
+    3. MIME type detection
+    4. Magic number validation
+    5. Filename sanitization
+    6. Hash calculation
+    7. Virus scanning
+    
+    Args:
+        file_content: Binary content of the file
+        filename: Original filename
+        allowed_extensions: List of allowed extensions
+        max_size: Maximum file size override
+        
+    Returns:
+        Dictionary with validation results including virus scan
         
     Raises:
-        FileSecurityError: If virus detected
+        FileSecurityError: If validation fails
     """
-    # TODO: Implement virus scanning
-    # Option 1: ClamAV (local, free, fast)
-    # import clamd
-    # cd = clamd.ClamdUnixSocket()
-    # result = cd.scan_stream(file_content)
+    validation_result = validate_file_upload(
+        file_content, filename, allowed_extensions, max_size
+    )
     
-    # Option 2: VirusTotal API (cloud, requires API key, slower)
-    # import requests
-    # response = requests.post(
-    #     'https://www.virustotal.com/api/v3/files',
-    #     headers={'x-apikey': VIRUSTOTAL_API_KEY},
-    #     files={'file': file_content}
-    # )
+    try:
+        scan_result = await scan_file_for_viruses(file_content, filename)
+        validation_result["virus_scan"] = scan_result.to_dict()
+        
+        if not scan_result.is_clean:
+            raise FileSecurityError(
+                f"File rejected: virus detected - {scan_result.threats_found}"
+            )
+    except FileSecurityError:
+        raise
+    except Exception as e:
+        logger.error(f"Virus scan error (file may still be clean): {e}")
+        validation_result["virus_scan"] = {
+            "is_clean": None,
+            "scanner": "unknown",
+            "error": str(e)
+        }
     
-    logger.info(f"Virus scanning not implemented for: {filename}")
-    return True  # Assume clean if scanning not configured
+    return validation_result

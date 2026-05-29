@@ -9,9 +9,9 @@ import type { User, UserRole, LoginCredentials } from '@/types/api';
 import { authApi } from '@/services/api';
 import { logger } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
-import { AuthContext, type AuthContextValue } from '@/contexts/auth-context';
+import { AuthContext, type AuthContextValue, type RegisterData } from '@/contexts/auth-context';
 import { refreshCsrfToken, clearCsrfToken } from '@/lib/csrf';
-import { analytics, trackLogin, trackLogout } from '@/lib/analytics';
+import { analytics, trackLogin, trackLogout, trackSignup } from '@/lib/analytics';
 
   // Development mode bypass - ONLY works in development builds, NEVER in production
   const DEV_MODE = import.meta.env.MODE === 'development';
@@ -34,6 +34,8 @@ const DEV_USER: User = {
   practiceCountry: 'US',
 };
 
+export { useAuth } from '@/contexts/auth-context';
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -53,27 +55,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // CRIT-06 FIX: No localStorage token storage - use in-memory only
-      // Tokens are obtained from response body on login and stored in ApiClient memory
-      // On page reload, user must re-login (more secure for HIPAA compliance)
-      logger.debug('Session check: No persistent token storage (HIPAA compliant)');
+      // Session persistence: the access token lives in memory only, but the
+      // refresh token is persisted in sessionStorage (cleared on tab close).
+      // On reload we exchange it for a fresh access token so users are not
+      // forced to log in again on every page refresh.
+      logger.debug('Session check: attempting refresh-token restore');
 
-      // Call API to verify session - cookies will be sent automatically
+      try {
+        await authApi.restoreSession();
+      } catch (err) {
+        logger.debug('Session restore failed', { error: err instanceof Error ? err.message : String(err) });
+      }
+
+      // Call API to verify session using the (possibly restored) access token
       try {
         const response = await authApi.getCurrentUser();
-        
+
         if (response.success && response.data) {
           setUser(response.data);
         } else {
-      // Session invalid - clear session
-      clearCsrfToken();
-      authApi.setToken(null);
-      setUser(null);
+          // Session invalid - clear session
+          clearCsrfToken();
+          authApi.setToken(null);
+          setUser(null);
         }
-      } catch {
-        // Session check failed - treat as logged out
+      } catch (err) {
+        logger.warn('Session check failed, treating as logged out', { error: err instanceof Error ? err.message : String(err) });
         clearCsrfToken();
         authApi.setToken(null);
+        authApi.setRefreshToken(null);
       }
       
       setIsLoading(false);
@@ -89,13 +99,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const response = await authApi.login(credentials);
       
       if (response.success && response.data) {
-        const { csrf_token, access_token } = response.data;
+        const { csrf_token, access_token, refresh_token } = response.data;
         
-        // CRIT-06 FIX: Store token in ApiClient memory ONLY (NOT localStorage)
+        // CRIT-06 FIX: Store tokens in ApiClient memory ONLY (NOT localStorage)
         // This prevents XSS attacks from stealing tokens via localStorage access
         if (access_token) {
           authApi.setToken(access_token);
           // NO localStorage.setItem - removed for HIPAA compliance
+        }
+        if (refresh_token) {
+          authApi.setRefreshToken(refresh_token);
         }
         
         // Store CSRF token for request headers
@@ -105,6 +118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!userResponse.success || !userResponse.data) {
           clearCsrfToken();
           authApi.setToken(null);
+          authApi.setRefreshToken(null);
           // NO localStorage.removeItem needed - not stored anymore
           toast({
             variant: 'destructive',
@@ -141,10 +155,88 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         
         return false;
       }
-    } catch {
+    } catch (err) {
+      logger.error('Login request failed', err instanceof Error ? err : new Error(String(err)));
       toast({
         variant: 'destructive',
         title: 'Login Error',
+        description: 'Unable to connect to server',
+      });
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [toast]);
+
+  const register = useCallback(async (data: RegisterData): Promise<boolean> => {
+    setIsLoading(true);
+
+    try {
+      const response = await authApi.register({
+        practice_name: data.practiceName,
+        first_name: data.firstName,
+        last_name: data.lastName,
+        email: data.email,
+        password: data.password,
+        country: data.country,
+        phone: data.phone,
+      });
+
+      if (response.success && response.data) {
+        const { csrf_token, access_token, refresh_token } = response.data;
+
+        if (access_token) {
+          authApi.setToken(access_token);
+        }
+        if (refresh_token) {
+          authApi.setRefreshToken(refresh_token);
+        }
+        refreshCsrfToken(csrf_token);
+
+        const userResponse = await authApi.getCurrentUser();
+        if (!userResponse.success || !userResponse.data) {
+          clearCsrfToken();
+          authApi.setToken(null);
+          authApi.setRefreshToken(null);
+          toast({
+            variant: 'destructive',
+            title: 'Registration Failed',
+            description: 'Account created but unable to load profile. Please sign in.',
+          });
+          return false;
+        }
+
+        const newUser = userResponse.data;
+        setUser(newUser);
+
+        analytics.identify(newUser.id, {
+          userId: newUser.id,
+          email: newUser.email,
+          role: newUser.role,
+          practiceId: newUser.practiceId,
+          practiceName: newUser.practiceName,
+        });
+        trackSignup(newUser.id, 'email');
+
+        toast({
+          title: 'Welcome to CoreDent!',
+          description: `Your practice "${newUser.practiceName}" is ready.`,
+        });
+
+        return true;
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Registration Failed',
+          description: response.error?.message || 'Unable to create account',
+        });
+        return false;
+      }
+    } catch (err) {
+      logger.error('Registration request failed', err instanceof Error ? err : new Error(String(err)));
+      toast({
+        variant: 'destructive',
+        title: 'Registration Error',
         description: 'Unable to connect to server',
       });
       return false;
@@ -162,6 +254,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     // CRIT-06 FIX: Clear in-memory tokens only (no localStorage needed)
     authApi.setToken(null);
+    authApi.setRefreshToken(null);
     setUser(null);
     
     // Clear CSRF token on logout
@@ -187,6 +280,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isLoading,
     role: user?.role || null,
     login,
+    register,
     logout,
     hasRole,
   };

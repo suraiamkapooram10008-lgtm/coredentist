@@ -29,7 +29,7 @@ async def list_perio_charts(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
-) -> Any:
+) -> PerioChartListResponse:
     """
     List periodontal charts for the practice or a specific patient
     """
@@ -67,7 +67,7 @@ async def create_perio_chart(
     current_user: User = Depends(require_role(UserRole.DENTIST, UserRole.HYGIENIST, UserRole.OWNER)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> PerioChartResponse:
     """
     Create a new periodontal chart with entries
     """

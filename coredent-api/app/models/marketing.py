@@ -1,12 +1,11 @@
 """
 Marketing Models
-Email campaigns, newsletters, and marketing automation
+Campaign and marketing automation tracking
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, Boolean, Integer, Numeric, JSON
-from sqlalchemy.dialects.postgresql import UUID
+from datetime import datetime
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, JSON
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
 import uuid
 import enum
 
@@ -14,254 +13,101 @@ from app.core.base import Base
 
 
 class CampaignStatus(str, enum.Enum):
-    """Campaign status"""
     DRAFT = "draft"
-    SCHEDULED = "scheduled"
-    SENDING = "sending"
-    SENT = "sent"
+    ACTIVE = "active"
     PAUSED = "paused"
+    COMPLETED = "completed"
     CANCELLED = "cancelled"
 
 
 class CampaignType(str, enum.Enum):
-    """Campaign types"""
     EMAIL = "email"
     SMS = "sms"
-    NEWSLETTER = "newsletter"
-    PROMOTION = "promotion"
-    RECALL = "recall"
-    BIRTHDAY = "birthday"
-    ANNIVERSARY = "anniversary"
-    CUSTOM = "custom"
 
 
 class AudienceType(str, enum.Enum):
-    """Audience types"""
     ALL_PATIENTS = "all_patients"
-    ACTIVE_PATIENTS = "active_patients"
-    INACTIVE_PATIENTS = "inactive_patients"
+    TARGETED = "targeted"
     NEW_PATIENTS = "new_patients"
-    RECALL_DUE = "recall_due"
-    INSURANCE_TYPE = "insurance_type"
+    RETURNING = "returning"
     CUSTOM = "custom"
 
 
 class Campaign(Base):
-    """Marketing campaign model"""
-    __tablename__ = "campaigns"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
-    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    
-    # Campaign Information
+    __tablename__ = "marketing_campaigns"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    practice_id = Column(String, ForeignKey("practices.id"), nullable=False)
     name = Column(String(255), nullable=False)
-    subject = Column(String(255))  # For email
-    campaign_type = Column(Enum(CampaignType), nullable=False)
-    status = Column(Enum(CampaignStatus), default=CampaignStatus.DRAFT)
-    
-    # Content
-    content = Column(Text)  # HTML for email, text for SMS
-    template_id = Column(UUID(as_uuid=True), ForeignKey("marketing_templates.id"))
-    
-    # Audience
-    audience_type = Column(Enum(AudienceType), default=AudienceType.ALL_PATIENTS)
-    audience_filters = Column(JSON)  # JSON object of filters
-    
-    # Scheduling
-    scheduled_at = Column(DateTime(timezone=True))
-    sent_at = Column(DateTime(timezone=True))
-    completed_at = Column(DateTime(timezone=True))
-    
-    # Stats
+    description = Column(Text, nullable=True)
+    campaign_type = Column(String(50), nullable=False, default="email")
+    status = Column(String(50), nullable=False, default="draft")
+    audience_type = Column(String(50), nullable=False, default="all_patients")
+    target_criteria = Column(JSON, nullable=True)
+    scheduled_date = Column(DateTime, nullable=True)
+    sent_date = Column(DateTime, nullable=True)
     total_recipients = Column(Integer, default=0)
-    successful_sends = Column(Integer, default=0)
-    failed_sends = Column(Integer, default=0)
-    opens = Column(Integer, default=0)
-    clicks = Column(Integer, default=0)
-    unsubscribes = Column(Integer, default=0)
-    bounces = Column(Integer, default=0)
-    
-    # Financial
-    cost = Column(Numeric(10, 2), default=0)
-    
-    # Settings
-    track_opens = Column(Boolean, default=True)
-    track_clicks = Column(Boolean, default=True)
-    allow_unsubscribe = Column(Boolean, default=True)
-    
-    # Parent Campaign (for A/B testing)
-    parent_campaign_id = Column(UUID(as_uuid=True), ForeignKey("campaigns.id"))
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    # Relationships
+    sent_count = Column(Integer, default=0)
+    opened_count = Column(Integer, default=0)
+    clicked_count = Column(Integer, default=0)
+    bounced_count = Column(Integer, default=0)
+    unsubscribed_count = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     practice = relationship("Practice", back_populates="campaigns")
-    creator = relationship("User")
-    template = relationship("MarketingTemplate")
-    segments = relationship("CampaignSegment", back_populates="campaign")
-    emails = relationship("MarketingEmail", back_populates="campaign")
-    
-    def __repr__(self):
-        return f"<Campaign {self.name} - {self.status}>"
 
 
 class MarketingTemplate(Base):
-    """Marketing email/SMS template"""
     __tablename__ = "marketing_templates"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
-    
-    # Template Information
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    practice_id = Column(String, ForeignKey("practices.id"), nullable=False)
     name = Column(String(255), nullable=False)
-    description = Column(Text)
-    category = Column(String(50))
-    
-    # Content
-    subject = Column(String(255))
-    content = Column(Text, nullable=False)  # HTML or text
-    preview_text = Column(String(255))  # Preview text for email
-    
-    # Design
-    template_type = Column(String(20))  # custom, drag_drop
-    layout_config = Column(JSON)  # JSON for drag-drop layout
-    
-    # Footer
-    unsubscribe_text = Column(Text)
-    physical_address = Column(Text)
-    
-    # Variables
-    available_variables = Column(JSON)  # JSON array of available merge tags
-    
-    # Status
+    subject = Column(String(255), nullable=True)
+    body_content = Column(Text, nullable=True)
+    template_type = Column(String(50), nullable=False, default="email")
     is_active = Column(Boolean, default=True)
-    is_shared = Column(Boolean, default=False)  # Available to all practices
-    
-    # Usage
-    times_used = Column(Integer, default=0)
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    # Relationships
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     practice = relationship("Practice", back_populates="marketing_templates")
-    campaigns = relationship("Campaign", back_populates="template")
-    
-    def __repr__(self):
-        return f"<MarketingTemplate {self.name}>"
 
 
 class CampaignSegment(Base):
-    """Campaign audience segment"""
-    __tablename__ = "campaign_segments"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    campaign_id = Column(UUID(as_uuid=True), ForeignKey("campaigns.id"), nullable=False)
-    
-    # Segment Information
+    __tablename__ = "marketing_campaign_segments"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id = Column(String, ForeignKey("marketing_campaigns.id"), nullable=False)
     name = Column(String(255), nullable=False)
-    segment_type = Column(String(50))  # A, B, control
-    
-    # Filters
-    filters = Column(JSON)  # JSON object of segment criteria
-    
-    # Count
-    recipient_count = Column(Integer, default=0)
-    
-    # Stats (for this segment)
-    sent = Column(Integer, default=0)
-    opens = Column(Integer, default=0)
-    clicks = Column(Integer, default=0)
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    # Relationships
-    campaign = relationship("Campaign", back_populates="segments")
-    
-    def __repr__(self):
-        return f"<CampaignSegment {self.name}>"
+    criteria = Column(JSON, nullable=True)
+    patient_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    campaign = relationship("Campaign", backref="segments")
 
 
 class MarketingEmail(Base):
-    """Individual marketing email record"""
     __tablename__ = "marketing_emails"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    campaign_id = Column(UUID(as_uuid=True), ForeignKey("campaigns.id"), nullable=False)
-    patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"))
-    
-    # Email Information
-    recipient_email = Column(String(255), nullable=False)
-    recipient_name = Column(String(255))
-    
-    # Content (rendered for this recipient)
-    subject = Column(String(255))
-    content = Column(Text)
-    
-    # Status
-    status = Column(String(20), default="pending")  # pending, sent, opened, clicked, bounced, unsubscribed
-    
-    # Timestamps
-    sent_at = Column(DateTime(timezone=True))
-    opened_at = Column(DateTime(timezone=True))
-    clicked_at = Column(DateTime(timezone=True))
-    bounced_at = Column(DateTime(timezone=True))
-    
-    # External IDs
-    message_id = Column(String(100))  # ESP message ID
-    
-    # Error
-    error_message = Column(Text)
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    # Relationships
-    campaign = relationship("Campaign", back_populates="emails")
-    patient = relationship("Patient")
-    
-    def __repr__(self):
-        return f"<MarketingEmail {self.recipient_email}>"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id = Column(String, ForeignKey("marketing_campaigns.id"), nullable=False)
+    patient_id = Column(String, ForeignKey("patients.id"), nullable=False)
+    email_address = Column(String(255), nullable=False)
+    subject = Column(String(255), nullable=True)
+    status = Column(String(50), default="pending")
+    opened_at = Column(DateTime, nullable=True)
+    clicked_at = Column(DateTime, nullable=True)
+    bounced = Column(Boolean, default=False)
+    unsubscribed = Column(Boolean, default=False)
+    sent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    campaign = relationship("Campaign", backref="emails")
+    patient = relationship("Patient", backref="marketing_emails")
 
 
 class NewsletterSubscription(Base):
-    """Newsletter subscription management"""
     __tablename__ = "newsletter_subscriptions"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
-    
-    # Subscriber Information
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    practice_id = Column(String, ForeignKey("practices.id"), nullable=False)
+    patient_id = Column(String, ForeignKey("patients.id"), nullable=True)
     email = Column(String(255), nullable=False)
-    first_name = Column(String(100))
-    last_name = Column(String(100))
-    phone = Column(String(20))
-    
-    # Source
-    source = Column(String(50))  # website, in_office, referral, etc.
-    
-    # Preferences
-    subscribed = Column(Boolean, default=True)
-    subscribed_at = Column(DateTime(timezone=True))
-    unsubscribed_at = Column(DateTime(timezone=True))
-    
-    # Newsletter Types
-    newsletter_types = Column(JSON)  # JSON array of subscribed types
-    
-    # GDPR
-    consent_given = Column(Boolean, default=False)
-    consent_date = Column(DateTime(timezone=True))
-    
-    # Status
-    status = Column(String(20), default="active")  # active, unsubscribed, bounced
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    # Relationships
+    is_active = Column(Boolean, default=True)
+    subscribed_at = Column(DateTime, default=datetime.utcnow)
+    unsubscribed_at = Column(DateTime, nullable=True)
     practice = relationship("Practice", back_populates="newsletter_subscriptions")
-    
-    def __repr__(self):
-        return f"<NewsletterSubscription {self.email}>"
+    patient = relationship("Patient", backref="newsletter_subscription")

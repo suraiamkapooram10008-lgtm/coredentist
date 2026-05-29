@@ -40,7 +40,7 @@ async def request_portal_access(
     date_of_birth: str,
     practice_slug: str,
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     Patient requests portal access by verifying identity with email + DOB.
     Returns a short-lived portal access token.
@@ -125,7 +125,7 @@ async def _get_portal_patient(
 async def get_my_profile(
     token: str = Query(..., description="Portal access token"),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """Get the authenticated patient's own profile."""
     patient = await _get_portal_patient(token, db)
 
@@ -150,7 +150,7 @@ async def get_my_appointments(
     token: str = Query(..., description="Portal access token"),
     upcoming_only: bool = Query(True, description="Show only upcoming appointments"),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """Get the patient's appointments."""
     patient = await _get_portal_patient(token, db)
 
@@ -190,7 +190,7 @@ async def get_my_appointments(
 async def get_my_billing(
     token: str = Query(..., description="Portal access token"),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """Get the patient's invoices and outstanding balances."""
     patient = await _get_portal_patient(token, db)
 
@@ -232,7 +232,7 @@ async def get_my_billing(
 async def get_my_treatment_plans(
     token: str = Query(..., description="Portal access token"),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """Get the patient's treatment plans."""
     patient = await _get_portal_patient(token, db)
 
@@ -268,7 +268,7 @@ async def get_my_treatment_plans(
 async def get_my_insurance(
     token: str = Query(..., description="Portal access token"),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """Get the patient's insurance information on file."""
     patient = await _get_portal_patient(token, db)
 
@@ -310,7 +310,7 @@ async def make_payment(
     amount: float = Query(..., gt=0, description="Amount to pay"),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
-) -> Any:
+) -> dict:
     """
     Patient makes a payment on an invoice.
     In production, this would create a Stripe PaymentIntent.
@@ -359,7 +359,7 @@ async def make_payment(
             )
             payment_intent_id = intent.id
             client_secret = intent.client_secret
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Payment processing error: {str(e)}",
@@ -381,7 +381,7 @@ async def make_payment(
 async def get_my_documents(
     token: str = Query(..., description="Portal access token"),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """Get documents and forms assigned to the patient"""
     patient = await _get_portal_patient(token, db)
     from app.models.document import Document
@@ -415,7 +415,7 @@ async def sign_document(
     signature_data: str = Query(..., description="Base64 image or signature text"),
     token: str = Query(..., description="Portal access token"),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """Submit an electronic signature for a form"""
     patient = await _get_portal_patient(token, db)
     from app.models.document import Document

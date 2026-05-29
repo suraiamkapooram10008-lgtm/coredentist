@@ -1,7 +1,6 @@
 // Internationalization utilities for multi-language support
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Translations = Record<string, Record<string, any>>;
+type Translations = Record<string, Record<string, unknown>>;
 
 interface I18nConfig {
   defaultLocale: string;

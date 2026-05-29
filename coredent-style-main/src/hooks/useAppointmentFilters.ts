@@ -1,72 +1,50 @@
-/**
- * useAppointmentFilters Hook
- * Manages appointment filtering and search logic
- */
-
 import { useMemo } from 'react';
-import type { Appointment } from '@/services/appointmentsApi';
 
-interface FilterOptions {
+export interface AppointmentFilters {
   searchTerm?: string;
   status?: string;
   dentist?: string;
 }
 
-/**
- * Filter appointments based on search and status criteria
- */
+export interface Appointment {
+  id: string;
+  patient: string;
+  patientName: string;
+  status: string;
+  time: string;
+  type: string;
+  dentist: string;
+  duration: string;
+}
+
 export function useAppointmentFilters(
-  appointments: Appointment[] = [],
-  filters: FilterOptions = {}
+  appointments: Appointment[],
+  filters: AppointmentFilters
 ): Appointment[] {
   return useMemo(() => {
-    let filtered = [...appointments];
-
-    // Search by patient name or type
-    if (filters.searchTerm) {
-      const term = filters.searchTerm.toLowerCase();
-      filtered = filtered.filter(
-        (apt) =>
-          apt.patient?.toLowerCase().includes(term) ||
-          apt.patientName?.toLowerCase().includes(term) ||
-          apt.type?.toLowerCase().includes(term)
-      );
-    }
-
-    // Filter by status
-    if (filters.status) {
-      filtered = filtered.filter((apt) => apt.status === filters.status);
-    }
-
-    // Filter by dentist
-    if (filters.dentist) {
-      filtered = filtered.filter((apt) => apt.dentist === filters.dentist);
-    }
-
-    return filtered;
+    return appointments.filter((apt) => {
+      if (filters.searchTerm) {
+        const term = filters.searchTerm.toLowerCase();
+        const searchable = `${apt.patient} ${apt.patientName} ${apt.type} ${apt.dentist}`.toLowerCase();
+        if (!searchable.includes(term)) return false;
+      }
+      if (filters.status && apt.status !== filters.status) return false;
+      if (filters.dentist && apt.dentist !== filters.dentist) return false;
+      return true;
+    });
   }, [appointments, filters]);
 }
 
-/**
- * Get unique dentists from appointments
- */
-export function useUniqueDentists(appointments: Appointment[] = []): string[] {
+export function useUniqueDentists(appointments: Appointment[]): string[] {
   return useMemo(() => {
-    const dentists = new Set<string>();
-    appointments.forEach((apt) => {
-      if (apt.dentist) {
-        dentists.add(apt.dentist);
-      }
-    });
-    return Array.from(dentists).sort();
+    const dentists = [...new Set(appointments.map((apt) => apt.dentist))];
+    return dentists.sort();
   }, [appointments]);
 }
 
-/**
- * Get status color for badge display
- */
 export function getStatusColor(status: string): string {
-  switch (status?.toLowerCase()) {
+  const normalized = status.toLowerCase();
+  switch (normalized) {
     case 'confirmed':
       return 'bg-green-500';
     case 'pending':

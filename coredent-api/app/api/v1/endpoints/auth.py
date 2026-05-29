@@ -19,6 +19,7 @@ from app.core.security import (
     create_refresh_token,
     decode_token,
     validate_password_strength,
+    generate_password_reset_token,
 )
 from app.core.config_simple import settings
 from app.core.email import email_service
@@ -28,6 +29,7 @@ from app.models.password_reset import PasswordResetToken
 from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
+    RegisterRequest,
     TokenResponse,
     TokenRefreshRequest,
     ForgotPasswordRequest,
@@ -180,6 +182,157 @@ async def login(
         path="/"
     )
     
+    return response
+
+
+# Country -> sensible locale defaults for new practices
+_COUNTRY_DEFAULTS = {
+    "US": ("America/New_York", "USD"),
+    "IN": ("Asia/Kolkata", "INR"),
+    "GB": ("Europe/London", "GBP"),
+    "CA": ("America/Toronto", "CAD"),
+    "AU": ("Australia/Sydney", "AUD"),
+}
+
+
+@router.post("/register", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("3/minute")  # SECURITY: Throttle self-serve signups to limit abuse
+async def register(
+    request: Request,
+    payload: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+) -> LoginResponse:
+    """
+    Self-serve practice registration.
+
+    Atomically creates a new Practice (tenant) and its first OWNER user,
+    then logs the owner in (returns access/refresh/CSRF tokens).
+    """
+    from app.models.practice import Practice
+    from app.models.user import UserRole
+
+    # Validate password strength (HIPAA-compliant policy)
+    is_valid, error_message = validate_password_strength(payload.password)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_message,
+        )
+
+    # Reject duplicate email (email is globally unique across tenants)
+    existing = await _await_if_needed(
+        db.execute(select(User).where(User.email == payload.email))
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        )
+
+    country = (payload.country or "US").upper()
+    tz, currency = _COUNTRY_DEFAULTS.get(country, ("UTC", "USD"))
+
+    # Create practice (tenant)
+    practice = Practice(
+        name=payload.practice_name,
+        email=payload.email,
+        phone=payload.phone,
+        country=country,
+        timezone=tz,
+        currency=currency,
+        is_active=True,
+    )
+    db.add(practice)
+    await _await_if_needed(db.flush())  # assign practice.id without committing
+
+    # Create owner user
+    user = User(
+        email=payload.email,
+        password_hash=get_password_hash(payload.password),
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        role=UserRole.OWNER,
+        practice_id=practice.id,
+        is_active=True,
+        is_email_verified=False,
+    )
+    db.add(user)
+
+    try:
+        await _await_if_needed(db.commit())
+    except Exception:
+        await _await_if_needed(db.rollback())
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Could not create account. The email may already be in use.",
+        )
+
+    await _await_if_needed(db.refresh(user))
+
+    # Auto-login: issue tokens (same flow as /login)
+    from app.core.security import hash_token, generate_csrf_token
+
+    token_data = {
+        "sub": str(user.id),
+        "role": user.role.value,
+        "practice_id": str(user.practice_id),
+    }
+    access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
+
+    session = UserSession(
+        user_id=user.id,
+        refresh_token=refresh_token,
+        token_hash=hash_token(refresh_token),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    db.add(session)
+    await _await_if_needed(db.commit())
+
+    from fastapi.responses import JSONResponse
+    csrf_token = generate_csrf_token()
+    response = JSONResponse(
+        status_code=status.HTTP_201_CREATED,
+        content={
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "csrf_token": csrf_token,
+            "message": "Registration successful",
+        },
+    )
+    response.set_cookie(
+        key="csrf_token",
+        value=csrf_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=86400,
+        path="/",
+    )
+
+    # Best-effort verification email (non-blocking)
+    try:
+        verification_token = generate_password_reset_token()
+        user.email_verification_token = verification_token
+        await _await_if_needed(db.commit())
+        verification_link = f"{settings.FRONTEND_URL}/verify-email?token={verification_token}"
+        await email_service.send_email(
+            to=user.email,
+            subject="Welcome to CoreDent - Verify Your Email",
+            html_content=(
+                f"<p>Welcome to CoreDent, {user.first_name}!</p>"
+                f"<p>Please verify your email: <a href=\"{verification_link}\">Verify Email</a></p>"
+            ),
+            text_content=f"Welcome to CoreDent! Verify your email: {verification_link}",
+        )
+    except Exception as e:
+        import logging
+        logging.warning(f"Failed to send welcome/verification email: {e}")
+
     return response
 
 

@@ -5,22 +5,24 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { vi } from 'vitest';
 import Appointments from '../Appointments_Refactored';
 import type { Appointment } from '@/services/appointmentsApi';
+import { useAppointments, useAppointmentTypes } from '@/hooks/useAppointments';
 
 // Mock the hooks
-jest.mock('@/hooks/useAppointments', () => ({
-  useAppointments: jest.fn(),
-  useAppointmentTypes: jest.fn(),
-  useCreateAppointment: jest.fn(),
-  useUpdateAppointment: jest.fn(),
-  useDeleteAppointment: jest.fn(),
-  useSendAppointmentReminder: jest.fn(),
+vi.mock('@/hooks/useAppointments', () => ({
+  useAppointments: vi.fn(),
+  useAppointmentTypes: vi.fn(),
+  useCreateAppointment: vi.fn(),
+  useUpdateAppointment: vi.fn(),
+  useDeleteAppointment: vi.fn(),
+  useSendAppointmentReminder: vi.fn(),
 }));
 
-jest.mock('@/hooks/use-toast', () => ({
+vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({
-    toast: jest.fn(),
+    toast: vi.fn(),
   }),
 }));
 
@@ -73,15 +75,12 @@ describe('Appointments Page Integration', () => {
   };
 
   it('should load and display appointments', async () => {
-    const { useAppointments } = require('@/hooks/useAppointments');
-    const { useAppointmentTypes } = require('@/hooks/useAppointments');
-
-    useAppointments.mockReturnValue({
+    (useAppointments as any).mockReturnValue({
       data: { data: { appointments: mockAppointments } },
       isLoading: false,
     });
 
-    useAppointmentTypes.mockReturnValue({
+    (useAppointmentTypes as any).mockReturnValue({
       data: { data: { types: mockAppointmentTypes } },
     });
 
@@ -94,15 +93,12 @@ describe('Appointments Page Integration', () => {
   });
 
   it('should display appointment statistics', async () => {
-    const { useAppointments } = require('@/hooks/useAppointments');
-    const { useAppointmentTypes } = require('@/hooks/useAppointments');
-
-    useAppointments.mockReturnValue({
+    (useAppointments as any).mockReturnValue({
       data: { data: { appointments: mockAppointments } },
       isLoading: false,
     });
 
-    useAppointmentTypes.mockReturnValue({
+    (useAppointmentTypes as any).mockReturnValue({
       data: { data: { types: mockAppointmentTypes } },
     });
 
@@ -117,15 +113,12 @@ describe('Appointments Page Integration', () => {
 
   it('should filter appointments by search term', async () => {
     const user = userEvent.setup();
-    const { useAppointments } = require('@/hooks/useAppointments');
-    const { useAppointmentTypes } = require('@/hooks/useAppointments');
-
-    useAppointments.mockReturnValue({
+    (useAppointments as any).mockReturnValue({
       data: { data: { appointments: mockAppointments } },
       isLoading: false,
     });
 
-    useAppointmentTypes.mockReturnValue({
+    (useAppointmentTypes as any).mockReturnValue({
       data: { data: { types: mockAppointmentTypes } },
     });
 
@@ -140,15 +133,12 @@ describe('Appointments Page Integration', () => {
   });
 
   it('should display loading state', () => {
-    const { useAppointments } = require('@/hooks/useAppointments');
-    const { useAppointmentTypes } = require('@/hooks/useAppointments');
-
-    useAppointments.mockReturnValue({
+    (useAppointments as any).mockReturnValue({
       data: { data: { appointments: [] } },
       isLoading: true,
     });
 
-    useAppointmentTypes.mockReturnValue({
+    (useAppointmentTypes as any).mockReturnValue({
       data: { data: { types: [] } },
     });
 
@@ -158,15 +148,12 @@ describe('Appointments Page Integration', () => {
   });
 
   it('should display empty state when no appointments', async () => {
-    const { useAppointments } = require('@/hooks/useAppointments');
-    const { useAppointmentTypes } = require('@/hooks/useAppointments');
-
-    useAppointments.mockReturnValue({
+    (useAppointments as any).mockReturnValue({
       data: { data: { appointments: [] } },
       isLoading: false,
     });
 
-    useAppointmentTypes.mockReturnValue({
+    (useAppointmentTypes as any).mockReturnValue({
       data: { data: { types: mockAppointmentTypes } },
     });
 
@@ -179,15 +166,12 @@ describe('Appointments Page Integration', () => {
 
   it('should switch between list and timeline views', async () => {
     const user = userEvent.setup();
-    const { useAppointments } = require('@/hooks/useAppointments');
-    const { useAppointmentTypes } = require('@/hooks/useAppointments');
-
-    useAppointments.mockReturnValue({
+    (useAppointments as any).mockReturnValue({
       data: { data: { appointments: mockAppointments } },
       isLoading: false,
     });
 
-    useAppointmentTypes.mockReturnValue({
+    (useAppointmentTypes as any).mockReturnValue({
       data: { data: { types: mockAppointmentTypes } },
     });
 
@@ -197,21 +181,18 @@ describe('Appointments Page Integration', () => {
     await user.click(timelineTab);
 
     await waitFor(() => {
-      expect(screen.getByText('Timeline View')).toBeInTheDocument();
+      expect(screen.getByText(/Timeline View/)).toBeInTheDocument();
     });
   });
 
   it('should display appointment types', async () => {
     const user = userEvent.setup();
-    const { useAppointments } = require('@/hooks/useAppointments');
-    const { useAppointmentTypes } = require('@/hooks/useAppointments');
-
-    useAppointments.mockReturnValue({
+    (useAppointments as any).mockReturnValue({
       data: { data: { appointments: mockAppointments } },
       isLoading: false,
     });
 
-    useAppointmentTypes.mockReturnValue({
+    (useAppointmentTypes as any).mockReturnValue({
       data: { data: { types: mockAppointmentTypes } },
     });
 
@@ -228,15 +209,12 @@ describe('Appointments Page Integration', () => {
 
   it('should open new appointment form', async () => {
     const user = userEvent.setup();
-    const { useAppointments } = require('@/hooks/useAppointments');
-    const { useAppointmentTypes } = require('@/hooks/useAppointments');
-
-    useAppointments.mockReturnValue({
+    (useAppointments as any).mockReturnValue({
       data: { data: { appointments: mockAppointments } },
       isLoading: false,
     });
 
-    useAppointmentTypes.mockReturnValue({
+    (useAppointmentTypes as any).mockReturnValue({
       data: { data: { types: mockAppointmentTypes } },
     });
 
@@ -246,7 +224,7 @@ describe('Appointments Page Integration', () => {
     await user.click(newButton);
 
     await waitFor(() => {
-      expect(screen.getByText('New Appointment')).toBeInTheDocument();
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
   });
 });

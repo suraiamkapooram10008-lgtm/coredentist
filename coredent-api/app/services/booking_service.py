@@ -13,7 +13,7 @@ import string
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 
-from app.models.booking import BookingPage, OnlineBooking, Waitlist
+from app.models.booking import BookingPage, OnlineBooking, WaitlistEntry as Waitlist
 from app.models.appointment import Appointment
 from app.models.user import User
 from app.models.patient import Patient

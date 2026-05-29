@@ -18,13 +18,10 @@ from app.api.v1.endpoints import (
     labs,
     referrals,
     reports,
-    payments,
     edi,
-    accounting,
     staff,
     subscriptions,
     settings,
-    clinic,
     communications,
     clinical,
     patient_portal,
@@ -33,7 +30,6 @@ from app.api.v1.endpoints import (
 
 api_router = APIRouter()
 
-# Include routers
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(patients.router, prefix="/patients", tags=["Patients"])
 api_router.include_router(appointments.router, prefix="/appointments", tags=["Appointments"])
@@ -46,13 +42,10 @@ api_router.include_router(inventory.router, prefix="/inventory", tags=["Inventor
 api_router.include_router(labs.router, prefix="/labs", tags=["Lab Management"])
 api_router.include_router(referrals.router, prefix="/referrals", tags=["Referral Management"])
 api_router.include_router(reports.router, prefix="/reports", tags=["Reporting & Analytics"])
-api_router.include_router(payments.router, prefix="/payments", tags=["Payments"])
 api_router.include_router(edi.router, prefix="/edi", tags=["Insurance EDI"])
-api_router.include_router(accounting.router, prefix="/accounting", tags=["Accounting Integration"])
 api_router.include_router(staff.router, prefix="/staff", tags=["Practice Staff Management"])
 api_router.include_router(subscriptions.router, prefix="/subscriptions", tags=["Subscriptions"])
 api_router.include_router(settings.router, prefix="/settings", tags=["Settings"])
-api_router.include_router(clinic.router, prefix="/clinic", tags=["Clinic Settings"])
 api_router.include_router(communications.router, prefix="/communications", tags=["Communications"])
 api_router.include_router(documents.router, prefix="/documents", tags=["Documents"])
 api_router.include_router(clinical.router, prefix="/clinical", tags=["Clinical"])

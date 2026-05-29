@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BrowserRouter } from "react-router-dom";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
+import { AuthProvider } from "@/contexts/AuthContext";
 import Schedule from "../Schedule";
 
 const queryClient = new QueryClient({
@@ -15,7 +16,9 @@ const renderWithProviders = (component: React.ReactElement) => {
   return render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        {component}
+        <AuthProvider>
+          {component}
+        </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>
   );

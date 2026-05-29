@@ -46,6 +46,35 @@ vi.mock('@/hooks/use-toast', () => ({
   }),
 }));
 
+vi.mock('@/hooks/useAppointments', () => ({
+  useAppointments: () => ({
+    data: {
+      data: {
+        appointments: [
+          { id: '1', patientName: 'John Doe', time: '10:00 AM', status: 'scheduled', type: 'checkup', dentist: 'Dr. Smith', duration: '60' },
+          { id: '2', patientName: 'Jane Smith', time: '2:00 PM', status: 'scheduled', type: 'cleaning', dentist: 'Dr. Smith', duration: '60' },
+        ],
+      },
+    },
+    isLoading: false,
+    isPending: false,
+    refetch: vi.fn(),
+    error: null,
+  }),
+  useAppointmentStats: () => ({
+    data: { data: { todayAppointments: 2, confirmed: 1, pending: 1, cancelled: 0 } },
+    isLoading: false,
+  }),
+  useAppointmentTypes: () => ({
+    data: { data: { types: [{ id: '1', name: 'Checkup', duration: 30 }, { id: '2', name: 'Cleaning', duration: 45 }] } },
+    isLoading: false,
+  }),
+  useCreateAppointment: (_config?: any) => ({ mutate: vi.fn(), isPending: false }),
+  useUpdateAppointment: (_config?: any) => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteAppointment: (_config?: any) => ({ mutate: vi.fn(), isPending: false }),
+  useSendAppointmentReminder: (_config?: any) => ({ mutate: vi.fn(), isPending: false }),
+}));
+
 const TestWrapper = ({ children }: { children: React.ReactNode }) => {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -78,7 +107,7 @@ describe('Appointments Page', () => {
 
   const mockAppointments = [
     {
-      id: 'apt-1',
+      id: '1',
       patientId: 'patient-1',
       patientName: 'John Doe',
       practitionerId: 'doc-1',
@@ -91,7 +120,7 @@ describe('Appointments Page', () => {
       time: '10:00 AM',
     },
     {
-      id: 'apt-2',
+      id: '2',
       patientId: 'patient-2',
       patientName: 'Jane Smith',
       practitionerId: 'doc-1',
@@ -145,8 +174,8 @@ describe('Appointments Page', () => {
     });
 
     // Component uses hardcoded appointments
-    expect(screen.getByText(/John Smith/)).toBeInTheDocument();
-    expect(screen.getByText(/Jane Doe/)).toBeInTheDocument();
+    expect(screen.getByText(/John Doe/)).toBeInTheDocument();
+    expect(screen.getByText(/Jane Smith/)).toBeInTheDocument();
   });
 
   it('should handle appointment click', async () => {
@@ -212,7 +241,7 @@ describe('Appointments Page', () => {
     });
 
     // Verify appointments are displayed
-    expect(screen.getByText(/John Smith/)).toBeInTheDocument();
+    expect(screen.getByText(/John Doe/)).toBeInTheDocument();
   });
 
   it('should handle appointment deletion', async () => {
@@ -228,8 +257,8 @@ describe('Appointments Page', () => {
     });
 
     // Component doesn't have delete functionality, verify appointments render
-    expect(screen.getByText(/John Smith/)).toBeInTheDocument();
-    expect(screen.getByText(/Jane Doe/)).toBeInTheDocument();
+    expect(screen.getByText(/John Doe/)).toBeInTheDocument();
+    expect(screen.getByText(/Jane Smith/)).toBeInTheDocument();
   });
 
   it('should handle API errors gracefully', async () => {

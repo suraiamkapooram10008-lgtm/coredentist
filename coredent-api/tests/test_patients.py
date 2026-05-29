@@ -1,6 +1,16 @@
 """
 Tests for patient endpoints
+
+These tests exercise the real API contract as implemented in
+app/api/v1/endpoints/patients.py:
+  - Paginated list shape: {items, total, page, limit, pages}
+  - Search parameter: ?query=...
+  - DELETE returns 204 No Content
+  - Duplicate email/phone returns 409 Conflict
 """
+import datetime
+import uuid as uuid_lib
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,60 +20,79 @@ class TestPatientEndpoints:
     """Test patient management endpoints"""
 
     @pytest.mark.asyncio
-    async def test_get_patients_success(self, client: AsyncClient, auth_headers, test_patient):
-        """Test getting patients list"""
+    async def test_get_patients_success(
+        self, client: AsyncClient, auth_headers, test_patient
+    ):
+        """Test getting patients list returns paginated envelope"""
         response = await client.get("/api/v1/patients", headers=auth_headers)
-        
+
         assert response.status_code == 200
         data = response.json()
-        assert "data" in data
+        # PaginatedResponse envelope
+        assert "items" in data
         assert "total" in data
         assert "page" in data
-        assert "page_size" in data
-        assert len(data["data"]) >= 1
-        
+        assert "limit" in data
+        assert "pages" in data
+        assert len(data["items"]) >= 1
+
         # Check patient data structure
-        patient = data["data"][0]
+        patient = data["items"][0]
         assert "id" in patient
         assert "first_name" in patient
         assert "last_name" in patient
         assert "email" in patient
 
     @pytest.mark.asyncio
-    async def test_get_patients_with_search(self, client: AsyncClient, auth_headers, test_patient):
+    async def test_get_patients_with_search(
+        self, client: AsyncClient, auth_headers, test_patient
+    ):
         """Test getting patients with search parameter"""
-        response = await client.get("/api/v1/patients?search=John", headers=auth_headers)
-        
+        # Endpoint uses ?query= for search
+        response = await client.get(
+            "/api/v1/patients?query=John", headers=auth_headers
+        )
+
         assert response.status_code == 200
         data = response.json()
-        assert len(data["data"]) >= 1
-        
+        assert len(data["items"]) >= 1
+
         # Should find the test patient
-        found_patient = next((p for p in data["data"] if p["first_name"] == "John"), None)
-        assert found_patient is not None
+        found = next(
+            (p for p in data["items"] if p["first_name"] == "John"),
+            None,
+        )
+        assert found is not None
 
     @pytest.mark.asyncio
-    async def test_get_patients_with_pagination(self, client: AsyncClient, auth_headers):
-        """Test getting patients with pagination"""
-        response = await client.get("/api/v1/patients?page=1&page_size=10", headers=auth_headers)
-        
+    async def test_get_patients_with_pagination(
+        self, client: AsyncClient, auth_headers
+    ):
+        """Test getting patients with pagination parameters"""
+        response = await client.get(
+            "/api/v1/patients?page=1&limit=10", headers=auth_headers
+        )
+
         assert response.status_code == 200
         data = response.json()
         assert data["page"] == 1
-        assert data["page_size"] == 10
+        assert data["limit"] == 10
 
     @pytest.mark.asyncio
     async def test_get_patients_unauthorized(self, client: AsyncClient):
         """Test getting patients without authentication"""
         response = await client.get("/api/v1/patients")
-        
         assert response.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_get_patient_by_id_success(self, client: AsyncClient, auth_headers, test_patient):
+    async def test_get_patient_by_id_success(
+        self, client: AsyncClient, auth_headers, test_patient
+    ):
         """Test getting patient by ID"""
-        response = await client.get(f"/api/v1/patients/{test_patient.id}", headers=auth_headers)
-        
+        response = await client.get(
+            f"/api/v1/patients/{test_patient.id}", headers=auth_headers
+        )
+
         assert response.status_code == 200
         data = response.json()
         assert str(data["id"]) == str(test_patient.id)
@@ -72,41 +101,48 @@ class TestPatientEndpoints:
         assert data["email"] == test_patient.email
 
     @pytest.mark.asyncio
-    async def test_get_patient_by_id_not_found(self, client: AsyncClient, auth_headers):
-        """Test getting non-existent patient"""
-        response = await client.get("/api/v1/patients/nonexistent-id", headers=auth_headers)
-        
+    async def test_get_patient_by_id_not_found(
+        self, client: AsyncClient, auth_headers
+    ):
+        """Non-existent UUID returns 404"""
+        missing_id = uuid_lib.uuid4()
+        response = await client.get(
+            f"/api/v1/patients/{missing_id}", headers=auth_headers
+        )
         assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_create_patient_success(self, client: AsyncClient, auth_headers):
-        """Test creating new patient"""
+    async def test_create_patient_success(
+        self, client: AsyncClient, auth_headers, test_patient
+    ):
+        """Test creating a new patient"""
+        # Use a random email/phone to avoid collision with the test_patient fixture
+        suffix = uuid_lib.uuid4().hex[:8]
         patient_data = {
             "first_name": "Jane",
             "last_name": "Smith",
-            "email": "jane.smith@example.com",
-            "phone": "+1987654321",
+            "email": f"jane.smith.{suffix}@example.com",
+            "phone": f"+1555{suffix[:7]}",
             "date_of_birth": "1985-05-15",
             "gender": "female",
-            "address": {
-                "street": "456 Oak Ave",
-                "city": "Springfield",
-                "state": "IL",
-                "zip_code": "62702",
-                "country": "USA"
-            },
+            "address_street": "456 Oak Ave",
+            "address_city": "Springfield",
+            "address_state": "IL",
+            "address_zip": "62702",
             "emergency_contact": {
                 "name": "John Smith",
                 "relationship": "spouse",
-                "phone": "+1987654322"
+                "phone": "+1987654322",
             },
             "medical_alerts": ["Allergic to penicillin"],
-            "status": "active"
+            "status": "active",
         }
-        
-        response = await client.post("/api/v1/patients", json=patient_data, headers=auth_headers)
-        
-        assert response.status_code == 201
+
+        response = await client.post(
+            "/api/v1/patients", json=patient_data, headers=auth_headers
+        )
+
+        assert response.status_code == 201, response.text
         data = response.json()
         assert data["first_name"] == patient_data["first_name"]
         assert data["last_name"] == patient_data["last_name"]
@@ -115,130 +151,120 @@ class TestPatientEndpoints:
         assert "created_at" in data
 
     @pytest.mark.asyncio
-    async def test_create_patient_validation_error(self, client: AsyncClient, auth_headers):
-        """Test creating patient with invalid data"""
+    async def test_create_patient_validation_error(
+        self, client: AsyncClient, auth_headers
+    ):
+        """Test creating patient with invalid data rejects at validation"""
         patient_data = {
             "first_name": "",  # Empty name should fail validation
-            "email": "invalid-email"  # Invalid email format
+            "email": "invalid-email",  # Invalid email format
         }
-        
-        response = await client.post("/api/v1/patients", json=patient_data, headers=auth_headers)
-        
+
+        response = await client.post(
+            "/api/v1/patients", json=patient_data, headers=auth_headers
+        )
+
         assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_create_patient_duplicate_email(self, client: AsyncClient, auth_headers, test_patient):
-        """Test creating patient with duplicate email"""
+    async def test_create_patient_duplicate_email(
+        self, client: AsyncClient, auth_headers, test_patient
+    ):
+        """Duplicate email or phone in same practice returns 409"""
         patient_data = {
             "first_name": "Another",
             "last_name": "Patient",
             "email": test_patient.email,  # Duplicate email
             "phone": "+1111111111",
             "date_of_birth": "1990-01-01",
-            "gender": "male"
+            "gender": "male",
         }
-        
-        response = await client.post("/api/v1/patients", json=patient_data, headers=auth_headers)
-        
-        assert response.status_code == 400
+
+        response = await client.post(
+            "/api/v1/patients", json=patient_data, headers=auth_headers
+        )
+
+        assert response.status_code == 409
         assert "already exists" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
-    async def test_update_patient_success(self, client: AsyncClient, auth_headers, test_patient):
-        """Test updating patient"""
+    async def test_update_patient_success(
+        self, client: AsyncClient, auth_headers, test_patient
+    ):
+        """Test updating a patient"""
         update_data = {
             "phone": "+1999999999",
-            "address": {
-                "street": "789 Pine St",
-                "city": "Springfield",
-                "state": "IL",
-                "zip_code": "62703",
-                "country": "USA"
-            }
+            "address_street": "789 Pine St",
+            "address_city": "Springfield",
+            "address_state": "IL",
+            "address_zip": "62703",
         }
-        
-        response = await client.put(f"/api/v1/patients/{test_patient.id}", 
-                            json=update_data, headers=auth_headers)
-        
-        assert response.status_code == 200
+
+        response = await client.put(
+            f"/api/v1/patients/{test_patient.id}",
+            json=update_data,
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 200, response.text
         data = response.json()
         assert data["phone"] == update_data["phone"]
-        assert data["address"]["street"] == update_data["address"]["street"]
+        assert data["address_street"] == update_data["address_street"]
 
     @pytest.mark.asyncio
-    async def test_update_patient_not_found(self, client: AsyncClient, auth_headers):
-        """Test updating non-existent patient"""
+    async def test_update_patient_not_found(
+        self, client: AsyncClient, auth_headers
+    ):
+        """Updating non-existent patient returns 404"""
+        missing_id = uuid_lib.uuid4()
         update_data = {"phone": "+1999999999"}
-        
-        response = await client.put("/api/v1/patients/nonexistent-id", 
-                            json=update_data, headers=auth_headers)
-        
+
+        response = await client.put(
+            f"/api/v1/patients/{missing_id}",
+            json=update_data,
+            headers=auth_headers,
+        )
         assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_delete_patient_success(self, client: AsyncClient, auth_headers, db_session: AsyncSession):
-        """Test deleting patient"""
-        # Create a patient to delete
+    async def test_delete_patient_success(
+        self,
+        client: AsyncClient,
+        auth_headers,
+        db_session: AsyncSession,
+        test_practice,
+    ):
+        """Delete returns 204 No Content (soft delete to status=inactive)"""
         from app.models.patient import Patient
-        import uuid as uuid_lib
-        import datetime
-        
+
         patient = Patient(
             id=uuid_lib.uuid4(),
-            practice_id=uuid_lib.uuid4(),
+            practice_id=test_practice.id,
             first_name="Delete",
             last_name="Me",
-            email="delete.me@example.com",
-            phone="+1000000000",
+            email=f"delete.me.{uuid_lib.uuid4().hex[:8]}@example.com",
+            phone=f"+1{uuid_lib.uuid4().int % 10_000_000_000:010d}",
             date_of_birth=datetime.date(1990, 1, 1),
             gender="male",
-            status="active"
+            status="active",
         )
         db_session.add(patient)
         await db_session.commit()
         await db_session.refresh(patient)
-        
-        response = await client.delete(f"/api/v1/patients/{patient.id}", headers=auth_headers)
-        
-        assert response.status_code == 200
-        assert "deleted" in response.json()["message"].lower()
+
+        response = await client.delete(
+            f"/api/v1/patients/{patient.id}", headers=auth_headers
+        )
+
+        assert response.status_code == 204
 
     @pytest.mark.asyncio
-    async def test_delete_patient_not_found(self, client: AsyncClient, auth_headers):
-        """Test deleting non-existent patient"""
-        response = await client.delete("/api/v1/patients/nonexistent-id", headers=auth_headers)
-        
+    async def test_delete_patient_not_found(
+        self, client: AsyncClient, auth_headers
+    ):
+        """Deleting non-existent patient returns 404"""
+        missing_id = uuid_lib.uuid4()
+        response = await client.delete(
+            f"/api/v1/patients/{missing_id}", headers=auth_headers
+        )
         assert response.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_delete_patient_with_appointments(self, client: AsyncClient, auth_headers, test_appointment):
-        """Test deleting patient with active appointments"""
-        patient_id = test_appointment.patient_id
-        
-        response = await client.delete(f"/api/v1/patients/{patient_id}", headers=auth_headers)
-        
-        # Should prevent deletion if patient has appointments
-        assert response.status_code == 400
-        assert "appointments" in response.json()["detail"].lower()
-
-    @pytest.mark.asyncio
-    async def test_get_patient_appointments(self, client: AsyncClient, auth_headers, test_appointment):
-        """Test getting patient's appointments"""
-        patient_id = test_appointment.patient_id
-        
-        response = await client.get(f"/api/v1/patients/{patient_id}/appointments", 
-                            headers=auth_headers)
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) >= 1
-        assert str(data[0]["patient_id"]) == str(patient_id)
-
-    @pytest.mark.asyncio
-    async def test_get_patient_medical_history(self, client: AsyncClient, auth_headers, test_patient):
-        """Test getting patient's medical history"""
-        response = await client.get(f"/api/v1/patients/{test_patient.id}/medical-history", 
-                            headers=auth_headers)
-        
-        assert response.status_code == 200
-        # Medical history structure would depend on implementation

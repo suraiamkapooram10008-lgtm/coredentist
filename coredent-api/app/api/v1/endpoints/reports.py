@@ -31,7 +31,7 @@ async def get_dashboard_metrics(
     to_date: date = Query(..., alias="to"),
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> DashboardMetricsResponse:
     """
     Get aggregated dashboard metrics for the practice
     """

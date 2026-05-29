@@ -157,6 +157,12 @@ export default function Login() {
                 )}
               </Button>
               
+              <p className="text-center text-sm text-muted-foreground">
+                Don't have an account?{' '}
+                <Link to="/register" className="text-primary hover:underline">
+                  Create one
+                </Link>
+              </p>
             </CardFooter>
           </form>
         </Card>

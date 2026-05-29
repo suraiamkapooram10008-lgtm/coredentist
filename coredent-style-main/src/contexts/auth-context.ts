@@ -1,12 +1,23 @@
 import { createContext, useContext } from 'react';
 import type { User, UserRole, LoginCredentials } from '@/types/api';
 
+export interface RegisterData {
+  practiceName: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  password: string;
+  country?: string;
+  phone?: string;
+}
+
 export interface AuthContextValue {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   role: UserRole | null;
   login: (credentials: LoginCredentials) => Promise<boolean>;
+  register: (data: RegisterData) => Promise<boolean>;
   logout: () => Promise<void>;
   hasRole: (...roles: UserRole[]) => boolean;
 }

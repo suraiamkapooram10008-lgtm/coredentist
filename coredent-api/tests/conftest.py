@@ -27,10 +27,10 @@ from sqlalchemy.orm import configure_mappers
 
 # Import all models to ensure they're registered with SQLAlchemy
 from app.core.database import Base
-from app.core.config import settings
+from app.core.config_simple import settings
 from app.core.security import get_password_hash
 from app.main import app as fastapi_app
-from app.api.deps import get_db
+from app.api.deps import get_db, verify_csrf, verify_csrf_no_auth
 
 # Import all models to register them with SQLAlchemy
 import app.models
@@ -68,6 +68,26 @@ async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
 fastapi_app.dependency_overrides[get_db] = override_get_db
 
 
+# Bypass CSRF verification in tests. The httpx AsyncClient does not manage
+# CSRF cookies, and the production CSRF flow is covered by dedicated tests
+# in test_security.py. Production behavior is unchanged.
+async def _bypass_csrf() -> bool:
+    return True
+
+
+fastapi_app.dependency_overrides[verify_csrf] = _bypass_csrf
+fastapi_app.dependency_overrides[verify_csrf_no_auth] = _bypass_csrf
+
+
+# Disable slowapi rate limiting in tests. Each test fixture performs a
+# login, and @limiter.limit("5/minute") on /auth/login otherwise rejects
+# the 6th login in the suite with HTTP 429 (surfacing as 401 downstream).
+# Production limits are unaffected.
+from app.core.limiter import limiter as _limiter
+
+_limiter.enabled = False
+
+
 @pytest.fixture(scope="function")
 async def setup_database():
     """Create database tables before tests"""
@@ -91,9 +111,23 @@ async def db_session(setup_database) -> AsyncGenerator[AsyncSession, None]:
 
 @pytest.fixture
 async def client(setup_database) -> AsyncGenerator[AsyncClient, None]:
-    """Create async test client"""
-    async with AsyncClient(app=fastapi_app, base_url="http://test") as ac:
+    """Create async test client.
+
+    follow_redirects=True so tests can exercise routes defined at /path/
+    with a trailing slash by requesting /path (FastAPI otherwise returns
+    307 and httpx doesn't follow redirects by default).
+    """
+    async with AsyncClient(
+        app=fastapi_app, base_url="http://test", follow_redirects=True
+    ) as ac:
         yield ac
+
+
+# Alias: several older test modules use the name `async_client` for the
+# httpx AsyncClient fixture. Keep both names to avoid churn.
+@pytest.fixture
+async def async_client(client: AsyncClient) -> AsyncClient:
+    return client
 
 
 @pytest.fixture
@@ -117,7 +151,12 @@ async def test_practice(db_session: AsyncSession) -> Practice:
 
 @pytest.fixture
 async def test_user(db_session: AsyncSession, test_practice: Practice) -> User:
-    """Create test user with unique email"""
+    """Create test user with unique email.
+
+    Uses OWNER role so role-restricted endpoints (e.g. delete_patient which
+    requires OWNER/ADMIN) are exercisable. Role-specific permission tests
+    should create their own user with the relevant role.
+    """
     unique_email = f"testuser_{uuid_lib.uuid4().hex[:8]}@example.com"
     user = User(
         id=uuid_lib.uuid4(),
@@ -125,7 +164,7 @@ async def test_user(db_session: AsyncSession, test_practice: Practice) -> User:
         password_hash=get_password_hash("testpassword123"),
         first_name="Test",
         last_name="User",
-        role="dentist",
+        role="OWNER",
         practice_id=test_practice.id,
         is_active=True,
     )

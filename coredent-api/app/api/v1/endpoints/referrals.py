@@ -40,7 +40,7 @@ async def list_referral_sources(
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     List referral sources
     """
@@ -73,7 +73,7 @@ async def create_referral_source(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Create new referral source
     """
@@ -101,7 +101,7 @@ async def list_referrals(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     List referrals
     """
@@ -149,7 +149,7 @@ async def get_referral(
     referral_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     Get referral by ID
     """
@@ -182,7 +182,7 @@ async def create_referral(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Create new referral
     """
@@ -233,7 +233,7 @@ async def update_referral(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Update referral
     """
@@ -270,7 +270,7 @@ async def delete_referral(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Delete referral
     """
@@ -303,7 +303,7 @@ async def list_referral_communications(
     referral_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     List communications for a referral
     """
@@ -339,7 +339,7 @@ async def add_referral_communication(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Add communication to referral
     """
@@ -379,7 +379,7 @@ async def get_referral_summary(
     end_date: Optional[datetime] = Query(None, description="End date"),
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     Get referral summary statistics
     """
@@ -440,7 +440,7 @@ async def send_referral_email(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Send email to referral specialist
     """
@@ -515,7 +515,7 @@ async def send_referral_email(
         await db.commit()
         
         return {"message": "Email sent successfully"}
-    except Exception as e:
+    except (ValueError, TypeError, ConnectionError) as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to send email: {str(e)}",

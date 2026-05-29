@@ -57,6 +57,9 @@ class SimpleSettings:
         self.AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "")
         self.AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
         self.AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "")
+        # Alias used by s3_storage.py; defaults to AWS_S3_BUCKET
+        self.AWS_S3_BUCKET_NAME = os.getenv("AWS_S3_BUCKET_NAME", "") or self.AWS_S3_BUCKET
+        self.AWS_CLOUDFRONT_DOMAIN = os.getenv("AWS_CLOUDFRONT_DOMAIN", "")
         self.AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
         
         # Encryption
@@ -71,7 +74,26 @@ class SimpleSettings:
         
         # Stripe Payments (Optional - US Market)
         self.STRIPE_API_KEY = os.getenv("STRIPE_API_KEY", "")
+        # STRIPE_SECRET_KEY is the canonical name used by the Stripe SDK;
+        # fall back to STRIPE_API_KEY for backward compatibility.
+        self.STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "") or self.STRIPE_API_KEY
+        self.STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
         self.STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+        # Webhook hardening
+        self.STRIPE_WEBHOOK_IP_WHITELIST_ENABLED = os.getenv(
+            "STRIPE_WEBHOOK_IP_WHITELIST_ENABLED", "true"
+        ).lower() == "true"
+        self.STRIPE_WEBHOOK_HMAC_SECRET = os.getenv("STRIPE_WEBHOOK_HMAC_SECRET", "")
+
+        # CAPTCHA (anti-spam) - Optional
+        self.RECAPTCHA_SECRET_KEY = os.getenv("RECAPTCHA_SECRET_KEY", "")
+        self.RECAPTCHA_SITE_KEY = os.getenv("RECAPTCHA_SITE_KEY", "")
+        self.HCAPTCHA_SECRET_KEY = os.getenv("HCAPTCHA_SECRET_KEY", "")
+        self.HCAPTCHA_SITE_KEY = os.getenv("HCAPTCHA_SITE_KEY", "")
+
+        # Celery (falls back to REDIS_URL when unset)
+        self.CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "") or self.REDIS_URL
+        self.CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "") or self.REDIS_URL
         
         # Razorpay Payments (Optional - Indian Market)
         self.RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")

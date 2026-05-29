@@ -12,7 +12,7 @@ from sqlalchemy import and_, or_
 import stripe
 
 from app.core.celery_app import celery_app
-from app.core.config import settings
+from app.core.config_simple import settings
 from app.core.email import send_reminder_email, send_sms_reminder
 from app.core.sms import send_twilio_sms
 from app.models.appointment import Appointment

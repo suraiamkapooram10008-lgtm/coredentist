@@ -1,95 +1,83 @@
-/**
- * useTreatmentPlanForm Hook
- * Manages treatment plan form state and validation
- */
-
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { TreatmentPlan } from '@/types/treatmentPlan';
 
-interface FormValues {
+export interface FormData {
   title: string;
   description: string;
-  patientId: string;
   patientName: string;
   notes: string;
 }
 
-/**
- * Custom hook for managing treatment plan form state
- */
-export function useTreatmentPlanForm(initialPlan?: TreatmentPlan | null) {
-  const [formData, setFormData] = useState<FormValues>({
-    title: initialPlan?.title || '',
-    description: initialPlan?.description || '',
-    patientId: initialPlan?.patientId || '',
-    patientName: initialPlan?.patientName || '',
-    notes: initialPlan?.notes || '',
-  });
+export interface FormErrors {
+  title?: string;
+  description?: string;
+  patientName?: string;
+  notes?: string;
+}
 
-  const [errors, setErrors] = useState<Partial<FormValues>>({});
+function getInitialFormData(plan?: TreatmentPlan | null): FormData {
+  return {
+    title: plan?.title || '',
+    description: plan?.description || '',
+    patientName: plan?.patientName || '',
+    notes: plan?.notes || '',
+  };
+}
 
-  // Reset form when plan changes
+export function useTreatmentPlanForm(plan?: TreatmentPlan | null) {
+  const [formData, setFormData] = useState<FormData>(() => getInitialFormData(plan));
+  const [errors, setErrors] = useState<FormErrors>({});
+  const formDataRef = useRef<FormData>(formData);
+
   useEffect(() => {
-    if (initialPlan) {
-      setFormData({
-        title: initialPlan.title || '',
-        description: initialPlan.description || '',
-        patientId: initialPlan.patientId || '',
-        patientName: initialPlan.patientName || '',
-        notes: initialPlan.notes || '',
-      });
-    }
-  }, [initialPlan]);
+    formDataRef.current = formData;
+  }, [formData]);
 
-  const updateField = (field: keyof FormValues, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
-    // Clear error for this field
-    if (errors[field]) {
-      setErrors((prev) => ({
-        ...prev,
-        [field]: undefined,
-      }));
-    }
-  };
-
-  const validate = (): boolean => {
-    const newErrors: Partial<FormValues> = {};
-
-    if (!formData.title.trim()) {
-      newErrors.title = 'Title is required';
-    } else if (formData.title.length > 100) {
-      newErrors.title = 'Title too long';
-    }
-
-    if (formData.description && formData.description.length > 500) {
-      newErrors.description = 'Description too long';
-    }
-
-    if (!formData.patientName.trim()) {
-      newErrors.patientName = 'Patient name is required';
-    }
-
-    if (formData.notes && formData.notes.length > 1000) {
-      newErrors.notes = 'Notes too long';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const reset = () => {
-    setFormData({
-      title: '',
-      description: '',
-      patientId: '',
-      patientName: '',
-      notes: '',
-    });
+  useEffect(() => {
+    const initial = getInitialFormData(plan);
+    setFormData(initial);
+    formDataRef.current = initial;
     setErrors({});
-  };
+  }, [plan]);
+
+  const updateField = useCallback((field: keyof FormData, value: string) => {
+    const next = { ...formDataRef.current, [field]: value };
+    formDataRef.current = next;
+    setFormData(next);
+    setErrors((prev) => {
+      const nextErrors = { ...prev };
+      delete nextErrors[field];
+      return nextErrors;
+    });
+  }, []);
+
+  const validate = useCallback((): boolean => {
+    const currentFormData = formDataRef.current;
+    const nextErrors: FormErrors = {};
+    if (!currentFormData.title.trim()) {
+      nextErrors.title = 'Title is required';
+    } else if (currentFormData.title.length > 100) {
+      nextErrors.title = 'Title too long';
+    }
+    if (!currentFormData.patientName.trim()) {
+      nextErrors.patientName = 'Patient name is required';
+    }
+    if (currentFormData.description && currentFormData.description.length > 500) {
+      nextErrors.description = 'Description too long';
+    }
+    if (currentFormData.notes && currentFormData.notes.length > 1000) {
+      nextErrors.notes = 'Notes too long';
+    }
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }, []);
+
+  const reset = useCallback(() => {
+    const initial = getInitialFormData(plan);
+    setFormData(initial);
+    formDataRef.current = initial;
+    setErrors({});
+  }, [plan]);
 
   return {
     formData,

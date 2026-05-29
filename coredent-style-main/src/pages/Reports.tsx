@@ -82,22 +82,8 @@ export default function Reports() {
 
   // effect:audited — Load metrics when date range changes
   useEffect(() => {
-    console.log('[Reports] Loading metrics for date range:', dateRange);
     loadMetrics(dateRange);
   }, [dateRange, loadMetrics]);
-
-  // Log when data changes
-  useEffect(() => {
-    console.log('[Reports] Data updated:', { 
-      hasMetrics: !!metrics, 
-      isLoading, 
-      error,
-      metricsPreview: metrics ? {
-        appointmentsTotal: metrics.appointments?.total,
-        revenueTotal: metrics.revenue?.totalRevenue
-      } : null
-    });
-  }, [metrics, isLoading, error]);
 
   const handleExport = (reportType: ReportType) => {
     if (!metrics) return;

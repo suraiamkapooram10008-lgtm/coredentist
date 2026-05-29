@@ -1,49 +1,24 @@
-/**
- * useAppointmentStats Hook
- * Fetches and manages appointment statistics
- */
+import type { Appointment } from './useAppointmentFilters';
 
-import { useMemo } from 'react';
-import type { Appointment } from '@/services/appointmentsApi';
-
-interface AppointmentStatsResult {
-  todayAppointments: number;
+export interface AppointmentStats {
+  total: number;
   confirmed: number;
   pending: number;
   cancelled: number;
   completed: number;
 }
 
-/**
- * Calculate appointment statistics from a list of appointments
- */
-export function useAppointmentStats(appointments: Appointment[] = []): AppointmentStatsResult {
-  return useMemo(() => {
-    const stats: AppointmentStatsResult = {
-      todayAppointments: appointments.length,
-      confirmed: 0,
-      pending: 0,
-      cancelled: 0,
-      completed: 0,
-    };
-
-    appointments.forEach((apt) => {
-      switch (apt.status?.toLowerCase()) {
-        case 'confirmed':
-          stats.confirmed++;
-          break;
-        case 'pending':
-          stats.pending++;
-          break;
-        case 'cancelled':
-          stats.cancelled++;
-          break;
-        case 'completed':
-          stats.completed++;
-          break;
-      }
-    });
-
-    return stats;
-  }, [appointments]);
+export function useAppointmentStats(appointments: Appointment[] = []): AppointmentStats {
+  return appointments.reduce(
+    (stats, apt) => {
+      stats.total++;
+      const status = apt.status.toLowerCase();
+      if (status === 'confirmed') stats.confirmed++;
+      else if (status === 'pending') stats.pending++;
+      else if (status === 'cancelled') stats.cancelled++;
+      else if (status === 'completed') stats.completed++;
+      return stats;
+    },
+    { total: 0, confirmed: 0, pending: 0, cancelled: 0, completed: 0 }
+  );
 }

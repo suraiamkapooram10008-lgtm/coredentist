@@ -6,7 +6,8 @@ Thin HTTP handlers that delegate to booking services
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, func
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from datetime import datetime, date, time, timedelta
 from typing import List, Optional, Any
 import logging
@@ -72,7 +73,7 @@ async def list_booking_pages(
     status: Optional[BookingPageStatus] = Query(None, description="Filter by status"),
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> BookingPageListResponse:
     """List booking pages for the current practice"""
     try:
         query = select(BookingPage).where(BookingPage.practice_id == current_user.practice_id)
@@ -86,7 +87,7 @@ async def list_booking_pages(
         pages = result.scalars().all()
         
         return BookingPageListResponse(pages=pages, count=len(pages))
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing booking pages: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -97,7 +98,7 @@ async def create_booking_page(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> BookingPageResponse:
     """Create a new booking page"""
     try:
         # Check for duplicate slug
@@ -154,7 +155,9 @@ async def create_booking_page(
         return page
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error creating booking page: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -164,7 +167,7 @@ async def get_booking_page(
     page_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> BookingPageResponse:
     """Get booking page by ID"""
     try:
         result = await db.execute(
@@ -181,7 +184,9 @@ async def get_booking_page(
         return page
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error getting booking page: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -193,7 +198,7 @@ async def update_booking_page(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> BookingPageResponse:
     """Update booking page"""
     try:
         result = await db.execute(
@@ -234,7 +239,9 @@ async def update_booking_page(
         return page
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error updating booking page: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -245,7 +252,7 @@ async def update_booking_page(
 async def get_public_booking_page(
     page_slug: str,
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> BookingPagePublicResponse:
     """Get public booking page by slug (no authentication required)"""
     try:
         result = await db.execute(
@@ -285,7 +292,9 @@ async def get_public_booking_page(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error getting public booking page: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -299,7 +308,7 @@ async def create_online_booking(
     page_slug: str,
     booking_data: OnlineBookingCreate,
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> OnlineBookingPublicResponse:
     """Create a new online booking (public endpoint, no authentication)"""
     try:
         # SECURITY FIX #1: Honeypot check (anti-bot)
@@ -409,7 +418,9 @@ async def create_online_booking(
         return booking
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error creating online booking: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -423,7 +434,7 @@ async def list_online_bookings(
     is_new_patient: Optional[bool] = Query(None, description="Filter by new patient"),
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> OnlineBookingListResponse:
     """List online bookings for the current practice"""
     try:
         query = select(OnlineBooking).where(OnlineBooking.practice_id == current_user.practice_id)
@@ -450,7 +461,7 @@ async def list_online_bookings(
         await db.commit()
         
         return OnlineBookingListResponse(bookings=bookings, count=len(bookings))
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing online bookings: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -461,7 +472,7 @@ async def get_online_booking(
     booking_id: str,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> OnlineBookingResponse:
     """Get online booking by ID"""
     try:
         result = await db.execute(
@@ -482,7 +493,9 @@ async def get_online_booking(
         return booking
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error getting online booking: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -494,7 +507,7 @@ async def update_online_booking(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> OnlineBookingResponse:
     """Update online booking"""
     try:
         result = await db.execute(
@@ -530,7 +543,9 @@ async def update_online_booking(
         return booking
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error updating online booking: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -542,7 +557,7 @@ async def confirm_booking(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> BookingConfirmationResponse:
     """Confirm a booking and optionally create an appointment"""
     try:
         result = await db.execute(
@@ -624,7 +639,9 @@ async def confirm_booking(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error confirming booking: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -638,7 +655,7 @@ async def get_availability(
     page_slug: str,
     availability_request: AvailabilityRequest,
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> AvailabilityResponse:
     """Get available time slots (public endpoint)"""
     try:
         # Get booking page
@@ -710,7 +727,9 @@ async def get_availability(
         return AvailabilityResponse(days=days, total_slots=total_slots)
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error getting availability: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -724,7 +743,7 @@ async def add_to_waitlist(
     page_slug: str,
     waitlist_data: WaitlistEntryCreate,
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> WaitlistEntryResponse:
     """Add to waitlist (public endpoint)"""
     try:
         # Get booking page
@@ -755,7 +774,9 @@ async def add_to_waitlist(
         return entry
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error adding to waitlist: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -765,7 +786,7 @@ async def list_waitlist_entries(
     status_filter: Optional[WaitlistStatus] = Query(None, description="Filter by status"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> WaitlistEntryListResponse:
     """List waitlist entries for the current practice"""
     try:
         query = select(WaitlistEntry).where(WaitlistEntry.practice_id == current_user.practice_id)
@@ -779,7 +800,7 @@ async def list_waitlist_entries(
         entries = result.scalars().all()
         
         return WaitlistEntryListResponse(entries=entries, count=len(entries))
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing waitlist entries: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -791,7 +812,7 @@ async def update_waitlist_entry(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> WaitlistEntryResponse:
     """Update waitlist entry"""
     try:
         result = await db.execute(
@@ -816,7 +837,9 @@ async def update_waitlist_entry(
         return entry
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error updating waitlist entry: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -827,7 +850,7 @@ async def notify_waitlist_entry(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """Notify waitlist entry about availability"""
     try:
         result = await db.execute(
@@ -864,7 +887,9 @@ async def notify_waitlist_entry(
         return {"message": "Notification sent successfully"}
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error notifying waitlist entry: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -875,7 +900,7 @@ async def notify_waitlist_entry(
 async def verify_email(
     verification_data: EmailVerificationRequest,
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> VerificationResponse:
     """Verify email address (public endpoint)"""
     try:
         result = await db.execute(select(OnlineBooking).where(OnlineBooking.id == verification_data.booking_id))
@@ -894,7 +919,9 @@ async def verify_email(
         return VerificationResponse(verified=True, message="Email verified successfully")
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error verifying email: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -903,7 +930,7 @@ async def verify_email(
 async def verify_phone(
     verification_data: PhoneVerificationRequest,
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> VerificationResponse:
     """Verify phone number (public endpoint)"""
     try:
         result = await db.execute(select(OnlineBooking).where(OnlineBooking.id == verification_data.booking_id))
@@ -922,7 +949,9 @@ async def verify_phone(
         return VerificationResponse(verified=True, message="Phone verified successfully")
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error verifying phone: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -935,7 +964,7 @@ async def get_booking_analytics(
     end_date: Optional[date] = Query(None, description="End date"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> BookingAnalytics:
     """Get booking analytics for the current practice"""
     try:
         query = select(OnlineBooking).where(OnlineBooking.practice_id == current_user.practice_id)
@@ -1005,6 +1034,6 @@ async def get_booking_analytics(
             popular_appointment_types={},
             referral_sources=referral_sources,
         )
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error getting booking analytics: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")

@@ -41,8 +41,8 @@ interface BookingPage {
   allow_existing_patients: boolean;
   booking_window_days: number;
   min_notice_hours: number;
-  business_hours: any;
-  intake_form_fields: any[];
+  business_hours: Record<string, { open: string; close: string; closed?: boolean }>;
+  intake_form_fields: { id: string; label: string; type: string; required?: boolean }[];
 }
 
 interface TimeSlot {
@@ -51,23 +51,17 @@ interface TimeSlot {
   is_available: boolean;
 }
 
-// --- Mock Data / API Helpers ---
+// --- API Helpers ---
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+
 const fetchPublicPage = async (slug: string): Promise<BookingPage> => {
-  // In production, this would be: await api.get(`/booking/public/${slug}`)
-  // For now, returning a mock based on the backend model
-  return {
-    page_slug: slug,
-    page_title: "CoreDent Family Dental",
-    welcome_message: "Welcome to our online booking portal. Please select a service and time that works best for you.",
-    logo_url: "https://images.unsplash.com/photo-1606811841660-1b5168c5c918?auto=format&fit=crop&q=80&w=200&h=200",
-    primary_color: "#1d4ed8",
-    allow_new_patients: true,
-    allow_existing_patients: true,
-    booking_window_days: 90,
-    min_notice_hours: 24,
-    business_hours: {},
-    intake_form_fields: []
-  };
+  const response = await fetch(`${API_BASE}/booking/public/${slug}`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch booking page: ${response.status}`);
+  }
+  return response.json();
 };
 
 const STEPS = [

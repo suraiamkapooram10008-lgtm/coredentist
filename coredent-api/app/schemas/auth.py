@@ -15,6 +15,20 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RegisterRequest(BaseModel):
+    """Self-serve practice registration request.
+
+    Creates a new Practice (tenant) and its first OWNER user atomically.
+    """
+    practice_name: str = Field(..., min_length=2, max_length=255)
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    email: EmailStr
+    password: str = Field(..., min_length=12)
+    country: str = Field(default="US", min_length=2, max_length=2)
+    phone: Optional[str] = Field(default=None, max_length=20)
+
+
 class TokenResponse(BaseModel):
     """Token response schema"""
     access_token: str

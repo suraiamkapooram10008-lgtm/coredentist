@@ -8,7 +8,7 @@ import hmac
 import logging
 from typing import Optional, List
 from fastapi import Request, HTTPException, status
-from app.core.config import settings
+from app.core.config_simple import settings
 
 logger = logging.getLogger(__name__)
 

@@ -37,7 +37,7 @@ async def list_labs(
     is_preferred: Optional[bool] = Query(None, description="Filter by preferred"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     List dental labs
     """
@@ -77,7 +77,7 @@ async def create_lab(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Create new lab vendor
     """
@@ -105,7 +105,7 @@ async def list_lab_cases(
     end_date: Optional[datetime] = Query(None, description="End date"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     List lab cases
     """
@@ -152,7 +152,7 @@ async def get_lab_case(
     case_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     Get lab case by ID
     """
@@ -186,7 +186,7 @@ async def create_lab_case(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Create new lab case
     """
@@ -237,7 +237,7 @@ async def update_lab_case(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Update lab case
     """
@@ -275,7 +275,7 @@ async def delete_lab_case(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Delete lab case
     """
@@ -312,7 +312,7 @@ async def list_lab_invoices(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     List lab invoices
     """
@@ -350,7 +350,7 @@ async def get_lab_invoice(
     invoice_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     Get lab invoice by ID
     """
@@ -386,7 +386,7 @@ async def get_lab_summary(
     end_date: Optional[datetime] = Query(None, description="End date"),
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     Get lab summary statistics
     """

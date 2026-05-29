@@ -3,10 +3,11 @@ Settings Endpoints
 Practice and billing settings management
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Any
 
 from app.core.database import get_db
 from app.api.deps import get_current_user, require_role
@@ -21,22 +22,16 @@ router = APIRouter()
 async def get_billing_preferences(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> BillingPreferencesResponse:
     """
     Get billing preferences for the practice
     """
     from sqlalchemy import cast, String
-    
-    print(f"[DEBUG] User practice_id: {current_user.practice_id}")
-    print(f"[DEBUG] User practice_id type: {type(current_user.practice_id)}")
-    
+
     # Get practice - cast UUID to string for SQLite compatibility
     stmt = select(Practice).where(cast(Practice.id, String) == str(current_user.practice_id))
-    print(f"[DEBUG] Query: {stmt}")
     result = await db.execute(stmt)
     practice = result.scalar_one_or_none()
-    
-    print(f"[DEBUG] Practice found: {practice}")
     
     if not practice:
         raise HTTPException(status_code=404, detail="Practice not found")
@@ -60,7 +55,7 @@ async def update_billing_preferences(
     preferences: BillingPreferencesUpdate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> BillingPreferencesResponse:
     """
     Update billing preferences for the practice
     """

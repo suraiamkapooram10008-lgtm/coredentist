@@ -6,9 +6,10 @@ Consolidated analytics and management for practice groups
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
-from typing import List, Optional, Any
+from typing import List, Optional
 from datetime import datetime, timedelta
 
+from pydantic import BaseModel
 from app.core.database import get_db
 from app.api.deps import get_current_user, require_role
 from app.models.user import User, UserRole
@@ -17,15 +18,39 @@ from app.models.billing import Invoice
 from app.models.patient import Patient
 from app.models.appointment import Appointment
 
+class PracticeAnalytics(BaseModel):
+    practice_id: str
+    practice_name: str
+    production: float
+    collections: float
+    new_patients: int
+    utilization: float
+
+class Period(BaseModel):
+    start: datetime
+    end: datetime
+
+class ConsolidatedMetrics(BaseModel):
+    production: float
+    collections: float
+    new_patients: int
+    avg_utilization: float
+
+class GroupAnalyticsResponse(BaseModel):
+    group_id: str
+    period: Period
+    consolidated: ConsolidatedMetrics
+    by_location: List[PracticeAnalytics]
+
 router = APIRouter()
 
-@router.get("/group/analytics", response_model=Any)
+@router.get("/group/analytics", response_model=GroupAnalyticsResponse)
 async def get_group_analytics(
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
     current_user: User = Depends(require_role(UserRole.GROUP_OWNER, UserRole.GROUP_ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> GroupAnalyticsResponse:
     """
     Get consolidated analytics for all practices in the group.
     EXPERTISE: Multi-practice aggregation with per-location breakdown.
@@ -139,11 +164,11 @@ async def get_group_analytics(
         "by_location": analytics
     }
 
-@router.get("/group/practices", response_model=List[Any])
+@router.get("/group/practices", response_model=List[Practice])
 async def list_group_practices(
     current_user: User = Depends(require_role(UserRole.GROUP_OWNER, UserRole.GROUP_ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> List[Practice]:
     """
     List all practice locations within the DSO group.
     """

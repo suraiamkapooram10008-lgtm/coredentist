@@ -530,3 +530,48 @@ class EmailService:
 
 # Singleton instance
 email_service = EmailService()
+
+
+# ==================== Module-level convenience functions ====================
+# These are called from endpoint modules and patched directly in tests.
+
+async def send_payment_confirmation_email(
+    to_email: str,
+    amount: float,
+    currency: str = "usd",
+    payment_id: Optional[Any] = None,
+    description: str = "",
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """
+    Send a payment confirmation email.
+
+    Thin module-level wrapper used by the Stripe webhook handler. Delegates to
+    the singleton EmailService. Called with minimal context (no customer name
+    or invoice number from Stripe payloads), so we render a generic receipt.
+    """
+    try:
+        return await email_service.send_email(
+            to=to_email,
+            subject=f"Payment Received - ${amount:.2f} {currency.upper()}",
+            html_content=(
+                "<html><body style='font-family: Arial, sans-serif;'>"
+                "<h2>Payment Received</h2>"
+                f"<p>We've successfully processed your payment of "
+                f"<strong>${amount:.2f} {currency.upper()}</strong>.</p>"
+                + (f"<p>{description}</p>" if description else "")
+                + (f"<p>Reference: {payment_id}</p>" if payment_id else "")
+                + "<p>Thank you for your business.</p>"
+                "<hr><p style='color:#666;font-size:12px;'>"
+                "CoreDent Dental Practice Management</p>"
+                "</body></html>"
+            ),
+            text_content=(
+                f"Payment received: ${amount:.2f} {currency.upper()}."
+                + (f" Reference: {payment_id}." if payment_id else "")
+                + " Thank you."
+            ),
+        )
+    except Exception as exc:
+        logger.error("Failed to send payment confirmation email: %s", exc)
+        return {"status": "error", "error": str(exc)}

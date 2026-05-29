@@ -11,11 +11,14 @@ import stripe
 from datetime import datetime, timedelta
 import logging
 
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+
 from app.api.deps import get_db, get_current_active_user
 from app.models.user import User
 from app.models.subscription import Subscription
-from app.schemas.payment import PaymentIntentCreate, PaymentIntentResponse, SubscriptionCreate
-from app.core.config import settings
+from app.schemas.payment import PaymentIntentCreate, PaymentIntentResponse
+from app.schemas.subscription import SubscriptionCreate
+from app.core.config_simple import settings
 from app.core.email import send_payment_confirmation_email
 
 logger = logging.getLogger(__name__)
@@ -79,7 +82,7 @@ async def create_payment_intent(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Payment failed: {str(e)}"
         )
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Payment intent creation failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -142,7 +145,7 @@ async def create_subscription(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Subscription creation failed: {str(e)}"
         )
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Subscription creation failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -196,7 +199,7 @@ async def get_subscription(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Failed to retrieve subscription: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -250,7 +253,7 @@ async def cancel_subscription(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Failed to cancel subscription: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -357,16 +360,16 @@ async def handle_payment_succeeded(db: Session, payment_intent: dict):
     """Handle successful payment"""
     try:
         # Update payment record
-        from app.models.payment import Payment
-        payment = db.query(Payment).filter(
-            Payment.transaction_id == payment_intent["id"]
+        from app.models.payment import PaymentTransaction
+        payment = db.query(PaymentTransaction).filter(
+            PaymentTransaction.processor_transaction_id == payment_intent["id"]
         ).first()
-        
+
         if payment:
             payment.status = "completed"
-            payment.paid_at = datetime.utcnow()
+            payment.processed_at = datetime.utcnow()
             db.commit()
-            
+
             # Send confirmation email
             if payment_intent.get("customer_email"):
                 await send_payment_confirmation_email(
@@ -378,7 +381,7 @@ async def handle_payment_succeeded(db: Session, payment_intent: dict):
                 )
         
         logger.info(f"Payment succeeded: {payment_intent['id']}")
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, AttributeError, SQLAlchemyError) as e:
         logger.error(f"Error handling payment succeeded: {e}")
         db.rollback()
 
@@ -386,18 +389,18 @@ async def handle_payment_succeeded(db: Session, payment_intent: dict):
 async def handle_payment_failed(db: Session, payment_intent: dict):
     """Handle failed payment"""
     try:
-        from app.models.payment import Payment
-        payment = db.query(Payment).filter(
-            Payment.transaction_id == payment_intent["id"]
+        from app.models.payment import PaymentTransaction
+        payment = db.query(PaymentTransaction).filter(
+            PaymentTransaction.processor_transaction_id == payment_intent["id"]
         ).first()
-        
+
         if payment:
             payment.status = "failed"
-            payment.failure_message = payment_intent.get("last_payment_error", {}).get("message", "Unknown error")
+            payment.error_message = payment_intent.get("last_payment_error", {}).get("message", "Unknown error")
             db.commit()
-        
+
         logger.warning(f"Payment failed: {payment_intent['id']}")
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, AttributeError, SQLAlchemyError) as e:
         logger.error(f"Error handling payment failed: {e}")
         db.rollback()
 
@@ -429,7 +432,7 @@ async def handle_subscription_created(db: Session, subscription: dict):
             db.commit()
         
         logger.info(f"Subscription created: {subscription['id']}")
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, AttributeError, SQLAlchemyError) as e:
         logger.error(f"Error handling subscription created: {e}")
         db.rollback()
 
@@ -451,7 +454,7 @@ async def handle_subscription_updated(db: Session, subscription: dict):
             db.commit()
         
         logger.info(f"Subscription updated: {subscription['id']}")
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, AttributeError, SQLAlchemyError) as e:
         logger.error(f"Error handling subscription updated: {e}")
         db.rollback()
 
@@ -469,7 +472,7 @@ async def handle_subscription_deleted(db: Session, subscription: dict):
             db.commit()
         
         logger.info(f"Subscription deleted: {subscription['id']}")
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, AttributeError, SQLAlchemyError) as e:
         logger.error(f"Error handling subscription deleted: {e}")
         db.rollback()
 
@@ -490,6 +493,6 @@ async def handle_invoice_paid(db: Session, invoice: dict):
                 db.commit()
         
         logger.info(f"Invoice paid: {invoice['id']}")
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, AttributeError, SQLAlchemyError) as e:
         logger.error(f"Error handling invoice paid: {e}")
         db.rollback()

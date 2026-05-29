@@ -12,7 +12,7 @@ interface CacheOptions {
 }
 
 class MemoryCache {
-  private cache: Map<string, CacheEntry<any>> = new Map();
+  private cache: Map<string, CacheEntry<unknown>> = new Map();
   private maxSize: number;
 
   constructor(maxSize = 100) {
@@ -98,7 +98,7 @@ export const apiCache = new MemoryCache(200);
 export const uiCache = new MemoryCache(50);
 
 // Cache decorator for functions
-export function cached<T extends (...args: any[]) => any>(
+export function cached<T extends (...args: unknown[]) => unknown>(
   fn: T,
   options: CacheOptions = {}
 ): T {
@@ -203,10 +203,7 @@ export const sessionCache = {
 
     try {
       sessionStorage.setItem(key, JSON.stringify(entry));
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        console.warn('Session storage full, clearing old entries');
-      }
+    } catch {
       this.clear();
       sessionStorage.setItem(key, JSON.stringify(entry));
     }
@@ -235,7 +232,7 @@ export const sessionCache = {
       const item = sessionStorage.getItem(key);
       if (!item) return false;
 
-      const entry: CacheEntry<any> = JSON.parse(item);
+      const entry: CacheEntry<unknown> = JSON.parse(item);
       if (Date.now() > entry.expiresAt) {
         sessionStorage.removeItem(key);
         return false;
@@ -303,10 +300,18 @@ export const sessionCache = {
 };
 
 // Local storage cache with expiration
-// SECURITY WARNING: Avoid storing PHI (Protected Health Information) or sensitive data
-// in localStorage as it's accessible via XSS attacks. Use sessionCache for sensitive data.
+// SECURITY: Blocklist prevents PHI (Protected Health Information) from being stored
+// in localStorage where XSS attacks could access it. Use sessionCache or MemoryCache for sensitive data.
+const PHI_KEY_PATTERNS = /(patient|appointment|clinical|treatment|billing|insurance|note|chart|report)/i;
+
 export const localCache = {
   set<T>(key: string, data: T, ttl = 24 * 60 * 60 * 1000): void {
+    if (PHI_KEY_PATTERNS.test(key)) {
+      throw new Error(
+        `SECURITY: Cannot store potential PHI data in localStorage (key: "${key}"). Use sessionCache or MemoryCache for sensitive data.`
+      );
+    }
+
     const entry: CacheEntry<T> = {
       data,
       timestamp: Date.now(),
@@ -315,10 +320,7 @@ export const localCache = {
 
     try {
       localStorage.setItem(key, JSON.stringify(entry));
-    } catch (error) {
-      if (import.meta.env.DEV) {
-        console.warn('Local storage full, clearing old entries');
-      }
+    } catch {
       this.clear();
       localStorage.setItem(key, JSON.stringify(entry));
     }

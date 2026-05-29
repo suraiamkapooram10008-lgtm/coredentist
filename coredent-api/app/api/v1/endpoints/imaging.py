@@ -41,7 +41,8 @@ from app.services.imaging_processing import (
 )
 from app.services.imaging_analysis import ImagingAnalysisService
 from app.core.email import email_service
-from sqlalchemy import select
+from sqlalchemy import select, func, and_
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ async def list_patient_images(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
-) -> Any:
+) -> PatientImageListResponse:
     """
     List patient images
     """
@@ -105,7 +106,9 @@ async def list_patient_images(
         
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing patient images: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -129,7 +132,7 @@ async def upload_image(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> PatientImageResponse:
     """
     Upload patient image
     SECURITY: File validation implemented
@@ -201,7 +204,9 @@ async def upload_image(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error uploading image: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -215,7 +220,7 @@ async def get_image(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
-) -> Any:
+) -> PatientImageResponse:
     """
     Get image by ID
     """
@@ -240,7 +245,9 @@ async def get_image(
         
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error retrieving image: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -255,7 +262,7 @@ async def update_image(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> PatientImageResponse:
     """
     Update image metadata
     """
@@ -276,7 +283,9 @@ async def update_image(
         
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error updating image: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -290,7 +299,7 @@ async def delete_image(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Delete image (soft delete)
     """
@@ -307,7 +316,9 @@ async def delete_image(
         
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error deleting image: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -322,7 +333,7 @@ async def add_annotations(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> ImageAnnotationResponse:
     """
     Add or update image annotations
     """
@@ -347,7 +358,9 @@ async def add_annotations(
         
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error adding annotations: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -363,7 +376,7 @@ async def share_image(
     db: AsyncSession = Depends(get_db),
     request: Request = None,
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> ImageShareResponse:
     """
     Share image with patient or referral
     """
@@ -435,7 +448,9 @@ async def share_image(
         
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error sharing image: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -453,7 +468,7 @@ async def get_public_image(
     token: str = Query(..., description="Secure share token"),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
-) -> Any:
+) -> PatientImageResponse:
     """
     Get image metadata for external referral (Token-Gated)
     """
@@ -479,7 +494,9 @@ async def get_public_image(
         
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error retrieving public image: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -496,7 +513,7 @@ async def list_image_series(
     patient_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> ImageSeriesListResponse:
     """
     List image series for patient
     """
@@ -526,7 +543,9 @@ async def list_image_series(
         
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing image series: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -541,7 +560,7 @@ async def create_image_series(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> ImageSeriesResponse:
     """
     Create image series
     """
@@ -574,7 +593,9 @@ async def create_image_series(
         
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error creating image series: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -587,7 +608,7 @@ async def get_image_series(
     series_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> ImageSeriesResponse:
     """
     Get image series by ID
     """
@@ -604,7 +625,9 @@ async def get_image_series(
         
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error retrieving image series: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -619,7 +642,7 @@ async def update_image_series(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> ImageSeriesResponse:
     """
     Update image series
     """
@@ -640,7 +663,9 @@ async def update_image_series(
         
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error updating image series: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -657,7 +682,7 @@ async def list_templates(
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> ImageTemplateListResponse:
     """
     List image templates
     """
@@ -669,7 +694,7 @@ async def list_templates(
             count=len(templates),
         )
         
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing templates: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -683,7 +708,7 @@ async def create_template(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> ImageTemplateResponse:
     """
     Create image template
     """
@@ -700,7 +725,7 @@ async def create_template(
         
         return template
         
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error creating template: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -715,7 +740,7 @@ async def update_template(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> ImageTemplateResponse:
     """
     Update image template
     """
@@ -739,7 +764,9 @@ async def update_template(
         
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error updating template: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

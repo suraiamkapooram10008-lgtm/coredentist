@@ -44,6 +44,76 @@ class TestAuthEndpoints:
         assert response.status_code == 422
 
     @pytest.mark.asyncio
+    async def test_register_success(self, client: AsyncClient):
+        """Self-serve registration creates a practice + owner and returns tokens."""
+        register_data = {
+            "practice_name": "Bright Smile Dental",
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "email": "owner@brightsmile.example",
+            "password": "StrongPass!234",
+            "country": "US",
+        }
+        response = await client.post("/api/v1/auth/register", json=register_data)
+
+        assert response.status_code == 201
+        data = response.json()
+        assert "access_token" in data
+        assert "refresh_token" in data
+        assert "csrf_token" in data
+        assert data["token_type"] == "bearer"
+
+        # The returned access token should authenticate as the new OWNER
+        headers = {"Authorization": f"Bearer {data['access_token']}"}
+        me = await client.get("/api/v1/auth/me", headers=headers)
+        assert me.status_code == 200
+        me_data = me.json()
+        assert me_data["email"] == register_data["email"]
+        assert me_data["role"].upper() == "OWNER"
+
+    @pytest.mark.asyncio
+    async def test_register_duplicate_email(self, client: AsyncClient, test_user):
+        """Registering with an existing email is rejected with 409."""
+        register_data = {
+            "practice_name": "Another Practice",
+            "first_name": "Dup",
+            "last_name": "User",
+            "email": test_user.email,
+            "password": "StrongPass!234",
+            "country": "US",
+        }
+        response = await client.post("/api/v1/auth/register", json=register_data)
+        assert response.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_register_short_password_rejected(self, client: AsyncClient):
+        """Passwords shorter than the policy minimum fail schema validation."""
+        register_data = {
+            "practice_name": "Tiny Pass Dental",
+            "first_name": "Tom",
+            "last_name": "Short",
+            "email": "tom@tinypass.example",
+            "password": "short",
+            "country": "US",
+        }
+        response = await client.post("/api/v1/auth/register", json=register_data)
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_register_weak_password_rejected(self, client: AsyncClient):
+        """A long-but-weak password is rejected by the strength policy (400)."""
+        register_data = {
+            "practice_name": "Weak Pass Dental",
+            "first_name": "Will",
+            "last_name": "Weak",
+            "email": "will@weakpass.example",
+            "password": "alllowercaseletters",
+            "country": "US",
+        }
+        response = await client.post("/api/v1/auth/register", json=register_data)
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
     async def test_get_current_user_success(self, client: AsyncClient, auth_headers, test_user):
         """Test getting current user with valid token"""
         response = await client.get("/api/v1/auth/me", headers=auth_headers)

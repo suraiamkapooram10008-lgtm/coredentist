@@ -21,11 +21,11 @@ describe('useAppointmentFilters', () => {
 
   it('should filter appointments by search term', () => {
     const { result } = renderHook(() =>
-      useAppointmentFilters(mockAppointments, { searchTerm: 'John' })
+      useAppointmentFilters(mockAppointments, { searchTerm: 'Jane' })
     );
 
     expect(result.current).toHaveLength(1);
-    expect(result.current[0].patient).toBe('John Doe');
+    expect(result.current[0].patient).toBe('Jane Smith');
   });
 
   it('should filter appointments by status', () => {
@@ -68,7 +68,7 @@ describe('useAppointmentFilters', () => {
 
   it('should be case-insensitive for search', () => {
     const { result } = renderHook(() =>
-      useAppointmentFilters(mockAppointments, { searchTerm: 'john' })
+      useAppointmentFilters(mockAppointments, { searchTerm: 'jane' })
     );
 
     expect(result.current).toHaveLength(1);
@@ -78,9 +78,9 @@ describe('useAppointmentFilters', () => {
 describe('useUniqueDentists', () => {
   it('should return unique dentists sorted alphabetically', () => {
     const appointments: Appointment[] = [
-      { id: '1', patient: 'John', status: 'Confirmed', time: '9:00', type: 'Checkup', dentist: 'Dr. Smith', duration: '30' },
-      { id: '2', patient: 'Jane', status: 'Pending', time: '10:00', type: 'Cleaning', dentist: 'Dr. Jones', duration: '45' },
-      { id: '3', patient: 'Bob', status: 'Confirmed', time: '11:00', type: 'Checkup', dentist: 'Dr. Smith', duration: '30' },
+      { id: '1', patient: 'John', patientName: 'John', status: 'Confirmed', time: '9:00', type: 'Checkup', dentist: 'Dr. Smith', duration: '30' },
+      { id: '2', patient: 'Jane', patientName: 'Jane', status: 'Pending', time: '10:00', type: 'Cleaning', dentist: 'Dr. Jones', duration: '45' },
+      { id: '3', patient: 'Bob', patientName: 'Bob', status: 'Confirmed', time: '11:00', type: 'Checkup', dentist: 'Dr. Smith', duration: '30' },
     ];
 
     const { result } = renderHook(() => useUniqueDentists(appointments));

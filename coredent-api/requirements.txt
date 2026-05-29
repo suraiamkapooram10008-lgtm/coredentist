@@ -36,6 +36,10 @@ boto3==1.34.34
 python-magic==0.4.27
 python-magic-bin==0.4.14  # Windows binary for python-magic
 
+# Virus Scanning (for file uploads security)
+python-clamd>=1.0.0  # ClamAV integration
+requests-toolbelt>=1.0.0  # VirusTotal API multipart encoding
+
 # Stripe Payments (US Market)
 stripe==7.11.0
 

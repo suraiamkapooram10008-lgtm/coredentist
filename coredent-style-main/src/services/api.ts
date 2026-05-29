@@ -36,14 +36,28 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 // HTTP Client
 // ============================================
 
+// SECURITY: Refresh token is persisted in sessionStorage (NOT localStorage).
+// sessionStorage survives page reloads within the same tab but is cleared when
+// the tab closes, which keeps clinical sessions alive across refreshes while
+// limiting the exposure window compared to localStorage. The short-lived access
+// token remains in memory only.
+const REFRESH_TOKEN_KEY = 'cd_rt';
+
 class ApiClient {
   private baseUrl: string;
   private token: string | null = null;
+  private refreshToken: string | null = null;
   private isRefreshing = false;
   private refreshPromise: Promise<string | null> | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
+    // Rehydrate refresh token from sessionStorage on construction
+    try {
+      this.refreshToken = sessionStorage.getItem(REFRESH_TOKEN_KEY);
+    } catch {
+      this.refreshToken = null;
+    }
   }
 
   setToken(token: string | null) {
@@ -52,6 +66,36 @@ class ApiClient {
 
   getToken(): string | null {
     return this.token;
+  }
+
+  setRefreshToken(token: string | null) {
+    this.refreshToken = token;
+    try {
+      if (token) {
+        sessionStorage.setItem(REFRESH_TOKEN_KEY, token);
+      } else {
+        sessionStorage.removeItem(REFRESH_TOKEN_KEY);
+      }
+    } catch {
+      // sessionStorage unavailable (e.g. SSR/private mode) - fall back to memory only
+    }
+  }
+
+  getRefreshToken(): string | null {
+    return this.refreshToken;
+  }
+
+  /**
+   * Attempt to restore an authenticated session after a page reload by
+   * exchanging the persisted refresh token for a fresh access token.
+   * Returns true if a valid access token was obtained.
+   */
+  async restoreSession(): Promise<boolean> {
+    if (!this.refreshToken) {
+      return false;
+    }
+    const newToken = await this.refreshAccessToken();
+    return !!newToken;
   }
 
   private async request<T>(
@@ -104,11 +148,12 @@ class ApiClient {
           }
         }
         this.token = null;
+        this.refreshToken = null;
         // Note: Tokens are in httpOnly cookies - cannot clear from client
         // Logout will be handled by redirecting to login
         window.dispatchEvent(new CustomEvent('auth:logout'));
         logger.warn('Session expired, redirecting to login');
-        if (!window.location.pathname.startsWith('/login')) {
+        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
           window.location.href = '/login';
         }
         return {
@@ -247,8 +292,9 @@ class ApiClient {
           credentials: 'include',
           signal: controller.signal,
           body: JSON.stringify({
-             // If we used Bearer for refresh, we'd pass it here
-             // But the backend hardened version (Round 10) uses httpOnly cookies.
+             // Primary: httpOnly cookie (sent automatically with credentials:'include')
+             // Fallback: in-memory refresh token for backends that read from body
+             refresh_token: this.refreshToken,
           })
         });
 
@@ -292,6 +338,17 @@ export const apiClient = new ApiClient(API_BASE_URL);
 export const authApi = {
   login: (credentials: LoginCredentials) => 
     apiClient.post<LoginResponse>('/auth/login', credentials),
+
+  register: (data: {
+    practice_name: string;
+    first_name: string;
+    last_name: string;
+    email: string;
+    password: string;
+    country?: string;
+    phone?: string;
+  }) =>
+    apiClient.post<LoginResponse>('/auth/register', data),
   
   logout: () => 
     apiClient.post<void>('/auth/logout', {}), // Token from httpOnly cookie
@@ -299,8 +356,18 @@ export const authApi = {
   getCurrentUser: () => 
     apiClient.get<User>('/auth/me'),
 
+  // Restore session after a page reload using the persisted refresh token
+  restoreSession: () =>
+    apiClient.restoreSession(),
+
   setToken: (token: string | null) =>
     apiClient.setToken(token),
+
+  setRefreshToken: (token: string | null) =>
+    apiClient.setRefreshToken(token),
+
+  getRefreshToken: () =>
+    apiClient.getRefreshToken(),
 
   validateInvitation: (token: string) =>
     apiClient.get<InvitationDetails>('/auth/invitations/validate', { token }),

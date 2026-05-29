@@ -7,6 +7,9 @@ import '@testing-library/jest-dom';
 import { vi, beforeAll, afterEach, afterAll } from 'vitest';
 import { server } from './mocks/server';
 
+// Ensure API requests use relative paths so MSW handlers match
+vi.stubEnv('VITE_API_BASE_URL', '/api/v1');
+
 // ============================================
 // MSW Server Setup
 // ============================================

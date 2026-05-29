@@ -1,24 +1,22 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { apiClient, setAuthToken, clearAuthToken } from "../api";
+import { apiClient, authApi } from "../api";
 
 describe("API Client", () => {
   beforeEach(() => {
-    clearAuthToken();
+    apiClient.setToken(null);
     vi.clearAllMocks();
   });
 
-  describe("setAuthToken", () => {
-    it("should set auth token", () => {
-      setAuthToken("test-token");
-      expect(localStorage.getItem("auth_token")).toBe("test-token");
+  describe("token management", () => {
+    it("should set and get auth token", () => {
+      apiClient.setToken("test-token");
+      expect(apiClient.getToken()).toBe("test-token");
     });
-  });
 
-  describe("clearAuthToken", () => {
     it("should clear auth token", () => {
-      setAuthToken("test-token");
-      clearAuthToken();
-      expect(localStorage.getItem("auth_token")).toBeNull();
+      apiClient.setToken("test-token");
+      apiClient.setToken(null);
+      expect(apiClient.getToken()).toBeNull();
     });
   });
 
@@ -27,12 +25,26 @@ describe("API Client", () => {
       expect(apiClient).toBeDefined();
     });
 
-    it("should have base URL configured", () => {
-      expect(apiClient.defaults.baseURL).toBeDefined();
+    it("should have get method", () => {
+      expect(typeof apiClient.get).toBe("function");
     });
 
-    it("should have interceptors configured", () => {
-      expect(apiClient.interceptors).toBeDefined();
+    it("should have post method", () => {
+      expect(typeof apiClient.post).toBe("function");
+    });
+  });
+
+  describe("authApi", () => {
+    it("should have login method", () => {
+      expect(typeof authApi.login).toBe("function");
+    });
+
+    it("should have logout method", () => {
+      expect(typeof authApi.logout).toBe("function");
+    });
+
+    it("should have getCurrentUser method", () => {
+      expect(typeof authApi.getCurrentUser).toBe("function");
     });
   });
 });

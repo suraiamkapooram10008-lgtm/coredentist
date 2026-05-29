@@ -33,7 +33,7 @@ async def list_patients(
     practice_id: UUID = Depends(get_current_practice_id),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> PaginatedResponse:
     """
     List patients with search and filtering (paginated)
     """
@@ -125,7 +125,7 @@ async def create_patient(
     current_user: User = Depends(get_current_user),
     _csrf: bool = Depends(verify_csrf),  # SECURITY FIX: CSRF protection
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> PatientResponse:
     """
     Create new patient (includes integrity check for duplicates)
     """
@@ -170,7 +170,7 @@ async def get_patient(
     practice_id: UUID = Depends(get_current_practice_id),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> PatientResponse:
     """
     Get patient by ID
     """
@@ -213,7 +213,7 @@ async def update_patient(
     current_user: User = Depends(get_current_user),
     _csrf: bool = Depends(verify_csrf),  # SECURITY FIX: CSRF protection
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> PatientResponse:
     """
     Update patient
     """

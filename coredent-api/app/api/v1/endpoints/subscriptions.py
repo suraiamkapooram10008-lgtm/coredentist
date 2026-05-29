@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 import logging
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.core.database import get_db
 from app.core.config_simple import settings
 from app.api.deps import get_current_user, require_role, verify_csrf
@@ -58,7 +60,7 @@ async def list_subscription_plans(
     active_only: bool = Query(True),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> SubscriptionPlanList:
     """List all available subscription plans"""
     query = select(SubscriptionPlan).where(SubscriptionPlan.practice_id.is_(None))
     
@@ -78,7 +80,7 @@ async def create_subscription_plan(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> SubscriptionPlanResponse:
     """Create a new subscription plan (Owner/Admin only)"""
     # Create Stripe Price if configured
     if settings.STRIPE_API_KEY and not plan_data.stripe_price_id:
@@ -123,7 +125,7 @@ async def create_subscription_plan(
             plan_data.stripe_price_id = price.id
             plan_data.stripe_product_id = product.id
         
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             logger.error(f"Stripe error: {e}")
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Stripe error: {str(e)}")
     
@@ -142,7 +144,7 @@ async def update_subscription_plan(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> SubscriptionPlanResponse:
     """Update an existing subscription plan"""
     result = await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.id == plan_id))
     plan = result.scalar_one_or_none()
@@ -164,7 +166,7 @@ async def get_subscription_plan(
     plan_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> SubscriptionPlanResponse:
     """Get a specific subscription plan"""
     result = await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.id == plan_id))
     plan = result.scalar_one_or_none()
@@ -184,7 +186,7 @@ async def list_subscriptions(
     status_filter: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> SubscriptionList:
     """List all subscriptions for the practice"""
     query = select(Subscription).where(Subscription.practice_id == current_user.practice_id)
     
@@ -215,7 +217,7 @@ async def create_subscription(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> SubscriptionResponse:
     """Create a new subscription with trial support"""
     # Get the plan
     result = await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.id == sub_data.plan_id))
@@ -249,7 +251,7 @@ async def create_subscription(
             sub_data.payment_card_id,
             sub_data.trial_period_days or plan.trial_period_days,
         )
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     
     # Calculate dates using service
@@ -304,7 +306,7 @@ async def get_subscription(
     subscription_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> SubscriptionResponse:
     """Get a specific subscription"""
     sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
     if not sub:
@@ -317,7 +319,7 @@ async def get_trial_info(
     subscription_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> TrialResponse:
     """Get trial information for a subscription"""
     sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
     if not sub:
@@ -348,7 +350,7 @@ async def cancel_subscription(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> SubscriptionResponse:
     """Cancel a subscription"""
     sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
     if not sub:
@@ -386,7 +388,7 @@ async def pause_subscription(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> SubscriptionResponse:
     """Pause a subscription"""
     sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
     if not sub:
@@ -412,7 +414,7 @@ async def resume_subscription(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> SubscriptionResponse:
     """Resume a paused subscription"""
     sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
     if not sub:
@@ -440,7 +442,7 @@ async def change_plan(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> SubscriptionResponse:
     """Change to a different subscription plan with proration"""
     sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
     if not sub:
@@ -456,7 +458,7 @@ async def change_plan(
         proration_amount = await SubscriptionService.change_plan(
             db, sub, new_plan, change_data.proration_behavior
         )
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     
     await log_audit_event(
@@ -477,7 +479,7 @@ async def record_usage(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> UsageRecordResponse:
     """Record usage for usage-based billing"""
     sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
     if not sub:
@@ -499,7 +501,7 @@ async def get_usage(
     subscription_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> UsageResponse:
     """Get usage details for current billing period"""
     sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
     if not sub:
@@ -522,7 +524,7 @@ async def get_dunning_events(
     subscription_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> DunningEventList:
     """Get dunning events for subscription"""
     from app.models.subscription import DunningEvent
     
@@ -541,7 +543,7 @@ async def preview_proration(
     new_plan_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> DunningEventList:
     """Preview proration amount for plan change"""
     sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
     if not sub:
@@ -584,7 +586,7 @@ async def process_dunning(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> DunningEventList:
     """Run dunning process for all past-due subscriptions"""
     result = await SubscriptionBillingService.process_dunning(db, background_tasks)
     return APIResponse(success=True, data=result)
@@ -594,7 +596,7 @@ async def process_dunning(
 async def get_subscription_stats(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> SubscriptionStats:
     """Get subscription statistics for dashboard"""
     stats = await SubscriptionBillingService.get_subscription_stats(db, current_user.practice_id)
     return SubscriptionStats(**stats)
@@ -606,7 +608,7 @@ async def get_subscription_stats(
 async def stripe_subscription_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> SubscriptionStats:
     """Handle Stripe webhooks for subscription events"""
     import stripe as stripe_lib
     
@@ -636,7 +638,7 @@ async def get_invoice_history(
     limit: int = Query(50, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> SubscriptionStats:
     """Get invoice history for a subscription from Stripe"""
     import stripe as stripe_lib
     
@@ -669,7 +671,7 @@ async def get_invoice_history(
                 for inv in invoices.get("data", [])
             ],
         }
-    except Exception as e:
+    except (ValueError, TypeError, KeyError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Stripe error: {str(e)}")
 
 
@@ -680,7 +682,7 @@ async def submit_usage_batch(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> SubscriptionStats:
     """Submit multiple usage records at once"""
     sub = await SubscriptionService.get_subscription_with_plan(db, subscription_id, current_user.practice_id)
     if not sub:

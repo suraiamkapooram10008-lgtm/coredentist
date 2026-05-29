@@ -31,8 +31,7 @@ function getRating(name: string, value: number): 'good' | 'needs-improvement' | 
 function sendToAnalytics(metric: VitalsReport) {
   // Log to console in development
   if (import.meta.env.DEV) {
-    // eslint-disable-next-line no-console
-    console.log(`[Web Vitals] ${metric.name}:`, {
+    logger.debug(`[Web Vitals] ${metric.name}`, {
       value: metric.value,
       rating: metric.rating,
       id: metric.id,

@@ -1,6 +1,19 @@
 // Analytics Integration
 // PostHog for product analytics
 
+import { logger } from './logger';
+
+interface PostHogWindow extends Window {
+  posthog?: {
+    identify: (userId: string, properties: Record<string, unknown>) => void;
+    capture: (event: string, properties?: Record<string, unknown>) => void;
+    reset: () => void;
+    people: {
+      set: (properties: Record<string, unknown>) => void;
+    };
+  };
+}
+
 interface AnalyticsEvent {
   event: string;
   properties?: Record<string, unknown>;
@@ -12,6 +25,7 @@ interface UserProperties {
   role?: string;
   practiceId?: string;
   practiceName?: string;
+  [key: string]: unknown;
 }
 
 class Analytics {
@@ -31,8 +45,9 @@ class Analytics {
     this.userId = userId;
 
     // PostHog identify
-    if (typeof window !== 'undefined' && (window as any).posthog) {
-      (window as any).posthog.identify(userId, properties);
+    const w = window as unknown as PostHogWindow;
+    if (typeof window !== 'undefined' && w.posthog) {
+      w.posthog.identify(userId, properties);
     }
   }
 
@@ -52,13 +67,14 @@ class Analytics {
     };
 
     // PostHog track
-    if (typeof window !== 'undefined' && (window as any).posthog) {
-      (window as any).posthog.capture(event, eventData.properties);
+    const w = window as unknown as PostHogWindow;
+    if (typeof window !== 'undefined' && w.posthog) {
+      w.posthog.capture(event, eventData.properties);
     }
 
     // Log in development only
     if (import.meta.env.DEV) {
-      console.log('[Analytics]', event, eventData.properties);
+      logger.debug('[Analytics]', { event, properties: eventData.properties });
     }
   }
 
@@ -78,8 +94,9 @@ class Analytics {
   reset() {
     this.userId = null;
 
-    if (typeof window !== 'undefined' && (window as any).posthog) {
-      (window as any).posthog.reset();
+    const w = window as unknown as PostHogWindow;
+    if (typeof window !== 'undefined' && w.posthog) {
+      w.posthog.reset();
     }
   }
 
@@ -89,8 +106,9 @@ class Analytics {
   setUserProperties(properties: UserProperties) {
     if (!this.enabled) return;
 
-    if (typeof window !== 'undefined' && (window as any).posthog) {
-      (window as any).posthog.people.set(properties);
+    const w = window as unknown as PostHogWindow;
+    if (typeof window !== 'undefined' && w.posthog) {
+      w.posthog.people.set(properties);
     }
   }
 

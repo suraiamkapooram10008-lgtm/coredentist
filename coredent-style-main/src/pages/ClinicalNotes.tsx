@@ -3,8 +3,9 @@ import { useNavigate, useParams } from "react-router-dom";
 import { clinicalNotesApi, patientsApi } from "@/services/api";
 import type { ClinicalNote, Patient } from "@/types/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { logger } from "@/lib/logger";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -71,6 +72,7 @@ export default function ClinicalNotes() {
         setError(response.error?.message || "Failed to load notes");
       }
     } catch (err) {
+      logger.error('Failed to load notes', err instanceof Error ? err : new Error(String(err)));
       setError("An unexpected error occurred");
     } finally {
       setLoading(false);
@@ -87,7 +89,8 @@ export default function ClinicalNotes() {
       } else {
         setPatientError(response.error?.message || "Failed to load patient");
       }
-    } catch {
+    } catch (err) {
+      logger.error('Failed to load patient', err instanceof Error ? err : new Error(String(err)));
       setPatientError("An unexpected error occurred");
     } finally {
       setPatientLoading(false);
@@ -110,7 +113,8 @@ export default function ClinicalNotes() {
         } else {
           setSearchResults([]);
         }
-      } catch {
+      } catch (err) {
+        logger.error('Patient search failed', err instanceof Error ? err : new Error(String(err)));
         setSearchResults([]);
       } finally {
         setSearchLoading(false);
@@ -171,7 +175,8 @@ export default function ClinicalNotes() {
           variant: "destructive",
         });
       }
-    } catch {
+    } catch (err) {
+      logger.error('Failed to create note', err instanceof Error ? err : new Error(String(err)));
       toast({
         title: "Error",
         description: "Failed to create note",
@@ -203,7 +208,7 @@ export default function ClinicalNotes() {
             </div>
             {searchLoading ? (
               <div className="flex justify-center py-6">
-                <Spinner size="lg" />
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
             ) : searchResults.length === 0 ? (
               <div className="text-sm text-muted-foreground">
@@ -249,7 +254,7 @@ export default function ClinicalNotes() {
 
       {loading ? (
         <div className="flex justify-center p-12">
-          <Spinner size="lg" />
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       ) : error ? (
         <Card className="border-destructive">

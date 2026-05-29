@@ -58,7 +58,7 @@ async def list_carriers(
     search: Optional[str] = Query(None, description="Search by name"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> InsuranceCarrierListResponse:
     """
     List insurance carriers
     """
@@ -88,7 +88,7 @@ async def get_carrier(
     carrier_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> InsuranceCarrierResponse:
     """
     Get insurance carrier by ID
     """
@@ -112,7 +112,7 @@ async def create_carrier(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> InsuranceCarrierResponse:
     """
     Create new insurance carrier
     """
@@ -143,7 +143,7 @@ async def update_carrier(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> InsuranceCarrierResponse:
     """
     Update insurance carrier
     """
@@ -177,7 +177,7 @@ async def list_patient_insurance(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> PatientInsuranceListResponse:
     """
     List patient insurance policies
     """
@@ -225,7 +225,7 @@ async def create_patient_insurance(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> PatientInsuranceResponse:
     """
     Add insurance policy to patient
     """
@@ -275,7 +275,7 @@ async def update_patient_insurance(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> PatientInsuranceResponse:
     """
     Update patient insurance policy
     """
@@ -321,7 +321,7 @@ async def delete_patient_insurance(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> PatientInsuranceResponse:
     """
     Delete patient insurance policy
     """
@@ -368,7 +368,7 @@ async def list_claims(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> InsuranceClaimListResponse:
     """
     List insurance claims
     """
@@ -409,7 +409,7 @@ async def create_claim(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> InsuranceClaimResponse:
     """
     Create insurance claim
     """
@@ -483,7 +483,7 @@ async def update_claim(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> InsuranceClaimResponse:
     """
     Update insurance claim
     """
@@ -518,7 +518,7 @@ async def submit_claim(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> InsuranceClaimResponse:
     """
     Submit claim to insurance
     """
@@ -605,7 +605,7 @@ async def submit_claim(
             if edi_result.get("confirmation_number"):
                 claim.confirmation_number = edi_result["confirmation_number"]
     
-    except Exception as e:
+    except (ValueError, TypeError, KeyError, ConnectionError) as e:
         # Log error but don't fail - claim is still submitted
         import logging
         logging.warning(f"EDI submission failed: {str(e)}")
@@ -630,7 +630,7 @@ async def list_eligibility(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
-) -> Any:
+) -> EligibilityListResponse:
     """
     List eligibility records for the current practice
     """
@@ -669,7 +669,7 @@ async def list_eobs(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
-) -> Any:
+) -> ExplanationOfBenefitsListResponse:
     """
     List Explanation of Benefits for the current practice
     """
@@ -709,7 +709,7 @@ async def list_pre_authorizations(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
-) -> Any:
+) -> PreAuthorizationListResponse:
     """
     List pre-authorizations
     """
@@ -756,7 +756,7 @@ async def create_pre_authorization(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> PreAuthorizationResponse:
     """
     Create pre-authorization request
     """
@@ -821,7 +821,7 @@ async def list_fee_schedules(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
-) -> Any:
+) -> FeeScheduleListResponse:
     """
     List fee schedules for the practice
     """
@@ -849,7 +849,7 @@ async def create_fee_schedule(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> FeeScheduleResponse:
     """
     Create a new fee schedule
     """
@@ -873,17 +873,6 @@ async def create_fee_schedule(
     await db.commit()
     await db.refresh(new_schedule)
     return new_schedule
-        request_date=pre_auth_data.request_date,
-        procedure_codes=procedure_codes_json,
-        estimated_cost=pre_auth_data.estimated_cost,
-        notes=pre_auth_data.notes,
-    )
-    
-    db.add(pre_auth)
-    await db.commit()
-    await db.refresh(pre_auth)
-    
-    return pre_auth
 
 
 @router.put("/pre-auth/{pre_auth_id}", response_model=PreAuthorizationResponse)
@@ -893,7 +882,7 @@ async def update_pre_authorization(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> PreAuthorizationResponse:
     """
     Update pre-authorization
     """

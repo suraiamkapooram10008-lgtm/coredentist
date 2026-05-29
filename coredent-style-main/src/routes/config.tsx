@@ -17,6 +17,7 @@ export interface RouteConfig {
 
 // Lazy load all page components
 const Login = React.lazy(() => import('@/pages/Login'));
+const Register = React.lazy(() => import('@/pages/Register'));
 const ForgotPassword = React.lazy(() => import('@/pages/ForgotPassword'));
 const ResetPassword = React.lazy(() => import('@/pages/ResetPassword'));
 const AcceptInvitation = React.lazy(() => import('@/pages/AcceptInvitation'));
@@ -58,6 +59,7 @@ const PatientPortal = React.lazy(() => import('@/pages/PatientPortal'));
  */
 export const publicRoutes: RouteConfig[] = [
   { path: '/login', component: Login },
+  { path: '/register', component: Register },
   { path: '/forgot-password', component: ForgotPassword },
   { path: '/reset-password', component: ResetPassword },
   { path: '/accept-invitation', component: AcceptInvitation },

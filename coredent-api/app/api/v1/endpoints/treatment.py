@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy import select, and_, or_
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from datetime import datetime, date
 from typing import List, Optional, Any
 import logging
@@ -82,7 +83,7 @@ async def list_treatment_plans(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> TreatmentPlanListResponse:
     """List treatment plans for the current practice"""
     try:
         plans = await TreatmentService.list_treatment_plans(
@@ -101,7 +102,7 @@ async def list_treatment_plans(
         
         logger.info(f"Listed {len(plans)} treatment plans")
         return TreatmentPlanListResponse(plans=plans, count=len(plans))
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing treatment plans: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -113,7 +114,7 @@ async def list_patient_treatment_plans(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> TreatmentPlanListResponse:
     """List treatment plans for a specific patient"""
     try:
         # Verify patient belongs to practice
@@ -143,8 +144,11 @@ async def list_patient_treatment_plans(
         return TreatmentPlanListResponse(plans=plans, count=len(plans))
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error listing patient treatment plans: {e}")
+    except ValueError as e:
+        logger.error(f"Validation error listing patient treatment plans: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request parameters")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
+        logger.error(f"Unexpected error listing patient treatment plans: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
@@ -155,7 +159,7 @@ async def create_treatment_plan(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> TreatmentPlanResponse:
     """Create a new treatment plan"""
     try:
         # Verify patient belongs to practice
@@ -198,8 +202,11 @@ async def create_treatment_plan(
         return plan
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error creating treatment plan: {e}")
+    except ValueError as e:
+        logger.error(f"Validation error creating treatment plan: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid treatment plan data")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
+        logger.error(f"Unexpected error creating treatment plan: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
@@ -209,7 +216,7 @@ async def get_treatment_plan(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> TreatmentPlanResponse:
     """Get treatment plan by ID"""
     try:
         plan = await TreatmentService.get_treatment_plan(db, plan_id, current_user.practice_id)
@@ -225,8 +232,10 @@ async def get_treatment_plan(
         return plan
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error getting treatment plan: {e}")
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
+        logger.error(f"Unexpected error getting treatment plan: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
@@ -237,7 +246,7 @@ async def update_treatment_plan(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> TreatmentPlanResponse:
     """Update treatment plan"""
     try:
         # Verify plan belongs to practice
@@ -256,7 +265,9 @@ async def update_treatment_plan(
         return plan
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error updating treatment plan: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -267,7 +278,7 @@ async def delete_treatment_plan(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """Delete treatment plan (soft delete via status change)"""
     try:
         # Verify plan belongs to practice
@@ -285,7 +296,9 @@ async def delete_treatment_plan(
         return {"message": "Treatment plan cancelled successfully"}
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error deleting treatment plan: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -297,7 +310,7 @@ async def list_treatment_phases(
     plan_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> TreatmentPhaseListResponse:
     """List phases for a treatment plan"""
     try:
         # Verify plan belongs to practice
@@ -312,7 +325,9 @@ async def list_treatment_phases(
         return TreatmentPhaseListResponse(phases=phases, count=len(phases))
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing treatment phases: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -324,7 +339,7 @@ async def create_treatment_phase(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> TreatmentPhaseResponse:
     """Create a new treatment phase"""
     try:
         # Verify plan belongs to practice
@@ -343,7 +358,9 @@ async def create_treatment_phase(
         return phase
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error creating treatment phase: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -355,7 +372,7 @@ async def update_treatment_phase(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> TreatmentPhaseResponse:
     """Update treatment phase"""
     try:
         phase = await TreatmentPlanningService.get_treatment_phase(db, phase_id)
@@ -379,7 +396,9 @@ async def update_treatment_phase(
         return phase
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error updating treatment phase: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -394,7 +413,7 @@ async def list_treatment_procedures(
     procedure_type: Optional[ProcedureType] = Query(None, description="Filter by type"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> TreatmentProcedureListResponse:
     """List procedures for a treatment plan"""
     try:
         # Verify plan belongs to practice
@@ -425,7 +444,9 @@ async def list_treatment_procedures(
         return TreatmentProcedureListResponse(procedures=procedures, count=len(procedures))
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing treatment procedures: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -437,7 +458,7 @@ async def create_treatment_procedure(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> TreatmentProcedureResponse:
     """Create a new treatment procedure"""
     try:
         # Verify plan belongs to practice
@@ -469,7 +490,9 @@ async def create_treatment_procedure(
         return procedure
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error creating treatment procedure: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -481,7 +504,7 @@ async def update_treatment_procedure(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> TreatmentProcedureResponse:
     """Update treatment procedure"""
     try:
         result = await db.execute(
@@ -512,7 +535,9 @@ async def update_treatment_procedure(
         return procedure
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error updating treatment procedure: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -523,7 +548,7 @@ async def delete_treatment_procedure(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """Delete treatment procedure"""
     try:
         result = await db.execute(
@@ -552,7 +577,9 @@ async def delete_treatment_procedure(
         return {"message": "Treatment procedure deleted successfully"}
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error deleting treatment procedure: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -567,7 +594,7 @@ async def list_procedure_library(
     is_active: Optional[bool] = Query(True, description="Filter by active status"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> ProcedureLibraryListResponse:
     """List procedure library entries"""
     try:
         query = select(ProcedureLibrary).where(
@@ -600,7 +627,7 @@ async def list_procedure_library(
         
         logger.info(f"Listed {len(procedures)} procedure library entries")
         return ProcedureLibraryListResponse(procedures=procedures, count=len(procedures))
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing procedure library: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -611,7 +638,7 @@ async def create_procedure_library_entry(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> ProcedureLibraryResponse:
     """Create a new procedure library entry"""
     try:
         # Check for duplicate ADA code
@@ -642,7 +669,9 @@ async def create_procedure_library_entry(
         return procedure
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error creating procedure library entry: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -654,7 +683,7 @@ async def update_procedure_library_entry(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> ProcedureLibraryResponse:
     """Update procedure library entry"""
     try:
         result = await db.execute(
@@ -679,7 +708,9 @@ async def update_procedure_library_entry(
         return procedure
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error updating procedure library entry: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -691,7 +722,7 @@ async def estimate_costs(
     estimate_request: CostEstimateRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> CostEstimateResponse:
     """Estimate costs for treatment procedures"""
     try:
         result = await TreatmentCostingService.estimate_insurance_coverage(
@@ -702,7 +733,7 @@ async def estimate_costs(
         
         logger.info(f"Generated cost estimate for {len(estimate_request.procedures)} procedures")
         return CostEstimateResponse(**result)
-    except Exception as e:
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error estimating costs: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -716,7 +747,7 @@ async def accept_treatment_plan(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> PlanAcceptanceResponse:
     """Accept a treatment plan"""
     try:
         plan = await TreatmentService.get_treatment_plan(db, plan_id, current_user.practice_id)
@@ -779,6 +810,8 @@ async def accept_treatment_plan(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except IntegrityError:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
+    except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error accepting treatment plan: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")

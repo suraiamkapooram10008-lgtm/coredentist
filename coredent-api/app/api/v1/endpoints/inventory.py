@@ -40,7 +40,7 @@ async def list_inventory_items(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     List inventory items for the practice
     """
@@ -81,7 +81,7 @@ async def get_inventory_item(
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     Get inventory item by ID
     """
@@ -114,7 +114,7 @@ async def create_inventory_item(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Create new inventory item
     """
@@ -136,7 +136,7 @@ async def update_inventory_item(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Update inventory item
     """
@@ -169,7 +169,7 @@ async def delete_inventory_item(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Delete inventory item
     """
@@ -203,7 +203,7 @@ async def list_inventory_transactions(
     end_date: Optional[datetime] = Query(None, description="End date"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     List inventory transactions
     """
@@ -238,7 +238,7 @@ async def create_inventory_transaction(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Create inventory transaction (add or remove stock)
     """
@@ -318,7 +318,7 @@ async def list_suppliers(
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     List suppliers
     """
@@ -352,7 +352,7 @@ async def create_supplier(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Create new supplier
     """
@@ -376,7 +376,7 @@ async def list_inventory_alerts(
     is_resolved: Optional[bool] = Query(None, description="Filter by resolved status"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> dict:
     """
     List inventory alerts
     """
@@ -407,7 +407,7 @@ async def resolve_inventory_alert(
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> Any:
+) -> dict:
     """
     Resolve inventory alert
     """

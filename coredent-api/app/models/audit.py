@@ -21,7 +21,8 @@ class AuditLog(Base):
     
     action = Column(String(100), nullable=False)  # e.g., "patient_viewed", "record_updated"
     entity_type = Column(String(50), nullable=False)  # e.g., "patient", "appointment"
-    entity_id = Column(UUID(as_uuid=True), nullable=False)
+    # Nullable: list/search actions log no specific entity (e.g., "patient_list_viewed")
+    entity_id = Column(UUID(as_uuid=True), nullable=True)
     
     changes = Column(JSON)  # Before/after values for updates
     # Use string type for IP address for SQLite compatibility

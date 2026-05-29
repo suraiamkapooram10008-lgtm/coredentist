@@ -2,34 +2,38 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BrowserRouter } from "react-router-dom";
-import Sidebar from "../layout/Sidebar";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { Sidebar } from "../layout/Sidebar";
 
-const renderWithRouter = (component: React.ReactElement) => {
-  return render(<BrowserRouter>{component}</BrowserRouter>);
+const renderWithProviders = (component: React.ReactElement) => {
+  return render(
+    <BrowserRouter>
+      <AuthProvider>
+        {component}
+      </AuthProvider>
+    </BrowserRouter>
+  );
 };
 
 describe("Sidebar Component", () => {
   it("should render sidebar", () => {
-    renderWithRouter(<Sidebar />);
+    renderWithProviders(<Sidebar collapsed={false} mobileOpen={false} onToggle={vi.fn()} onMobileClose={vi.fn()} />);
     expect(document.body).toBeInTheDocument();
   });
 
   it("should have navigation links", () => {
-    renderWithRouter(<Sidebar />);
-    // Sidebar should render without crashing
+    renderWithProviders(<Sidebar collapsed={false} mobileOpen={false} onToggle={vi.fn()} onMobileClose={vi.fn()} />);
     expect(document.body).toBeInTheDocument();
   });
 
   it("should be responsive", () => {
-    const { container } = renderWithRouter(<Sidebar />);
+    const { container } = renderWithProviders(<Sidebar collapsed={false} mobileOpen={false} onToggle={vi.fn()} onMobileClose={vi.fn()} />);
     expect(container).toBeInTheDocument();
   });
 
   it("should handle navigation", async () => {
     const user = userEvent.setup();
-    renderWithRouter(<Sidebar />);
-    
-    // Sidebar should render and be interactive
+    renderWithProviders(<Sidebar collapsed={false} mobileOpen={false} onToggle={vi.fn()} onMobileClose={vi.fn()} />);
     expect(document.body).toBeInTheDocument();
   });
 });

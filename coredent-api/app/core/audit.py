@@ -29,8 +29,10 @@ async def log_audit_event(
         ip_address = request.client.host if request.client else None
         user_agent = request.headers.get("user-agent")
     
-    # For SQLite compatibility: convert entity_id to UUID
-    if isinstance(entity_id, str):
+    # For SQLite compatibility: convert entity_id to UUID when present
+    if entity_id is None:
+        pass
+    elif isinstance(entity_id, str):
         try:
             # Try to parse as UUID
             entity_id = UUID(entity_id)

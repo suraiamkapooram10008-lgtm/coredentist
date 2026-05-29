@@ -285,10 +285,10 @@ def send_message(
     db.add(db_message)
     db.commit()
     db.refresh(db_message)
-    
-    # TODO: Queue message for sending via SMS/Email provider
-    # This would typically use a task queue like Celery
-    
+
+    from app.core.communication_queue import send_message_task
+    send_message_task(str(db_message.id))
+
     return db_message
 
 

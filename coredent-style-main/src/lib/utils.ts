@@ -180,8 +180,117 @@ export function truncate(str: string, length: number): string {
 }
 
 /**
- * Get initials from name
+ * Get initials from a full name string
  */
-export function getInitials(firstName: string, lastName: string): string {
-  return `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
+export function getInitials(name: string): string {
+  if (!name || typeof name !== 'string') return '';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return `${parts[0].charAt(0)}${parts[parts.length - 1].charAt(0)}`.toUpperCase();
+}
+
+/**
+ * Validate email address
+ */
+export function validateEmail(email: string): boolean {
+  if (!email || typeof email !== 'string') return false;
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+}
+
+/**
+ * Truncate text with ellipsis
+ */
+export function truncateText(text: string, maxLength: number): string {
+  if (!text || text.length <= maxLength) return text;
+  return text.slice(0, maxLength) + '...';
+}
+
+/**
+ * Capitalize words in a string
+ */
+export function capitalizeWords(str: string): string {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
+/**
+ * Convert string to URL-friendly slug
+ */
+export function slugify(str: string): string {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+}
+
+/**
+ * Parse JWT token payload
+ */
+export function parseJwt(token: string): Record<string, unknown> | null {
+  try {
+    const base64Url = token.split('.')[1];
+    if (!base64Url) return null;
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map(c => `%${`00${c.charCodeAt(0).toString(16)}`.slice(-2)}`)
+        .join(''),
+    );
+    return JSON.parse(jsonPayload);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if string is a valid UUID
+ */
+export function isValidUUID(str: string): boolean {
+  if (!str || typeof str !== 'string') return false;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str);
+}
+
+/**
+ * Extract error message from various error types
+ */
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return 'An unknown error occurred';
+}
+
+/**
+ * Retry an async function with exponential backoff
+ */
+export function retry<T>(
+  fn: () => Promise<T>,
+  options: { maxAttempts?: number; delay?: number } = {},
+): Promise<T> {
+  const { maxAttempts = 3, delay = 1000 } = options;
+
+  return new Promise((resolve, reject) => {
+    const attempt = async (currentAttempt: number) => {
+      try {
+        const result = await fn();
+        resolve(result);
+      } catch (error) {
+        if (currentAttempt >= maxAttempts) {
+          reject(error);
+        } else {
+          setTimeout(() => attempt(currentAttempt + 1), delay * currentAttempt);
+        }
+      }
+    };
+    attempt(1);
+  });
 }

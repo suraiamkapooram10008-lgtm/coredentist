@@ -62,3 +62,11 @@ ENV/
 
 # Databases
 *.db
+
+# Scratch / debug artifacts (do not commit)
+results.xml
+test_results.txt
+deleted_backend_files.txt
+debug*.txt
+out.txt
+out_utf8.txt

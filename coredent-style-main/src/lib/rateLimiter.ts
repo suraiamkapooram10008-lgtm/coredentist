@@ -14,12 +14,21 @@ interface RequestRecord {
 class RateLimiter {
   private requests: Map<string, RequestRecord> = new Map();
   private config: RateLimitConfig;
+  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: RateLimitConfig = { maxRequests: 100, windowMs: 60000 }) {
     this.config = config;
-    
+
     // Clean up old entries every minute
-    setInterval(() => this.cleanup(), 60000);
+    this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
+  }
+
+  destroy() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    this.requests.clear();
   }
 
   private cleanup() {
@@ -95,7 +104,7 @@ export const authRateLimiter = new RateLimiter({
 });
 
 // Debounce helper for search inputs
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends (...args: unknown[]) => unknown>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {
@@ -115,7 +124,7 @@ export function debounce<T extends (...args: any[]) => any>(
 }
 
 // Throttle helper for scroll/resize events
-export function throttle<T extends (...args: any[]) => any>(
+export function throttle<T extends (...args: unknown[]) => unknown>(
   func: T,
   limit: number
 ): (...args: Parameters<T>) => void {

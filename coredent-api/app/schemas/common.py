@@ -9,6 +9,11 @@ from pydantic import BaseModel
 T = TypeVar("T")
 
 
+class BaseSchema(BaseModel):
+    """Base schema for all API schemas"""
+    pass
+
+
 class APIResponse(BaseModel, Generic[T]):
     """Standardized API response envelope"""
     success: bool = True
