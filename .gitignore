@@ -5,6 +5,9 @@ node_modules/
 
 # Testing
 coverage/
+.coverage
+.coverage.*
+coverage.xml
 
 # Production
 build/
