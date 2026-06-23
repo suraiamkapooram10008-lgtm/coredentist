@@ -2,15 +2,15 @@ name: CoreDent API - CI/CD
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master, main, develop]
   pull_request:
-    branches: [main]
+    branches: [master, main]
 
 jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    
+
     services:
       postgres:
         image: postgres:15
@@ -28,39 +28,62 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: 'pip'
-      
+
       - name: Install dependencies
         run: |
           cd coredent-api
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-cov httpx bandit safety
-      
+          pip install pytest pytest-asyncio pytest-cov httpx bandit safety pip-audit
+
       - name: Check for security issues (bandit)
         run: |
           cd coredent-api
-          bandit -r app/ -f json -o bandit-report.json || true
-      
-      - name: Check dependencies for vulnerabilities
+          bandit -r app/ -f json -o bandit-report.json
+          bandit -r app/ -ll -ii  # Fail on medium+ severity, medium+ confidence
+
+      - name: Check dependencies for vulnerabilities (pip-audit)
+        # SECURITY: pip-audit is the canonical Python vulnerability scanner.
+        # Runs against the pinned requirements.txt. Fails the build on
+        # any HIGH or CRITICAL CVE in a runtime dep.
         run: |
           cd coredent-api
-          safety check --full-report || true
-      
-      - name: Run tests with PostgreSQL
+          pip-audit --strict --requirement requirements.txt
+
+      - name: Check dependencies for vulnerabilities (safety)
+        run: |
+          cd coredent-api
+          safety check --full-report --continue-on-error=false
+
+      - name: Run all tests with PostgreSQL
         env:
-          DATABASE_URL: postgresql://coredent_test:coredent_test@localhost:5432/coredent_test
+          TEST_DATABASE_URL: postgresql+asyncpg://coredent_test:coredent_test@localhost:5432/coredent_test
           ENVIRONMENT: test
           SECRET_KEY: test-secret-key-at-least-32-chars-long-for-HIPAA!
           ENCRYPTION_KEY: dummy-encryption-key-not-used-in-tests
         run: |
           cd coredent-api
           pytest tests/ -v --cov=app --cov-report=term --cov-report=xml --timeout=30
-      
+
+      - name: Run cross-tenant isolation tests (REQUIRED for any PHI-related change)
+        # SECURITY: This is the test suite that proves no endpoint leaks
+        # data across tenants.  If a future PR adds an endpoint without
+        # proper ``practice_id`` scoping, these tests must fail CI.
+        # Required job: do not ``continue-on-error``.
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://coredent_test:coredent_test@localhost:5432/coredent_test
+          ENVIRONMENT: test
+          SECRET_KEY: test-secret-key-at-least-32-chars-long-for-HIPAA!
+          ENCRYPTION_KEY: dummy-encryption-key-not-used-in-tests
+        run: |
+          cd coredent-api
+          pytest tests/test_tenant_isolation.py tests/test_phi_encrypted_at_rest.py -v
+
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
@@ -69,24 +92,24 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      
+          python-version: '3.12'
+
       - name: Install linters
         run: pip install flake8 mypy
-      
+
       - name: Run flake8
         run: |
           cd coredent-api
           flake8 app/ --max-line-length=120 --extend-ignore=E203,W503 --exclude=__pycache__,migrations
-      
+
       - name: Run mypy
         run: |
           cd coredent-api
-          mypy app/ --ignore-missing-imports --warn-unused-configs || true
+          mypy app/ --ignore-missing-imports --warn-unused-configs
