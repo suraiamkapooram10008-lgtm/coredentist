@@ -9,7 +9,7 @@ pytestmark = pytest.mark.asyncio
 class TestStaffPydanticValidation:
     """Verify staff endpoints use Pydantic schemas"""
 
-    async def test_create_staff_rejects_invalid_email(self, async_client, auth_headers):
+    async def test_create_staff_rejects_invalid_email(self, async_client, auth_headers, test_practice):
         response = await async_client.post(
             "/api/v1/staff/",
             headers=auth_headers,
@@ -19,12 +19,12 @@ class TestStaffPydanticValidation:
                 "first_name": "Test",
                 "last_name": "User",
                 "role": "FRONT_DESK",
-                "practice_id": str(uuid4())
+                "practice_id": str(test_practice.id)
             }
         )
         assert response.status_code == 422
 
-    async def test_create_staff_validates_password_length(self, async_client, auth_headers):
+    async def test_create_staff_validates_password_length(self, async_client, auth_headers, test_practice):
         response = await async_client.post(
             "/api/v1/staff/",
             headers=auth_headers,
@@ -34,12 +34,12 @@ class TestStaffPydanticValidation:
                 "first_name": "Test",
                 "last_name": "User",
                 "role": "FRONT_DESK",
-                "practice_id": str(uuid4())
+                "practice_id": str(test_practice.id)
             }
         )
         assert response.status_code in (422, 400)
 
-    async def test_create_staff_validates_role(self, async_client, auth_headers):
+    async def test_create_staff_validates_role(self, async_client, auth_headers, test_practice):
         response = await async_client.post(
             "/api/v1/staff/",
             headers=auth_headers,
@@ -49,7 +49,7 @@ class TestStaffPydanticValidation:
                 "first_name": "Test",
                 "last_name": "User",
                 "role": "invalid_role",
-                "practice_id": str(uuid4())
+                "practice_id": str(test_practice.id)
             }
         )
         assert response.status_code == 422

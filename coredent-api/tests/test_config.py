@@ -72,6 +72,15 @@ class TestProductionConfig:
         os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
         os.environ["SECRET_KEY"] = "x" * 32
         os.environ["DEBUG"] = "false"
+        os.environ["SENTRY_DSN"] = "https://x@sentry.io/1"
+        os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_x"
+        os.environ["REDIS_URL"] = "redis://x"
+        os.environ["SMTP_HOST"] = "x"
+        os.environ["SMTP_USER"] = "x"
+        os.environ["SMTP_PASSWORD"] = "x"
+        os.environ["AWS_S3_BUCKET"] = "x"
+        os.environ["ALLOWED_HOSTS"] = "example.com"
+        os.environ["CORS_ORIGINS"] = "https://example.com"
         try:
             from app.core.config_simple import SimpleSettings
             s = SimpleSettings()
@@ -89,6 +98,15 @@ class TestProductionConfig:
         os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
         os.environ["SECRET_KEY"] = "x" * 32
         os.environ["DEBUG"] = "true"
+        os.environ["SENTRY_DSN"] = "https://x@sentry.io/1"
+        os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_x"
+        os.environ["REDIS_URL"] = "redis://x"
+        os.environ["SMTP_HOST"] = "x"
+        os.environ["SMTP_USER"] = "x"
+        os.environ["SMTP_PASSWORD"] = "x"
+        os.environ["AWS_S3_BUCKET"] = "x"
+        os.environ["ALLOWED_HOSTS"] = "example.com"
+        os.environ["CORS_ORIGINS"] = "https://example.com"
         try:
             from app.core.config_simple import SimpleSettings
             s = SimpleSettings()

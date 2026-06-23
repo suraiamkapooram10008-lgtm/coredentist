@@ -11,6 +11,22 @@ from datetime import datetime, timezone
 import json
 
 
+def _async_db(*scalar_results):
+    """Build an AsyncSession-shaped mock with ordered scalar query results."""
+    db = MagicMock()
+    db.execute = AsyncMock()
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+    db.add = MagicMock()
+
+    results = []
+    for value in scalar_results:
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = value
+        results.append(result)
+    db.execute.side_effect = results
+    return db
+
 class TestStripeWebhookHandlers:
     """Test Stripe webhook handler functions directly."""
 
@@ -23,9 +39,7 @@ class TestStripeWebhookHandlers:
         mock_payment.status = "pending"
         mock_payment.processed_at = None
 
-        mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_payment
-        mock_db.commit = MagicMock()
+        mock_db = _async_db(mock_payment)
 
         payment_intent = {
             "id": "pi_test_12345",
@@ -41,16 +55,14 @@ class TestStripeWebhookHandlers:
         # Verify the payment record was updated
         assert mock_payment.status == "completed"
         assert mock_payment.processed_at is not None
-        mock_db.commit.assert_called_once()
+        mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_handle_payment_succeeded_no_record(self):
         """Test graceful handling when no matching Payment record exists."""
         from app.api.v1.endpoints.stripe import handle_payment_succeeded
 
-        mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.return_value = None
-        mock_db.commit = MagicMock()
+        mock_db = _async_db(None)
 
         payment_intent = {
             "id": "pi_nonexistent_99999",
@@ -60,7 +72,7 @@ class TestStripeWebhookHandlers:
 
         # Should not raise - graceful no-op
         await handle_payment_succeeded(mock_db, payment_intent)
-        mock_db.commit.assert_not_called()
+        mock_db.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_handle_payment_failed(self):
@@ -70,9 +82,7 @@ class TestStripeWebhookHandlers:
         mock_payment = MagicMock()
         mock_payment.status = "pending"
 
-        mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_payment
-        mock_db.commit = MagicMock()
+        mock_db = _async_db(mock_payment)
 
         payment_intent = {
             "id": "pi_test_failed_001",
@@ -85,33 +95,21 @@ class TestStripeWebhookHandlers:
 
         assert mock_payment.status == "failed"
         assert mock_payment.error_message == "Your card was declined."
-        mock_db.commit.assert_called_once()
+        mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason=(
-            "handle_subscription_created constructs Subscription(user_id=..., "
-            "stripe_*, ...) but the Subscription model requires practice_id and "
-            "plan_id. Endpoint must be rewritten to resolve a SubscriptionPlan "
-            "from the Stripe price_id and scope by practice/patient. Tracked "
-            "separately from test-harness cleanup."
-        ),
-        strict=False,
-    )
     async def test_handle_subscription_created(self):
         """Test that a new Stripe subscription creates a local record."""
         from app.api.v1.endpoints.stripe import handle_subscription_created
 
+        mock_user = MagicMock()
+        mock_user.id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_user.practice_id = "660e8400-e29b-41d4-a716-446655440000"
+
         mock_plan = MagicMock()
         mock_plan.id = "plan_test_001"
-        mock_plan.interval = "monthly"
 
-        mock_db = MagicMock()
-        # Implementation only queries once (existing subscription check);
-        # return None so the new-subscription branch runs.
-        mock_db.query.return_value.filter.return_value.first.return_value = None
-        mock_db.add = MagicMock()
-        mock_db.commit = MagicMock()
+        mock_db = _async_db(mock_user, mock_plan, None)
 
         subscription = {
             "id": "sub_test_001",
@@ -128,7 +126,6 @@ class TestStripeWebhookHandlers:
                     }
                 ]
             },
-            # Handler reads metadata.user_id and skips without it
             "metadata": {
                 "user_id": "550e8400-e29b-41d4-a716-446655440000",
             },
@@ -138,13 +135,15 @@ class TestStripeWebhookHandlers:
 
         # Verify a new subscription record was added
         mock_db.add.assert_called_once()
-        mock_db.commit.assert_called_once()
+        mock_db.commit.assert_awaited_once()
 
         # Verify the record has the correct Stripe IDs
         created_sub = mock_db.add.call_args[0][0]
         assert created_sub.stripe_subscription_id == "sub_test_001"
         assert created_sub.stripe_customer_id == "cus_test_001"
         assert created_sub.status == "active"
+        assert created_sub.practice_id == mock_user.practice_id
+        assert created_sub.plan_id == mock_plan.id
 
     @pytest.mark.asyncio
     async def test_handle_subscription_created_no_user_id(self):
@@ -174,9 +173,7 @@ class TestStripeWebhookHandlers:
         mock_sub.status = "active"
         mock_sub.cancel_at_period_end = False
 
-        mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_sub
-        mock_db.commit = MagicMock()
+        mock_db = _async_db(mock_sub)
 
         subscription = {
             "id": "sub_test_001",
@@ -190,7 +187,7 @@ class TestStripeWebhookHandlers:
 
         assert mock_sub.status == "past_due"
         assert mock_sub.cancel_at_period_end is True
-        mock_db.commit.assert_called_once()
+        mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_handle_subscription_deleted(self):
@@ -201,9 +198,7 @@ class TestStripeWebhookHandlers:
         mock_sub.status = "active"
         mock_sub.canceled_at = None
 
-        mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_sub
-        mock_db.commit = MagicMock()
+        mock_db = _async_db(mock_sub)
 
         subscription = {"id": "sub_test_001"}
 
@@ -211,7 +206,7 @@ class TestStripeWebhookHandlers:
 
         assert mock_sub.status == "canceled"
         assert mock_sub.canceled_at is not None
-        mock_db.commit.assert_called_once()
+        mock_db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_handle_invoice_paid(self):
@@ -222,9 +217,7 @@ class TestStripeWebhookHandlers:
         mock_sub.last_payment_date = None
         mock_sub.next_billing_date = None
 
-        mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_sub
-        mock_db.commit = MagicMock()
+        mock_db = _async_db(mock_sub)
 
         invoice = {
             "id": "in_test_001",
@@ -245,7 +238,7 @@ class TestStripeWebhookHandlers:
 
         assert mock_sub.last_payment_date is not None
         assert mock_sub.next_billing_date is not None
-        mock_db.commit.assert_called_once()
+        mock_db.commit.assert_awaited_once()
 
 
 class TestStripeWebhookEndpoint:

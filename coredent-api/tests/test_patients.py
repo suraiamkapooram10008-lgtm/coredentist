@@ -50,7 +50,7 @@ class TestPatientEndpoints:
         """Test getting patients with search parameter"""
         # Endpoint uses ?query= for search
         response = await client.get(
-            "/api/v1/patients?query=John", headers=auth_headers
+            "/api/v1/patients?query=Doe", headers=auth_headers
         )
 
         assert response.status_code == 200

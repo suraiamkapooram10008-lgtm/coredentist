@@ -425,3 +425,15 @@ class TestEDISchemaEdgeCases:
         assert resp.paid_amount == 0
         assert resp.denial_reason is None
         assert resp.external_claim_id is None
+class TestGenericEDIAdapterFailsClosed:
+    async def test_generic_submission_never_returns_simulated_success(self):
+        from app.core.edi import EDIService
+
+        with pytest.raises(RuntimeError, match="not configured"):
+            await EDIService().submit_claim("ISA*test~")
+
+    async def test_generic_status_never_returns_simulated_data(self):
+        from app.core.edi import EDIService
+
+        with pytest.raises(RuntimeError, match="not configured"):
+            await EDIService().check_claim_status("SIM-123")

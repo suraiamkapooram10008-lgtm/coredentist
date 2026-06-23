@@ -9,7 +9,8 @@ from cryptography.fernet import Fernet
 test_encryption_key = Fernet.generate_key().decode()
 
 # Set required env vars BEFORE importing app (must use direct assignment, not setdefault)
-os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test.db"
+test_database_url = os.getenv("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+os.environ["DATABASE_URL"] = test_database_url
 os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-12345"
 os.environ["ENCRYPTION_KEY"] = test_encryption_key
 os.environ["DEBUG"] = "True"
@@ -20,7 +21,7 @@ import asyncio
 import datetime
 import uuid as uuid_lib
 from typing import AsyncGenerator, Generator
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import configure_mappers
@@ -44,19 +45,27 @@ from app.models.referral import Referral, ReferralSource1
 configure_mappers()
 
 # Test database URL (async SQLite)
-SQLALCHEMY_DATABASE_URL = "sqlite+aiosqlite:///./test.db"
+SQLALCHEMY_DATABASE_URL = test_database_url
 
-# Create async test engine
-engine = create_async_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-    echo=False,
-)
+# Create async test engine. StaticPool keeps a single in-memory SQLite
+# database alive across fixture connections; PostgreSQL uses its normal pool.
+_engine_options = {"echo": False}
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+    _engine_options.update(
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+engine = create_async_engine(SQLALCHEMY_DATABASE_URL, **_engine_options)
 
 TestingSessionLocal = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
 )
+
+
+@pytest.fixture(name="engine")
+def engine_fixture():
+    """Expose the shared async test engine to tests that inspect raw storage."""
+    return engine
 
 
 async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -117,8 +126,9 @@ async def client(setup_database) -> AsyncGenerator[AsyncClient, None]:
     with a trailing slash by requesting /path (FastAPI otherwise returns
     307 and httpx doesn't follow redirects by default).
     """
+    transport = ASGITransport(app=fastapi_app)
     async with AsyncClient(
-        app=fastapi_app, base_url="http://test", follow_redirects=True
+        transport=transport, base_url="http://test", follow_redirects=True
     ) as ac:
         yield ac
 
@@ -177,6 +187,7 @@ async def test_user(db_session: AsyncSession, test_practice: Practice) -> User:
 @pytest.fixture
 async def test_patient(db_session: AsyncSession, test_practice: Practice) -> Patient:
     """Create test patient"""
+    from app.core.search_index import hmac_index
     patient = Patient(
         id=uuid_lib.uuid4(),
         practice_id=test_practice.id,
@@ -198,6 +209,9 @@ async def test_patient(db_session: AsyncSession, test_practice: Practice) -> Pat
         medical_alerts=[],
         status="active",
     )
+    patient.search_index_email = hmac_index("john.doe@example.com")
+    patient.search_index_phone = hmac_index("+1234567890")
+    patient.search_index_last_name = hmac_index("Doe")
     db_session.add(patient)
     await db_session.flush()
     await db_session.refresh(patient)
@@ -240,6 +254,115 @@ async def auth_headers(client: AsyncClient, test_user: User) -> dict:
     response = await client.post("/api/v1/auth/login", json=login_data)
     if response.status_code != 200:
         # If login fails, return a dummy token for tests that don't require valid auth
+        return {"Authorization": "Bearer dummy-token"}
+    token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+async def other_practice(db_session: AsyncSession) -> Practice:
+    """Create a second practice for cross-tenant isolation tests"""
+    practice = Practice(
+        id=uuid_lib.uuid4(),
+        name="Other Practice",
+        email="other@practice.com",
+        phone="555-0200",
+        address_street="456 Other St",
+        address_city="Otherville",
+        address_state="OT",
+        address_zip="54321",
+    )
+    db_session.add(practice)
+    await db_session.flush()
+    await db_session.refresh(practice)
+    return practice
+
+
+@pytest.fixture
+async def other_user(db_session: AsyncSession, other_practice: Practice) -> User:
+    """Create a second user belonging to other_practice for tenant isolation tests"""
+    unique_email = f"otheruser_{uuid_lib.uuid4().hex[:8]}@example.com"
+    user = User(
+        id=uuid_lib.uuid4(),
+        email=unique_email,
+        password_hash=get_password_hash("otherpassword123"),
+        first_name="Other",
+        last_name="User",
+        role="OWNER",
+        practice_id=other_practice.id,
+        is_active=True,
+    )
+    db_session.add(user)
+    await db_session.flush()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+async def other_patient(db_session: AsyncSession, other_practice: Practice) -> Patient:
+    """Create a patient in other_practice for cross-tenant tests"""
+    patient = Patient(
+        id=uuid_lib.uuid4(),
+        practice_id=other_practice.id,
+        first_name="Jane",
+        last_name="Smith",
+        email="jane.smith@example.com",
+        phone="+1987654321",
+        date_of_birth=datetime.date(1985, 5, 15),
+        gender="female",
+        address_street="789 Oak St",
+        address_city="Oakville",
+        address_state="CA",
+        address_zip="90210",
+        emergency_contact={
+            "name": "John Smith",
+            "relationship": "spouse",
+            "phone": "+1987654322"
+        },
+        medical_alerts=[],
+        status="active",
+    )
+    db_session.add(patient)
+    await db_session.flush()
+    await db_session.refresh(patient)
+    return patient
+
+
+@pytest.fixture
+async def other_appointment(
+    db_session: AsyncSession,
+    other_practice: Practice,
+    other_patient: Patient,
+    other_user: User,
+) -> Appointment:
+    """Create an appointment in other_practice for cross-tenant tests"""
+    appointment = Appointment(
+        id=uuid_lib.uuid4(),
+        practice_id=other_practice.id,
+        patient_id=other_patient.id,
+        provider_id=other_user.id,
+        appointment_type="consultation",
+        status="scheduled",
+        start_time=datetime.datetime(2026, 4, 20, 14, 0, 0),
+        end_time=datetime.datetime(2026, 4, 20, 15, 0, 0),
+        duration=60,
+        notes="Other practice appointment",
+    )
+    db_session.add(appointment)
+    await db_session.flush()
+    await db_session.refresh(appointment)
+    return appointment
+
+
+@pytest.fixture
+async def other_auth_headers(client: AsyncClient, other_user: User) -> dict:
+    """Get authentication headers for the other practice user"""
+    login_data = {
+        "email": other_user.email,
+        "password": "otherpassword123"
+    }
+    response = await client.post("/api/v1/auth/login", json=login_data)
+    if response.status_code != 200:
         return {"Authorization": "Bearer dummy-token"}
     token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
