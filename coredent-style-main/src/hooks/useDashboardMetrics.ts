@@ -37,10 +37,16 @@ export function useDashboardMetrics(
 ): UseDashboardMetricsResult {
   const { from, to, enabled = true } = options;
 
+  // Default to a sensible range when callers omit the bounds so the query
+  // function always receives concrete Date values (reportsApi requires them).
+  const safeFrom = from ?? new Date();
+  const safeTo = to ?? new Date();
+
   const { data: response, isLoading, isError, error } = useQuery({
-    queryKey: ['dashboard', 'metrics', from?.toISOString(), to?.toISOString()],
-    queryFn: () => reportsApi.getDashboardMetrics({ from, to }),
+    queryKey: ['dashboard', 'metrics', safeFrom.toISOString(), safeTo.toISOString()],
+    queryFn: () => reportsApi.getDashboardMetrics({ from: safeFrom, to: safeTo }),
     staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: false,
     enabled,
   });
 

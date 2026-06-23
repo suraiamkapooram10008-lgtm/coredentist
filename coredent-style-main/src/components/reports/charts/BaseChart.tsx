@@ -46,10 +46,10 @@ BaseChart.displayName = 'BaseChart';
 // Shared chart components to reduce duplication in individual chart files
 export const ChartGrid = () => <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />;
 export const ChartXAxis = ({ dataKey }: { dataKey: string }) => <XAxis dataKey={dataKey} className="text-xs" />;
-export const ChartYAxis = ({ formatter }: { formatter?: (v: unknown) => string }) => (
+export const ChartYAxis = ({ formatter }: { formatter?: (v: number) => string }) => (
   <YAxis className="text-xs" tickFormatter={formatter} />
 );
-export const ChartTooltip = ({ formatter }: { formatter?: (v: unknown) => string }) => (
+export const ChartTooltip = ({ formatter }: { formatter?: (v: number) => string }) => (
   <Tooltip
     formatter={formatter}
     contentStyle={{

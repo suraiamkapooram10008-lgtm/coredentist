@@ -3,7 +3,7 @@
 // Admin panel for managing staff and invitations
 // ============================================
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,7 +47,6 @@ import {
 } from 'lucide-react';
 import { rolePermissions } from '@/types/staff';
 import type { StaffMember, StaffInvitation } from '@/types/staff';
-import type { UserRole } from '@/types/api';
 import { InviteStaffDialog } from '@/components/admin/InviteStaffDialog';
 import { EditStaffDialog } from '@/components/admin/EditStaffDialog';
 import { formatDistanceToNow } from 'date-fns';
@@ -75,10 +74,9 @@ export default function StaffManagement() {
     const loadStaff = async () => {
       setIsLoading(true);
       try {
-        const [staffResponse, invitationsResponse] = await Promise.all([
-          staffApi.list(),
-          staffApi.listInvitations(),
-        ]);
+        // Call APIs sequentially to keep the response types narrow (Promise.all
+        // widens the tuple union and breaks the `setStaff` inference below).
+        const staffResponse = await staffApi.list();
         if (!isActive) return;
         if (staffResponse.success && staffResponse.data) {
           setStaff(staffResponse.data.data);
@@ -90,6 +88,9 @@ export default function StaffManagement() {
             variant: 'destructive',
           });
         }
+
+        const invitationsResponse = await staffApi.listInvitations();
+        if (!isActive) return;
         if (invitationsResponse.success && invitationsResponse.data) {
           setInvitations(invitationsResponse.data);
         } else {

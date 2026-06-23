@@ -127,11 +127,11 @@ export const analytics = new Analytics();
 
 // Common event tracking functions
 
-export const trackSignup = (userId: string, method: string) => {
+export const trackSignup = (_userId: string, method: string) => {
   analytics.track('User Signed Up', { method });
 };
 
-export const trackLogin = (userId: string, method: string) => {
+export const trackLogin = (_userId: string, method: string) => {
   analytics.track('User Logged In', { method });
 };
 

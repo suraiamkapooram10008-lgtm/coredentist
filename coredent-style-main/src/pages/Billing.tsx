@@ -3,7 +3,7 @@
 // Invoice management and payment tracking
 // ============================================
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
@@ -21,10 +21,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { 
-  Plus, 
-  Search, 
-  FileText, 
+import {
+  Plus,
+  Search,
+  FileText,
   DollarSign,
   AlertTriangle,
   TrendingUp
@@ -35,7 +35,7 @@ import { RecordPaymentDialog } from '@/components/billing/RecordPaymentDialog';
 import { InvoiceDetails } from '@/components/billing/InvoiceDetails';
 import { billingApi } from '@/services/billingApi';
 import { triggerAutomation } from '@/services/automationApi';
-import type { Invoice, InvoiceStatus, BillingSummary, PaymentMethod } from '@/types/billing';
+import type { Invoice, PaymentMethod } from '@/types/billing';
 
 type TabFilter = 'all' | 'pending' | 'paid' | 'overdue';
 
@@ -115,11 +115,7 @@ export default function Billing() {
   }) => {
     try {
       const newInvoice = await billingApi.createInvoice(data);
-      setInvoices(prev => [newInvoice, ...prev]);
-      
-      // Refresh summary
-      const summaryData = await billingApi.getSummary();
-      setSummary(summaryData);
+      queryClient.invalidateQueries({ queryKey: ['billing'] });
       
       toast({
         title: 'Invoice created',
@@ -156,14 +152,10 @@ export default function Billing() {
     
     try {
       const updated = await billingApi.recordPayment(paymentInvoice.id, data);
-      setInvoices(prev => prev.map(inv => inv.id === updated.id ? updated : inv));
+      queryClient.invalidateQueries({ queryKey: ['billing'] });
       if (viewingInvoice?.id === updated.id) {
         setViewingInvoice(updated);
       }
-      
-      // Refresh summary
-      const summaryData = await billingApi.getSummary();
-      setSummary(summaryData);
       
       toast({
         title: 'Payment recorded',
@@ -212,9 +204,9 @@ export default function Billing() {
   // Send invoice
   const handleSend = async (invoice: Invoice) => {
     try {
-      const updated = await billingApi.updateStatus(invoice.id, 'sent');
-      setInvoices(prev => prev.map(inv => inv.id === updated.id ? updated : inv));
-      
+      await billingApi.updateStatus(invoice.id, 'sent');
+      queryClient.invalidateQueries({ queryKey: ['billing'] });
+
       toast({
         title: 'Invoice sent',
         description: 'Invoice status updated to Sent',
@@ -234,14 +226,10 @@ export default function Billing() {
     
     try {
       await billingApi.deleteInvoice(deletingInvoice.id);
-      setInvoices(prev => prev.filter(inv => inv.id !== deletingInvoice.id));
+      queryClient.invalidateQueries({ queryKey: ['billing'] });
       if (viewingInvoice?.id === deletingInvoice.id) {
         setViewingInvoice(null);
       }
-      
-      // Refresh summary
-      const summaryData = await billingApi.getSummary();
-      setSummary(summaryData);
       
       setDeletingInvoice(null);
       toast({

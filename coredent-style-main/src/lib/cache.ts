@@ -23,7 +23,9 @@ class MemoryCache {
     // Evict oldest entries if cache is full
     if (this.cache.size >= this.maxSize) {
       const firstKey = this.cache.keys().next().value;
-      this.cache.delete(firstKey);
+      if (firstKey !== undefined) {
+        this.cache.delete(firstKey);
+      }
     }
 
     const entry: CacheEntry<T> = {
@@ -113,7 +115,7 @@ export function cached<T extends (...args: unknown[]) => unknown>(
       return cached.data;
     }
 
-    const result = fn(...args);
+    const result = fn(...args) as ReturnType<T>;
 
     // Handle promises
     if (result instanceof Promise) {
@@ -169,7 +171,9 @@ export class LRUCache<K, V> {
     // Evict least recently used if at capacity
     if (this.cache.size >= this.maxSize) {
       const firstKey = this.cache.keys().next().value;
-      this.cache.delete(firstKey);
+      if (firstKey !== undefined) {
+        this.cache.delete(firstKey);
+      }
     }
 
     this.cache.set(key, value);

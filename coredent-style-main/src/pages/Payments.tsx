@@ -4,18 +4,15 @@
  * Supports: Stripe (US) and Razorpay (India - UPI/Paytm/PhonePe)
  */
 
-import { useState, useEffect, useCallback } from "react";
-import { logger } from "@/lib/logger";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { 
-  Table, 
+import {
+  Table,
   TableBody, 
   TableCell, 
   TableHead, 
@@ -29,22 +26,12 @@ import {
   DollarSign, 
   TrendingUp,
   Clock,
-  CheckCircle,
-  XCircle,
   RefreshCw,
   Terminal,
   Settings,
   Smartphone,
   Loader2
 } from "lucide-react";
-import { 
-  createRazorpayOrder, 
-  verifyRazorpayPayment, 
-  loadRazorpayScript,
-  type RazorpayOrderCreate,
-  type RazorpayPaymentVerify 
-} from "@/services/paymentApi";
-import { useToast } from "@/hooks/use-toast";
 import {
   usePaymentStats,
   useTransactions,
@@ -52,166 +39,21 @@ import {
   useTerminals,
 } from "@/hooks/usePayments";
 
-// Razorpay response type
-interface RazorpayResponse {
-  razorpay_order_id: string;
-  razorpay_payment_id: string;
-  razorpay_signature: string;
-}
-
-// Razorpay window type
-interface RazorpayWindow extends Window {
-  Razorpay: new (options: Record<string, unknown>) => { open: () => void };
-}
-
 export default function Payments() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [showRazorpayDialog, setShowRazorpayDialog] = useState(false);
-  const [paymentAmount, setPaymentAmount] = useState("");
-  const [patientName, setPatientName] = useState("");
-  const [isProcessing, setIsProcessing] = useState(false);
-  const { toast } = useToast();
+  const [showCreditCardDialog, setShowCreditCardDialog] = useState(false);
 
   // Fetch data from API using React Query hooks
-  const { data: statsData, isLoading: statsLoading } = usePaymentStats();
-  const { data: transactionsData, isLoading: transactionsLoading } = useTransactions({ search: searchTerm || undefined });
-  const { data: recurringData, isLoading: recurringLoading } = useRecurringPlans();
-  const { data: terminalsData, isLoading: terminalsLoading } = useTerminals();
+  const { data: statsData, isLoading: statsLoading, isError: statsError } = usePaymentStats();
+  const { data: transactionsData, isLoading: transactionsLoading, isError: transactionsError } = useTransactions({ search: searchTerm || undefined });
+  const { data: recurringData, isLoading: recurringLoading, isError: recurringError } = useRecurringPlans();
+  const { data: terminalsData, isLoading: terminalsLoading, isError: terminalsError } = useTerminals();
+  const hasPaymentDataError = statsError || transactionsError || recurringError || terminalsError;
 
   const stats = statsData?.data;
   const transactions = transactionsData?.data?.transactions ?? [];
   const recurringPlans = recurringData?.data?.plans ?? [];
   const terminals = terminalsData?.data?.terminals ?? [];
-
-  // Load Razorpay SDK on mount
-  useEffect(() => {
-    let cancelled = false;
-    loadRazorpayScript().then((success) => {
-      if (!cancelled && !success) {
-        logger.warn("Failed to load Razorpay SDK - UPI payments may not work");
-      }
-    });
-    return () => { cancelled = true; };
-  }, []);
-
-  // Handle Razorpay payment
-  const handleRazorpayPayment = useCallback(async () => {
-    if (!paymentAmount || !patientName) {
-      toast({
-        title: "Missing Information",
-        description: "Please enter patient name and amount",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsProcessing(true);
-
-    try {
-      // Step 1: Create order
-      const orderData: RazorpayOrderCreate = {
-        invoice_id: crypto.randomUUID(), // In production, use actual invoice_id
-        amount: parseFloat(paymentAmount),
-        currency: "INR",
-        receipt: `receipt_${Date.now()}`,
-      };
-
-      const orderResponse = await createRazorpayOrder(orderData);
-      const order = orderResponse.data;
-
-      if (!order) {
-        toast({
-          title: "Order Creation Failed",
-          description: "Failed to create payment order. Please try again.",
-          variant: "destructive",
-        });
-        setIsProcessing(false);
-        return;
-      }
-
-      // Step 2: Open Razorpay checkout
-      const razorpayWindow = window as unknown as RazorpayWindow;
-      if (typeof window !== "undefined" && razorpayWindow.Razorpay) {
-        const options: Record<string, unknown> = {
-          key: order.key_id,
-          amount: order.amount,
-          currency: order.currency,
-          name: "CoreDent PMS",
-          description: `Payment for ${patientName}`,
-          order_id: order.order_id,
-          handler: async (response: RazorpayResponse) => {
-            // Step 3: Verify payment
-            const verifyData: RazorpayPaymentVerify = {
-              razorpay_order_id: response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature,
-              invoice_id: orderData.invoice_id,
-            };
-
-            try {
-              const verifyResponse = await verifyRazorpayPayment(verifyData);
-              const paymentId = verifyResponse.data?.payment_id || "Unknown";
-              toast({
-                title: "Payment Successful!",
-                description: `Payment ID: ${paymentId}`,
-              });
-              setShowRazorpayDialog(false);
-              setPaymentAmount("");
-              setPatientName("");
-            } catch (error) {
-              logger.error("Payment verification failed", error instanceof Error ? error : undefined);
-              toast({
-                title: "Verification Failed",
-                description: "Payment was made but verification failed. Contact support.",
-                variant: "destructive",
-              });
-            }
-          },
-          prefill: {
-            name: patientName,
-          },
-          theme: {
-            color: "#0ea5e9",
-          },
-          modal: {
-            ondismiss: () => {
-              setIsProcessing(false);
-            },
-          },
-        };
-
-        const razorpay = new razorpayWindow.Razorpay(options);
-        razorpay.open();
-      } else {
-        toast({
-          title: "Payment Gateway UNAVAILABLE",
-          description: "Razorpay SDK not loaded. Please refresh the page.",
-          variant: "destructive",
-        });
-      }
-    } catch (error: unknown) {
-      const detail = error && typeof error === 'object' && 'response' in error
-        ? (error as { response?: { data?: { detail?: string } } }).response?.data?.detail
-        : "Failed to create payment order";
-      logger.error("Razorpay payment failed", error instanceof Error ? error : undefined, { detail });
-      toast({
-        title: "Payment Failed",
-        description: detail || "Failed to create payment order",
-        variant: "destructive",
-      });
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [paymentAmount, patientName, toast]);
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  };
 
   const formatUSD = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -232,16 +74,22 @@ export default function Payments() {
             <Terminal className="mr-2 h-4 w-4" />
             Terminals
           </Button>
-          <Button onClick={() => setShowRazorpayDialog(true)}>
+          <Button disabled title="UPI payments require a server-side Razorpay order endpoint">
             <Smartphone className="mr-2 h-4 w-4" />
-            Pay with UPI
+            UPI unavailable
           </Button>
-          <Button>
+          <Button onClick={() => setShowCreditCardDialog(true)}>
             <CreditCard className="mr-2 h-4 w-4" />
             Process Payment
           </Button>
         </div>
       </div>
+
+      {hasPaymentDataError && (
+        <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+          Payment data is currently unavailable. No estimated or demo financial data is shown. Retry after the payment service is restored.
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -539,72 +387,19 @@ export default function Payments() {
         </TabsContent>
       </Tabs>
 
-      {/* Razorpay Payment Dialog */}
-      <Dialog open={showRazorpayDialog} onOpenChange={setShowRazorpayDialog}>
-        <DialogContent>
+      {/* Credit card payments must use provider-hosted Stripe Elements. */}
+      <Dialog open={showCreditCardDialog} onOpenChange={setShowCreditCardDialog}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Pay with UPI / Indian Payment Methods</DialogTitle>
+            <DialogTitle>Credit card payments unavailable</DialogTitle>
             <DialogDescription>
-              Accept payments via UPI (GPay, PhonePe, Paytm), Cards, Net Banking, or Wallets
+              Card entry is disabled until Stripe Elements is connected to a server-created PaymentIntent. No card number or CVV is collected by CoreDent.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="patient-name">Patient Name</Label>
-              <Input
-                id="patient-name"
-                placeholder="Enter patient name"
-                value={patientName}
-                onChange={(e) => setPatientName(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="amount">Amount (₹)</Label>
-              <Input
-                id="amount"
-                type="number"
-                placeholder="Enter amount in INR"
-                value={paymentAmount}
-                onChange={(e) => setPaymentAmount(e.target.value)}
-              />
-            </div>
-            <div className="rounded-lg border p-4">
-              <p className="text-sm font-medium mb-2">Accepted Payment Methods:</p>
-              <div className="flex flex-wrap gap-2">
-                <Badge variant="secondary" className="gap-1">
-                  <Smartphone className="h-3 w-3" /> UPI (GPay, PhonePe, Paytm)
-                </Badge>
-                <Badge variant="secondary" className="gap-1">
-                  <CreditCard className="h-3 w-3" /> Cards (Visa, MC, RuPay)
-                </Badge>
-                <Badge variant="secondary">Net Banking</Badge>
-                <Badge variant="secondary">Wallets</Badge>
-              </div>
-            </div>
-          </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowRazorpayDialog(false)}>
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleRazorpayPayment} 
-              disabled={isProcessing || !paymentAmount || !patientName}
-            >
-              {isProcessing ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <Smartphone className="mr-2 h-4 w-4" />
-                  Pay Now
-                </>
-              )}
-            </Button>
+            <Button onClick={() => setShowCreditCardDialog(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
-    </div>
+      </Dialog>    </div>
   );
 }

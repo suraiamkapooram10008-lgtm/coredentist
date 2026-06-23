@@ -17,15 +17,13 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table";
-import { 
-  Search, 
-  Plus, 
-  UserPlus, 
-  Clock, 
-  CheckCircle, 
-  XCircle,
+import {
+  Search,
+  Plus,
+  UserPlus,
+  Clock,
+  CheckCircle,
   DollarSign,
-  TrendingUp
 } from "lucide-react";
 
 export default function Referrals() {

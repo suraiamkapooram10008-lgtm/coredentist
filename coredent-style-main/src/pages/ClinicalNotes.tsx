@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { clinicalNotesApi, patientsApi } from "@/services/api";
 import type { ClinicalNote, Patient } from "@/types/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
+import { Loader2, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { logger } from "@/lib/logger";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { format } from "date-fns";
@@ -42,6 +53,7 @@ export default function ClinicalNotes() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<Patient[]>([]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editingNote, setEditingNote] = useState<ClinicalNote | null>(null);
   const [noteType, setNoteType] = useState<ClinicalNote["type"]>("general");
   const [content, setContent] = useState("");
   const [subjective, setSubjective] = useState("");
@@ -136,6 +148,7 @@ export default function ClinicalNotes() {
   }, [noteType, subjective, objective, assessment, plan, content]);
 
   const resetForm = () => {
+    setEditingNote(null);
     setNoteType("general");
     setContent("");
     setSubjective("");
@@ -144,14 +157,33 @@ export default function ClinicalNotes() {
     setPlan("");
   };
 
-  const handleCreateNote = async () => {
+  const handleEditClick = (note: ClinicalNote) => {
+    setEditingNote(note);
+    setNoteType(note.type);
+    if (note.type === "soap") {
+      setSubjective(note.subjective || "");
+      setObjective(note.objective || "");
+      setAssessment(note.assessment || "");
+      setPlan(note.plan || "");
+      setContent("");
+    } else {
+      setContent(note.content || "");
+      setSubjective("");
+      setObjective("");
+      setAssessment("");
+      setPlan("");
+    }
+    setIsCreateOpen(true);
+  };
+
+  const handleSaveNote = async () => {
     if (!patientId || !canSave) return;
     setIsSaving(true);
     try {
       const payload: Omit<ClinicalNote, "id" | "createdAt" | "updatedAt"> = {
         patientId,
-        providerId: user?.id || "unknown",
-        providerName: user ? `${user.firstName} ${user.lastName}` : "Unknown",
+        providerId: editingNote ? editingNote.providerId : (user?.id || "unknown"),
+        providerName: editingNote ? editingNote.providerName : (user ? `${user.firstName} ${user.lastName}` : "Unknown"),
         type: noteType,
         subjective: noteType === "soap" ? subjective.trim() || undefined : undefined,
         objective: noteType === "soap" ? objective.trim() || undefined : undefined,
@@ -159,31 +191,77 @@ export default function ClinicalNotes() {
         plan: noteType === "soap" ? plan.trim() || undefined : undefined,
         content: noteType === "soap" ? undefined : content.trim(),
       };
-      const response = await clinicalNotesApi.create(payload);
-      if (response.success && response.data) {
-        setNotes((prev) => [response.data!, ...prev]);
-        setIsCreateOpen(false);
-        resetForm();
-        toast({
-          title: "Note created",
-          description: "Clinical note saved successfully",
-        });
+      
+      if (editingNote) {
+        const response = await clinicalNotesApi.update(editingNote.id, payload);
+        if (response.success && response.data) {
+          setNotes((prev) => prev.map(n => n.id === editingNote.id ? response.data! : n));
+          setIsCreateOpen(false);
+          resetForm();
+          toast({
+            title: "Note updated",
+            description: "Clinical note updated successfully",
+          });
+        } else {
+          toast({
+            title: "Error",
+            description: response.error?.message || "Failed to update note",
+            variant: "destructive",
+          });
+        }
       } else {
-        toast({
-          title: "Error",
-          description: response.error?.message || "Failed to create note",
-          variant: "destructive",
-        });
+        const response = await clinicalNotesApi.create(payload);
+        if (response.success && response.data) {
+          setNotes((prev) => [response.data!, ...prev]);
+          setIsCreateOpen(false);
+          resetForm();
+          toast({
+            title: "Note created",
+            description: "Clinical note saved successfully",
+          });
+        } else {
+          toast({
+            title: "Error",
+            description: response.error?.message || "Failed to create note",
+            variant: "destructive",
+          });
+        }
       }
     } catch (err) {
-      logger.error('Failed to create note', err instanceof Error ? err : new Error(String(err)));
+      logger.error('Failed to save note', err instanceof Error ? err : new Error(String(err)));
       toast({
         title: "Error",
-        description: "Failed to create note",
+        description: "Failed to save note",
         variant: "destructive",
       });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    try {
+      const response = await clinicalNotesApi.delete(id);
+      if (response.success) {
+        setNotes((prev) => prev.filter(n => n.id !== id));
+        toast({
+          title: "Note deleted",
+          description: "Clinical note deleted successfully",
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: response.error?.message || "Failed to delete note",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      logger.error('Failed to delete note', err instanceof Error ? err : new Error(String(err)));
+      toast({
+        title: "Error",
+        description: "Failed to delete note",
+        variant: "destructive",
+      });
     }
   };
 
@@ -272,12 +350,40 @@ export default function ClinicalNotes() {
             <Card key={note.id}>
               <CardHeader className="pb-2">
                 <div className="flex justify-between items-start">
-                  <CardTitle className="text-lg font-medium">
-                    {format(new Date(note.createdAt), "PPP p")}
-                  </CardTitle>
-                  <span className="text-sm text-muted-foreground">
-                    by {note.providerName}
-                  </span>
+                  <div className="space-y-1">
+                    <CardTitle className="text-lg font-medium">
+                      {format(new Date(note.createdAt), "PPP p")}
+                    </CardTitle>
+                    <div className="text-sm text-muted-foreground">
+                      by {note.providerName}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="icon" onClick={() => handleEditClick(note)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This will permanently delete this clinical note. This action cannot be undone.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => handleDeleteNote(note.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/95">
+                            Delete
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
@@ -317,10 +423,13 @@ export default function ClinicalNotes() {
         </div>
       )}
 
-      <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+      <Dialog open={isCreateOpen} onOpenChange={(open) => {
+        setIsCreateOpen(open);
+        if (!open) resetForm();
+      }}>
         <DialogContent className="sm:max-w-[700px]">
           <DialogHeader>
-            <DialogTitle>New Clinical Note</DialogTitle>
+            <DialogTitle>{editingNote ? "Edit Clinical Note" : "New Clinical Note"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
@@ -386,8 +495,8 @@ export default function ClinicalNotes() {
             <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleCreateNote} disabled={!canSave || isSaving}>
-              {isSaving ? "Saving..." : "Save Note"}
+            <Button onClick={handleSaveNote} disabled={!canSave || isSaving}>
+              {isSaving ? "Saving..." : editingNote ? "Update Note" : "Save Note"}
             </Button>
           </DialogFooter>
         </DialogContent>

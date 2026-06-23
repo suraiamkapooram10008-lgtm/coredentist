@@ -15,7 +15,8 @@ import {
   MapPin,
   Stethoscope,
   Info,
-  ArrowRight
+  ArrowRight,
+  Loader2
 } from 'lucide-react';
 import { format, addDays, startOfToday, isSameDay } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -26,7 +27,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { toast } from '@/components/ui/use-toast';
+import { toast } from '@/hooks/use-toast';
 import { PageLoader } from '@/components/ui/spinner';
 
 // --- Types ---
@@ -103,19 +104,41 @@ export default function PublicBooking() {
     enabled: !!slug
   });
 
-  // Mock Availability fetching for the selected date
+  // Real Availability fetching for the selected date
   const [availability, setAvailability] = useState<TimeSlot[]>([]);
+  const [loadingAvailability, setLoadingAvailability] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   useEffect(() => {
-    // Simulate API call for slots
-    const slots = [
-      { start_time: '09:00', end_time: '09:30', is_available: true },
-      { start_time: '10:00', end_time: '10:30', is_available: true },
-      { start_time: '11:30', end_time: '12:00', is_available: false },
-      { start_time: '14:00', end_time: '14:30', is_available: true },
-      { start_time: '15:30', end_time: '16:00', is_available: true },
-    ];
-    setAvailability(slots);
-  }, [selectedDate]);
+    if (!slug) return;
+    let active = true;
+    const fetchAvailability = async () => {
+      setLoadingAvailability(true);
+      try {
+        const response = await fetch(`${API_BASE}/booking/public/${slug}/availability?date=${format(selectedDate, 'yyyy-MM-dd')}`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch availability');
+        }
+        const data = await response.json();
+        if (active) {
+          setAvailability(data);
+        }
+      } catch (err) {
+        console.error('Error fetching availability:', err);
+        if (active) {
+          setAvailability([]);
+        }
+      } finally {
+        if (active) {
+          setLoadingAvailability(false);
+        }
+      }
+    };
+    fetchAvailability();
+    return () => {
+      active = false;
+    };
+  }, [selectedDate, slug]);
 
   const handleNext = () => {
     if (currentStep < STEPS.length - 1) {
@@ -295,34 +318,44 @@ export default function PublicBooking() {
                           })}
                         </div>
                       </div>
-
                       {/* Time Slots */}
                       <div className="lg:w-[300px] space-y-6">
                         <Label className="text-sm font-bold uppercase tracking-wider text-slate-400 pl-1">Preferred Time</Label>
                         <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                          {availability.map((slot, idx) => (
-                            <button
-                              key={idx}
-                              disabled={!slot.is_available}
-                              onClick={() => {
-                                setSelectedSlot(slot.start_time);
-                              }}
-                              className={cn(
-                                "w-full p-4 rounded-2xl flex justify-between items-center transition-all duration-300 border-2",
-                                selectedSlot === slot.start_time 
-                                  ? "bg-emerald-500 border-emerald-500 text-white shadow-lg shadow-emerald-100" 
-                                  : slot.is_available 
-                                    ? "bg-white border-slate-100 hover:border-emerald-200" 
-                                    : "bg-slate-50 border-slate-50 opacity-40 cursor-not-allowed"
-                              )}
-                            >
-                              <div className="flex items-center gap-3">
-                                <Clock className={cn("w-4 h-4", selectedSlot === slot.start_time ? "text-emerald-100" : "text-slate-400")} />
-                                <span className="text-lg font-black tracking-tight">{slot.start_time}</span>
-                              </div>
-                              {selectedSlot === slot.start_time && <CheckCircle2 className="w-5 h-5 text-white" />}
-                            </button>
-                          ))}
+                          {loadingAvailability ? (
+                            <div className="flex flex-col items-center justify-center py-12">
+                              <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                              <span className="text-xs text-slate-400 mt-2">Loading slots...</span>
+                            </div>
+                          ) : availability.length === 0 ? (
+                            <div className="text-center py-12 text-slate-400 text-sm font-medium">
+                              No slots available on this date.
+                            </div>
+                          ) : (
+                            availability.map((slot, idx) => (
+                              <button
+                                key={idx}
+                                disabled={!slot.is_available}
+                                onClick={() => {
+                                  setSelectedSlot(slot.start_time);
+                                }}
+                                className={cn(
+                                  "w-full p-4 rounded-2xl flex justify-between items-center transition-all duration-300 border-2",
+                                  selectedSlot === slot.start_time 
+                                    ? "bg-emerald-500 border-emerald-500 text-white shadow-lg shadow-emerald-100" 
+                                    : slot.is_available 
+                                      ? "bg-white border-slate-100 hover:border-emerald-200" 
+                                      : "bg-slate-50 border-slate-50 opacity-40 cursor-not-allowed"
+                                )}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <Clock className={cn("w-4 h-4", selectedSlot === slot.start_time ? "text-emerald-100" : "text-slate-400")} />
+                                  <span className="text-lg font-black tracking-tight">{slot.start_time}</span>
+                                </div>
+                                {selectedSlot === slot.start_time && <CheckCircle2 className="w-5 h-5 text-white" />}
+                              </button>
+                            ))
+                          )}
                         </div>
                       </div>
                     </div>
@@ -491,16 +524,60 @@ export default function PublicBooking() {
                 
                 {currentStep === STEPS.length - 1 ? (
                   <Button 
-                    onClick={() => {
-                      toast({
-                        title: "Booking Submitted!",
-                        description: "Your request has been sent to the clinic.",
-                      });
-                      navigate('/book/success');
+                    disabled={isSubmitting}
+                    onClick={async () => {
+                      setIsSubmitting(true);
+                      try {
+                        const response = await fetch(`${API_BASE}/booking/public/${slug}/book`, {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                          },
+                          body: JSON.stringify({
+                            appointment_type: selectedType.id,
+                            date: format(selectedDate, 'yyyy-MM-dd'),
+                            time: selectedSlot,
+                            patient: {
+                              firstName: formData.firstName,
+                              lastName: formData.lastName,
+                              email: formData.email,
+                              phone: formData.phone,
+                            },
+                            reason: formData.reason,
+                            is_new_patient: formData.isNewPatient,
+                          }),
+                        });
+                        
+                        if (!response.ok) {
+                          throw new Error(`Failed to submit booking: ${response.statusText}`);
+                        }
+                        
+                        toast({
+                          title: "Booking Submitted!",
+                          description: "Your request has been sent to the clinic.",
+                        });
+                        navigate('/book/success');
+                      } catch (err) {
+                        toast({
+                          title: "Booking Failed",
+                          description: err instanceof Error ? err.message : "An error occurred while booking.",
+                          variant: "destructive",
+                        });
+                      } finally {
+                        setIsSubmitting(false);
+                      }
                     }}
-                    className="px-12 h-14 rounded-2xl font-black text-lg bg-emerald-600 hover:bg-emerald-700 shadow-xl shadow-emerald-100 transition-all hover:scale-[1.05] active:scale-95 text-white"
+                    className="px-12 h-14 rounded-2xl font-black text-lg bg-emerald-600 hover:bg-emerald-700 shadow-xl shadow-emerald-100 transition-all hover:scale-[1.05] active:scale-95 text-white flex items-center justify-center gap-2"
                   >
-                    Confirm Booking <ArrowRight className="ml-2 w-5 h-5" />
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" /> Submitting...
+                      </>
+                    ) : (
+                      <>
+                        Confirm Booking <ArrowRight className="w-5 h-5" />
+                      </>
+                    )}
                   </Button>
                 ) : (
                   <Button 

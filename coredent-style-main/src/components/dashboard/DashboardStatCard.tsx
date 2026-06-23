@@ -3,11 +3,10 @@
  * Displays a single statistic card on the dashboard
  */
 
-import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { TrendingUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { cn } from '@/lib/utils';
+import React from 'react';
 
 interface DashboardStatCardProps {
   title: string;

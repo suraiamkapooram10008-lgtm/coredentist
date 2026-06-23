@@ -40,6 +40,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
+
+  useEffect(() => {
+    const handleForcedLogout = () => {
+      authApi.setToken(null);
+      authApi.setRefreshToken(null);
+      clearCsrfToken();
+      setUser(null);
+      setIsLoading(false);
+    };
+
+    window.addEventListener('auth:logout', handleForcedLogout);
+    return () => window.removeEventListener('auth:logout', handleForcedLogout);
+  }, []);
   
   // CRITICAL FIX: Token storage for cross-origin auth
 

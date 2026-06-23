@@ -17,14 +17,13 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table";
-import { 
-  Search, 
-  Plus, 
-  Image, 
-  Upload, 
+import {
+  Search,
+  Plus,
+  Image,
+  Upload,
   Eye,
   Share2,
-  Trash2,
   Download,
   ZoomIn,
   ZoomOut,

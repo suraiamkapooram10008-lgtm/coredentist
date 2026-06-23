@@ -41,11 +41,16 @@ export function useTodayAppointments(
 ): UseTodayAppointmentsResult {
   const { startDate, endDate, enabled = true } = options;
 
+  // Default to the start/end of today so the query function always hands the
+  // API concrete date strings (appointmentsApi.list requires them).
+  const safeStart = startDate ?? new Date();
+  const safeEnd = endDate ?? new Date();
+
   const { data: response, isLoading, isError, error } = useQuery({
-    queryKey: ['dashboard', 'appointments', startDate?.toISOString(), endDate?.toISOString()],
+    queryKey: ['dashboard', 'appointments', safeStart.toISOString(), safeEnd.toISOString()],
     queryFn: () => appointmentsApi.list({
-      startDate: startDate?.toISOString(),
-      endDate: endDate?.toISOString(),
+      startDate: safeStart.toISOString(),
+      endDate: safeEnd.toISOString(),
     }),
     staleTime: 2 * 60 * 1000, // 2 minutes
     enabled,

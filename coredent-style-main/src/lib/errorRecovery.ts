@@ -81,7 +81,7 @@ class CircuitBreaker {
   
   constructor(
     private threshold: number = 5,
-    private timeout: number = 60000,
+    _timeout: number = 60000,
     private resetTimeout: number = 30000
   ) {}
 

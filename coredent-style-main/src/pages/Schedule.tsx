@@ -47,7 +47,6 @@ export default function Schedule() {
     loadData,
     addAppointment,
     updateAppointment,
-    removeAppointment,
   } = useScheduling();
 
   // Dialog states
@@ -350,6 +349,7 @@ export default function Schedule() {
         open={isAppointmentDialogOpen}
         onOpenChange={setIsAppointmentDialogOpen}
         appointment={editingAppointment}
+        selectedPatient={selectedPatientForNew}
         chairs={chairs}
         providers={providers}
         appointmentTypes={appointmentTypes}

@@ -52,7 +52,7 @@ export function useDateRange(initialPreset: PresetRange = 'last30days') {
   }, []);
 
   // Memoize dateRange to prevent unnecessary re-renders
-  const memoizedDateRange = useMemo(() => dateRange, [dateRange.from, dateRange.to]);
+  const memoizedDateRange = useMemo(() => dateRange, [dateRange]);
 
   return {
     dateRange: memoizedDateRange,

@@ -1,61 +1,111 @@
-export function useAppointments(_params?: { date?: string; search?: string }) {
-  return {
-    data: {
-      data: {
-        appointments: [
-          { id: 'apt-1', patientName: 'John Doe', time: '10:00 AM', status: 'scheduled', type: 'checkup', dentist: 'Dr. Smith', duration: '60' },
-          { id: 'apt-2', patientName: 'Jane Smith', time: '2:00 PM', status: 'scheduled', type: 'cleaning', dentist: 'Dr. Smith', duration: '60' },
-        ],
-      },
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  createAppointment,
+  deleteAppointment,
+  getAppointmentStats,
+  listAppointments,
+  listAppointmentTypes,
+  sendAppointmentReminder,
+  updateAppointment,
+  type Appointment,
+  type AppointmentListParams,
+} from "@/services/appointmentsApi";
+import type { ApiResponse } from "@/types/api";
+
+interface MutationConfig {
+  onSuccess?: () => void;
+  onError?: () => void;
+}
+
+function requireApiSuccess<T>(response: ApiResponse<T>, action: string): T {
+  if (response.success && response.data !== undefined) {
+    return response.data;
+  }
+  throw new Error(response.error?.message || `Failed to ${action}`);
+}
+
+export function useAppointments(params?: AppointmentListParams) {
+  return useQuery({
+    queryKey: ["appointments", "list", params],
+    queryFn: async () => {
+      const response = await listAppointments(params);
+      requireApiSuccess(response, "load appointments");
+      return response;
     },
-    isLoading: false,
-    isPending: false,
-    refetch: () => {},
-    error: null,
-  };
+  });
 }
 
 export function useAppointmentStats() {
-  return {
-    data: {
-      data: {
-        todayAppointments: 2,
-        confirmed: 1,
-        pending: 1,
-        cancelled: 0,
-      },
+  return useQuery({
+    queryKey: ["appointments", "stats"],
+    queryFn: async () => {
+      const response = await getAppointmentStats();
+      requireApiSuccess(response, "load appointment statistics");
+      return response;
     },
-    isLoading: false,
-  };
+  });
 }
 
 export function useAppointmentTypes() {
-  return {
-    data: {
-      data: {
-        types: [
-          { id: '1', name: 'Checkup', duration: 30 },
-          { id: '2', name: 'Cleaning', duration: 45 },
-          { id: '3', name: 'Root Canal', duration: 60 },
-        ],
-      },
+  return useQuery({
+    queryKey: ["appointments", "types"],
+    queryFn: async () => {
+      const response = await listAppointmentTypes();
+      requireApiSuccess(response, "load appointment types");
+      return response;
     },
-    isLoading: false,
-  };
+    staleTime: 5 * 60 * 1000,
+  });
 }
 
-export function useCreateAppointment(_config?: { onSuccess?: () => void; onError?: () => void }) {
-  return { mutate: () => {}, isPending: false };
+export function useCreateAppointment(config: MutationConfig = {}) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Omit<Appointment, "id">) =>
+      requireApiSuccess(await createAppointment(data), "create appointment"),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["appointments"] });
+      config.onSuccess?.();
+    },
+    onError: () => config.onError?.(),
+  });
 }
 
-export function useUpdateAppointment(_config?: { onSuccess?: () => void; onError?: () => void }) {
-  return { mutate: () => {}, isPending: false };
+export function useUpdateAppointment(config: MutationConfig = {}) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Partial<Appointment> }) =>
+      requireApiSuccess(await updateAppointment(id, data), "update appointment"),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["appointments"] });
+      config.onSuccess?.();
+    },
+    onError: () => config.onError?.(),
+  });
 }
 
-export function useDeleteAppointment(_config?: { onSuccess?: () => void; onError?: () => void }) {
-  return { mutate: () => {}, isPending: false };
+export function useDeleteAppointment(config: MutationConfig = {}) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const response = await deleteAppointment(id);
+      if (!response.success) {
+        throw new Error(response.error?.message || "Failed to delete appointment");
+      }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["appointments"] });
+      config.onSuccess?.();
+    },
+    onError: () => config.onError?.(),
+  });
 }
 
-export function useSendAppointmentReminder(_config?: { onSuccess?: () => void; onError?: () => void }) {
-  return { mutate: () => {}, isPending: false };
+export function useSendAppointmentReminder(config: MutationConfig = {}) {
+  return useMutation({
+    mutationFn: async (id: string) =>
+      requireApiSuccess(await sendAppointmentReminder(id), "send appointment reminder"),
+    onSuccess: () => config.onSuccess?.(),
+    onError: () => config.onError?.(),
+  });
 }

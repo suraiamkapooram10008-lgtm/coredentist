@@ -13,14 +13,12 @@ import { AIClinicalAssistant } from '@/components/chart/AIClinicalAssistant';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, User } from 'lucide-react';
 import { dentalChartApi } from '@/services/dentalChartApi';
 import type { 
   DentalChart as DentalChartType, 
-  ToothData, 
   ToothCondition, 
   ProcedureStatus,
-  ToothSurface 
 } from '@/types/dentalChart';
 
 export default function DentalChart() {
@@ -32,7 +30,6 @@ export default function DentalChart() {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedToothNumber, setSelectedToothNumber] = useState<number | null>(null);
   const [isAddProcedureOpen, setIsAddProcedureOpen] = useState(false);
-  const [patientSearch, setPatientSearch] = useState('');
   
   // Get patient ID from URL or use default
   const patientId = searchParams.get('patientId');
@@ -109,28 +106,30 @@ export default function DentalChart() {
 
   // Handle add procedure
   const handleAddProcedure = async (data: {
-    procedureCode: string;
-    procedureName: string;
-    status: ProcedureStatus;
-    surfaces: ToothSurface[];
+    code: string;
+    description: string;
+    surface?: string;
+    cost: number;
     notes?: string;
-    color: string;
+    status: ProcedureStatus;
+    date: string;
   }) => {
     if (!patientId || !selectedToothNumber || !chart) return;
     
     try {
-      const newProcedure = await dentalChartApi.addProcedure(patientId, {
-        toothNumber: selectedToothNumber,
-        surfaces: data.surfaces,
-        procedureCode: data.procedureCode,
-        procedureName: data.procedureName,
-        status: data.status,
-        date: new Date().toISOString().split('T')[0],
-        dentistId: 'current-user', // Would come from auth context
-        dentistName: 'Dr. Current User',
-        notes: data.notes,
-        color: data.color,
-      });
+      const newProcedure = await dentalChartApi.addProcedure(
+        patientId,
+        selectedToothNumber,
+        {
+          code: data.code,
+          description: data.description,
+          surface: data.surface,
+          cost: data.cost,
+          status: data.status,
+          date: data.date,
+          notes: data.notes,
+        },
+      );
       
       // Update local state
       setChart(prev => {
@@ -139,7 +138,7 @@ export default function DentalChart() {
           ...prev,
           teeth: prev.teeth.map(t =>
             t.number === selectedToothNumber
-              ? { ...t, procedures: [...t.procedures, newProcedure] }
+              ? { ...t, procedures: [...(t.procedures ?? []), newProcedure] }
               : t
           ),
         };
@@ -147,7 +146,7 @@ export default function DentalChart() {
       
       toast({
         title: 'Procedure added',
-        description: `${data.procedureName} added to tooth #${selectedToothNumber}`,
+        description: `${data.description} added to tooth #${selectedToothNumber}`,
       });
     } catch (error) {
       toast({
@@ -163,7 +162,7 @@ export default function DentalChart() {
     if (!patientId || !selectedToothNumber || !chart) return;
     
     try {
-      await dentalChartApi.updateProcedureStatus(patientId, procedureId, status);
+      await dentalChartApi.updateProcedureStatus(patientId, selectedToothNumber, procedureId, status);
       
       // Update local state
       setChart(prev => {
@@ -174,7 +173,7 @@ export default function DentalChart() {
             t.number === selectedToothNumber
               ? {
                   ...t,
-                  procedures: t.procedures.map(p =>
+                  procedures: (t.procedures ?? []).map(p =>
                     p.id === procedureId ? { ...p, status } : p
                   ),
                 }
@@ -201,7 +200,7 @@ export default function DentalChart() {
     if (!patientId || !selectedToothNumber || !chart) return;
     
     try {
-      await dentalChartApi.deleteProcedure(patientId, procedureId);
+      await dentalChartApi.deleteProcedure(patientId, selectedToothNumber, procedureId);
       
       // Update local state
       setChart(prev => {
@@ -212,7 +211,7 @@ export default function DentalChart() {
             t.number === selectedToothNumber
               ? {
                   ...t,
-                  procedures: t.procedures.filter(p => p.id !== procedureId),
+                  procedures: (t.procedures ?? []).filter(p => p.id !== procedureId),
                 }
               : t
           ),
@@ -283,9 +282,9 @@ export default function DentalChart() {
                 <User className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <p className="font-medium">{chart.patientName}</p>
+                <p className="font-medium">{chart.patientName ?? `Patient ${chart.patientId.slice(0, 8)}`}</p>
                 <p className="text-sm text-muted-foreground">
-                  Last updated: {new Date(chart.lastUpdated).toLocaleDateString()}
+                  Last updated: {new Date(chart.lastUpdated ?? chart.updatedAt).toLocaleDateString()}
                 </p>
               </div>
             </div>

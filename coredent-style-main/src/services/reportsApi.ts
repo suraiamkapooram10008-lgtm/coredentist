@@ -30,7 +30,6 @@ export const reportsApi = {
 
   // Export report as CSV
   exportToCSV(reportType: ReportType, data: DashboardMetrics, dateRange: DateRange): string {
-    const dateStr = `${format(dateRange.from, 'yyyy-MM-dd')}_to_${format(dateRange.to, 'yyyy-MM-dd')}`;
     let csv = '';
 
     switch (reportType) {

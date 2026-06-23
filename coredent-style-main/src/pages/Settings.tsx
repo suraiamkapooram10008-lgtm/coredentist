@@ -3,7 +3,7 @@
 // Unified settings management for admins
 // ============================================
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Building2, Users, Calendar, CreditCard, Zap } from 'lucide-react';
 import { GeneralSettingsTab } from '@/components/settings/GeneralSettingsTab';

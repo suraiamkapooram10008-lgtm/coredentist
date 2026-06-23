@@ -15,6 +15,7 @@ import type {
   RelationshipToInsured,
 } from '@/types/insurance';
 import { apiClient } from './api';
+import { requireApiData, requireApiSuccess } from './apiResponse';
 
 export const insuranceApi = {
   // ============================================
@@ -22,13 +23,17 @@ export const insuranceApi = {
   // ============================================
 
   async getCarriers(filters?: { search?: string; isActive?: boolean }): Promise<InsuranceCarrier[]> {
-    const response = await apiClient.get<{ carriers: InsuranceCarrier[]; count: number }>('/insurance/carriers', filters as Record<string, unknown>);
-    return response.success && response.data ? response.data.carriers : [];
+    return requireApiData(
+      await apiClient.get<{ carriers: InsuranceCarrier[]; count: number }>('/insurance/carriers', filters as Record<string, unknown>),
+      'Failed to load insurance carriers',
+    ).carriers;
   },
 
   async getCarrier(carrierId: string): Promise<InsuranceCarrier | null> {
-    const response = await apiClient.get<InsuranceCarrier>(`/insurance/carriers/${carrierId}`);
-    return response.success ? response.data ?? null : null;
+    return requireApiData(
+      await apiClient.get<InsuranceCarrier>(`/insurance/carriers/${carrierId}`),
+      'Failed to load insurance carrier',
+    );
   },
 
   async createCarrier(data: Omit<InsuranceCarrier, 'id' | 'createdAt' | 'updatedAt'>): Promise<InsuranceCarrier> {
@@ -48,7 +53,10 @@ export const insuranceApi = {
   },
 
   async deleteCarrier(carrierId: string): Promise<void> {
-    await apiClient.delete<void>(`/insurance/carriers/${carrierId}`);
+    requireApiSuccess(
+      await apiClient.delete<void>(`/insurance/carriers/${carrierId}`),
+      'Failed to delete insurance carrier',
+    );
   },
 
   // ============================================
@@ -56,13 +64,17 @@ export const insuranceApi = {
   // ============================================
 
   async getPatientInsurance(patientId: string): Promise<PatientInsurance[]> {
-    const response = await apiClient.get<{ insurances: PatientInsurance[]; count: number }>(`/insurance/patients/${patientId}/policies`);
-    return response.success && response.data ? response.data.insurances : [];
+    return requireApiData(
+      await apiClient.get<{ insurances: PatientInsurance[]; count: number }>(`/insurance/patients/${patientId}/policies`),
+      'Failed to load patient insurance',
+    ).insurances;
   },
 
   async getInsurancePolicy(policyId: string): Promise<PatientInsurance | null> {
-    const response = await apiClient.get<PatientInsurance>(`/insurance/policies/${policyId}`);
-    return response.success ? response.data ?? null : null;
+    return requireApiData(
+      await apiClient.get<PatientInsurance>(`/insurance/policies/${policyId}`),
+      'Failed to load insurance policy',
+    );
   },
 
   async addPatientInsurance(patientId: string, data: {
@@ -97,7 +109,10 @@ export const insuranceApi = {
   },
 
   async deleteInsurancePolicy(policyId: string): Promise<void> {
-    await apiClient.delete<void>(`/insurance/policies/${policyId}`);
+    requireApiSuccess(
+      await apiClient.delete<void>(`/insurance/policies/${policyId}`),
+      'Failed to delete insurance policy',
+    );
   },
 
   // ============================================
@@ -110,14 +125,17 @@ export const insuranceApi = {
     startDate?: string;
     endDate?: string;
   }): Promise<InsuranceClaim[]> {
-    const response = await apiClient.get<{ claims: InsuranceClaim[]; count: number }>('/insurance/claims', filters as Record<string, unknown>);
-    // Backend returns { claims: [...], count: number }, extract the claims array
-    return response.success && response.data ? response.data.claims : [];
+    return requireApiData(
+      await apiClient.get<{ claims: InsuranceClaim[]; count: number }>('/insurance/claims', filters as Record<string, unknown>),
+      'Failed to load insurance claims',
+    ).claims;
   },
 
   async getClaim(claimId: string): Promise<InsuranceClaim | null> {
-    const response = await apiClient.get<InsuranceClaim>(`/insurance/claims/${claimId}`);
-    return response.success ? response.data ?? null : null;
+    return requireApiData(
+      await apiClient.get<InsuranceClaim>(`/insurance/claims/${claimId}`),
+      'Failed to load insurance claim',
+    );
   },
 
   async createClaim(data: {
@@ -157,7 +175,10 @@ export const insuranceApi = {
   },
 
   async deleteClaim(claimId: string): Promise<void> {
-    await apiClient.delete<void>(`/insurance/claims/${claimId}`);
+    requireApiSuccess(
+      await apiClient.delete<void>(`/insurance/claims/${claimId}`),
+      'Failed to delete insurance claim',
+    );
   },
 
   // ============================================
@@ -168,14 +189,17 @@ export const insuranceApi = {
     patientId?: string;
     status?: PreAuthStatus;
   }): Promise<InsurancePreAuthorization[]> {
-    const response = await apiClient.get<{ pre_authorizations: InsurancePreAuthorization[]; count: number }>('/insurance/pre-auth', filters as Record<string, unknown>);
-    // Backend returns { pre_authorizations: [...], count: number }, extract the array
-    return response.success && response.data ? response.data.pre_authorizations : [];
+    return requireApiData(
+      await apiClient.get<{ pre_authorizations: InsurancePreAuthorization[]; count: number }>('/insurance/pre-auth', filters as Record<string, unknown>),
+      'Failed to load insurance pre-authorizations',
+    ).pre_authorizations;
   },
 
   async getPreAuthorization(preAuthId: string): Promise<InsurancePreAuthorization | null> {
-    const response = await apiClient.get<InsurancePreAuthorization>(`/insurance/pre-auth/${preAuthId}`);
-    return response.success ? response.data ?? null : null;
+    return requireApiData(
+      await apiClient.get<InsurancePreAuthorization>(`/insurance/pre-auth/${preAuthId}`),
+      'Failed to load insurance pre-authorization',
+    );
   },
 
   async createPreAuthorization(data: {
@@ -201,7 +225,10 @@ export const insuranceApi = {
   },
 
   async deletePreAuthorization(preAuthId: string): Promise<void> {
-    await apiClient.delete<void>(`/insurance/pre-auth/${preAuthId}`);
+    requireApiSuccess(
+      await apiClient.delete<void>(`/insurance/pre-auth/${preAuthId}`),
+      'Failed to delete insurance pre-authorization',
+    );
   },
 
   // ============================================
@@ -209,19 +236,9 @@ export const insuranceApi = {
   // ============================================
 
   async getSummary(): Promise<InsuranceSummary> {
-    const response = await apiClient.get<InsuranceSummary>('/insurance/summary');
-    if (response.success && response.data) {
-      return response.data;
-    }
-    return {
-      totalClaims: 0,
-      pendingClaims: 0,
-      approvedClaims: 0,
-      rejectedClaims: 0,
-      totalBilled: 0,
-      totalApproved: 0,
-      totalPaid: 0,
-      activePreAuths: 0,
-    };
+    return requireApiData(
+      await apiClient.get<InsuranceSummary>('/insurance/summary'),
+      'Failed to load insurance summary',
+    );
   },
 };

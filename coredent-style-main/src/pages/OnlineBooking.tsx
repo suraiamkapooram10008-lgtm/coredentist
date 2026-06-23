@@ -17,17 +17,16 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table";
-import { 
-  Search, 
-  Plus, 
-  Calendar, 
-  Clock, 
+import {
+  Search,
+  Plus,
+  Calendar,
+  Clock,
   User,
   CheckCircle,
   Users,
   Send,
   Settings,
-  Link,
   Copy
 } from "lucide-react";
 

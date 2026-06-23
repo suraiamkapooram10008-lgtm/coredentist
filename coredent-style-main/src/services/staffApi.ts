@@ -5,7 +5,7 @@
 
 import { apiClient } from './api';
 import type { StaffMember, StaffInvitation, InviteStaffRequest, UpdateStaffRequest } from '@/types/staff';
-import type { ApiResponse, PaginatedResponse } from '@/types/api';
+import type { PaginatedResponse } from '@/types/api';
 
 export interface StaffListParams {
   search?: string;

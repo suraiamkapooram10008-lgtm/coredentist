@@ -11,6 +11,7 @@ import type {
   PaymentMethod 
 } from '@/types/billing';
 import { apiClient } from './api';
+import { requireApiData, requireApiSuccess } from './apiResponse';
 
 export const billingApi = {
   // Get all invoices
@@ -19,29 +20,26 @@ export const billingApi = {
     patientId?: string;
     search?: string;
   }): Promise<Invoice[]> {
-    const response = await apiClient.get<Invoice[]>('/invoices', filters as Record<string, unknown>);
-    return response.success && response.data ? response.data : [];
+    return requireApiData(
+      await apiClient.get<Invoice[]>('/invoices', filters as Record<string, unknown>),
+      'Failed to load invoices',
+    );
   },
 
   // Get single invoice
   async getInvoice(invoiceId: string): Promise<Invoice | null> {
-    const response = await apiClient.get<Invoice>(`/invoices/${invoiceId}`);
-    return response.success ? response.data ?? null : null;
+    return requireApiData(
+      await apiClient.get<Invoice>(`/invoices/${invoiceId}`),
+      'Failed to load invoice',
+    );
   },
 
   // Get billing summary
   async getSummary(): Promise<BillingSummary> {
-    const response = await apiClient.get<BillingSummary>('/billing/summary');
-    if (response.success && response.data) {
-      return response.data;
-    }
-    return {
-      totalOutstanding: 0,
-      totalPaidToday: 0,
-      totalPaidThisMonth: 0,
-      overdueCount: 0,
-      pendingCount: 0,
-    };
+    return requireApiData(
+      await apiClient.get<BillingSummary>('/billing/summary'),
+      'Failed to load billing summary',
+    );
   },
 
   // Create invoice
@@ -87,7 +85,10 @@ export const billingApi = {
 
   // Delete invoice
   async deleteInvoice(invoiceId: string): Promise<void> {
-    await apiClient.delete<void>(`/invoices/${invoiceId}`);
+    requireApiSuccess(
+      await apiClient.delete<void>(`/invoices/${invoiceId}`),
+      'Failed to delete invoice',
+    );
   },
 
   // Generate receipt HTML

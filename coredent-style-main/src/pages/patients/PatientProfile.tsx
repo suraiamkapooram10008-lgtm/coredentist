@@ -3,8 +3,8 @@
 // Comprehensive view of patient records
 // ============================================
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/auth-context';
 import { 
   Tabs, 
@@ -14,7 +14,8 @@ import {
 } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { AlertTriangle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { AlertTriangle, ChevronRight, CalendarPlus } from 'lucide-react';
 
 // Components & Hooks
 import { patientsApi } from '@/services/api';
@@ -28,6 +29,7 @@ import { AddNoteDialog } from '@/components/patients/AddNoteDialog';
 import { AppointmentHistory } from '@/components/patients/AppointmentHistory';
 import { AttachmentsList } from '@/components/patients/AttachmentsList';
 import type { PatientRecord } from '@/types/patient';
+import type { ApiResponse } from '@/types/api';
 
 export default function PatientProfile() {
   const { id } = useParams<{ id: string }>();
@@ -43,7 +45,10 @@ export default function PatientProfile() {
   const region = user?.practiceCountry || 'US';
 
   // Memoized Fetcher
-  const fetchPatient = useCallback(() => patientsApi.getById(id!) as Promise<PatientRecord>, [id]);
+  const fetchPatient = useCallback(
+    () => patientsApi.getById(id!) as Promise<ApiResponse<PatientRecord>>,
+    [id],
+  );
 
   // API Hooks
   const {
@@ -56,8 +61,9 @@ export default function PatientProfile() {
     errorMessage: 'Failed to load patient profile'
   });
 
-  const { execute: updateStatus } = useApiRequest(
-    (status: 'active' | 'inactive') => patientsApi.update(id!, { status }),
+  const { execute: updateStatus } = useApiRequest<PatientRecord>(
+    ((status: unknown) =>
+      patientsApi.update(id!, { status: status as 'active' | 'inactive' }) as Promise<ApiResponse<PatientRecord>>),
     {
       successMessage: 'Patient status updated',
       onSuccess: (updated) => setPatient(updated as PatientRecord)
@@ -109,6 +115,25 @@ export default function PatientProfile() {
 
   return (
     <div className="space-y-6">
+      {/* Breadcrumb */}
+      <div className="flex items-center justify-between gap-4">
+        <nav className="flex items-center gap-1 text-sm text-muted-foreground">
+          <Link to="/patients" className="hover:text-foreground transition-colors">Patients</Link>
+          <ChevronRight className="h-4 w-4" />
+          <span className="text-foreground font-medium">
+            {patient.firstName} {patient.lastName}
+          </span>
+        </nav>
+        <Button
+          size="sm"
+          onClick={() => navigate(`/schedule?patientId=${patient.id}&patientName=${encodeURIComponent(patient.firstName + ' ' + patient.lastName)}`)}
+          className="flex items-center gap-2"
+        >
+          <CalendarPlus className="h-4 w-4" />
+          Schedule Appointment
+        </Button>
+      </div>
+
       <PatientProfileHeader 
         patient={patient} 
         onEdit={() => setIsEditDialogOpen(true)} 
@@ -143,7 +168,6 @@ export default function PatientProfile() {
           <PatientOverviewTab 
             patient={patient} 
             onAddNote={() => setIsAddNoteDialogOpen(true)} 
-            region={region}
           />
         </TabsContent>
 
@@ -155,7 +179,7 @@ export default function PatientProfile() {
         </TabsContent>
 
         <TabsContent value="appointments" className="mt-6">
-          <AppointmentHistory appointments={patient.appointments} />
+          <AppointmentHistory appointments={[]} />
         </TabsContent>
 
         <TabsContent value="files" className="mt-6">

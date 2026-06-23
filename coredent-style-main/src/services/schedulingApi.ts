@@ -1,93 +1,102 @@
-// ============================================
-// CoreDent PMS - Scheduling API Service
-// API calls for appointment scheduling
-// ============================================
+import { apiClient } from "./api";
+import { requireApiData, requireApiSuccess } from "./apiResponse";
+import type { AppointmentTypeConfig, Chair } from "@/types/clinic";
+import type {
+  AppointmentFormData,
+  PatientSearchResult,
+  ScheduleAppointment,
+  ScheduleProvider,
+} from "@/types/scheduling";
 
-import { apiClient } from './api';
-import type { ScheduleAppointment, AppointmentFormData, PatientSearchResult, ScheduleProvider } from '@/types/scheduling';
-import type { Chair, AppointmentTypeConfig } from '@/types/clinic';
-
-// Scheduling API service
 export const schedulingApi = {
-  // Get appointments for a date range
-  getAppointments: async (startDate: Date, endDate: Date): Promise<ScheduleAppointment[]> => {
-    const response = await apiClient.get<ScheduleAppointment[]>('/appointments', {
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString(),
-    });
-    return response.success && response.data ? response.data : [];
-  },
+  getAppointments: async (
+    startDate: Date,
+    endDate: Date,
+  ): Promise<ScheduleAppointment[]> =>
+    requireApiData(
+      await apiClient.get<ScheduleAppointment[]>("/appointments", {
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+      }),
+      "Failed to load appointments",
+    ),
 
-  // Get single appointment by ID
-  getAppointment: async (id: string): Promise<ScheduleAppointment | null> => {
-    const response = await apiClient.get<ScheduleAppointment>(`/appointments/${id}`);
-    return response.success ? response.data ?? null : null;
-  },
+  getAppointment: async (id: string): Promise<ScheduleAppointment | null> =>
+    requireApiData(
+      await apiClient.get<ScheduleAppointment>(`/appointments/${id}`),
+      "Failed to load appointment",
+    ),
 
-  // Create new appointment
-  createAppointment: async (data: AppointmentFormData): Promise<ScheduleAppointment> => {
-    const response = await apiClient.post<ScheduleAppointment>('/appointments', data);
-    if (response.success && response.data) {
-      return response.data;
-    }
-    throw new Error(response.error?.message || 'Failed to create appointment');
-  },
+  createAppointment: async (
+    data: AppointmentFormData,
+  ): Promise<ScheduleAppointment> =>
+    requireApiData(
+      await apiClient.post<ScheduleAppointment>("/appointments", data),
+      "Failed to create appointment",
+    ),
 
-  // Update existing appointment
-  updateAppointment: async (id: string, data: Partial<AppointmentFormData>): Promise<ScheduleAppointment | null> => {
-    const response = await apiClient.put<ScheduleAppointment>(`/appointments/${id}`, data);
-    return response.success ? response.data ?? null : null;
-  },
+  updateAppointment: async (
+    id: string,
+    data: Partial<AppointmentFormData>,
+  ): Promise<ScheduleAppointment | null> =>
+    requireApiData(
+      await apiClient.put<ScheduleAppointment>(`/appointments/${id}`, data),
+      "Failed to update appointment",
+    ),
 
-  // Update appointment status
   updateStatus: async (id: string, status: string): Promise<void> => {
-    await apiClient.put<void>(`/appointments/${id}/status`, { status });
+    requireApiSuccess(
+      await apiClient.put<void>(`/appointments/${id}/status`, { status }),
+      "Failed to update appointment status",
+    );
   },
 
-  // Cancel appointment
   cancelAppointment: async (id: string, reason?: string): Promise<void> => {
-    await apiClient.post<void>(`/appointments/${id}/cancel`, { reason });
+    requireApiSuccess(
+      await apiClient.post<void>(`/appointments/${id}/cancel`, { reason }),
+      "Failed to cancel appointment",
+    );
   },
 
-  // Reschedule appointment (drag-and-drop)
   rescheduleAppointment: async (
-    id: string, 
-    newChairId: string, 
-    newStartTime: Date
-  ): Promise<ScheduleAppointment | null> => {
-    const response = await apiClient.put<ScheduleAppointment>(`/appointments/${id}/reschedule`, {
-      chairId: newChairId,
-      startTime: newStartTime.toISOString(),
-    });
-    return response.success ? response.data ?? null : null;
-  },
+    id: string,
+    newChairId: string,
+    newStartTime: Date,
+  ): Promise<ScheduleAppointment | null> =>
+    requireApiData(
+      await apiClient.put<ScheduleAppointment>(`/appointments/${id}/reschedule`, {
+        chairId: newChairId,
+        startTime: newStartTime.toISOString(),
+      }),
+      "Failed to reschedule appointment",
+    ),
 
-  // Get providers/dentists
-  getProviders: async (): Promise<ScheduleProvider[]> => {
-    const response = await apiClient.get<ScheduleProvider[]>('/providers');
-    return response.success && response.data ? response.data : [];
-  },
+  getProviders: async (): Promise<ScheduleProvider[]> =>
+    requireApiData(
+      await apiClient.get<ScheduleProvider[]>("/providers"),
+      "Failed to load providers",
+    ),
 
-  // Get chairs/operatories
-  getChairs: async (): Promise<Chair[]> => {
-    const response = await apiClient.get<Chair[]>('/chairs');
-    return response.success && response.data
-      ? response.data.filter(c => c.isActive)
-      : [];
-  },
+  getChairs: async (): Promise<Chair[]> =>
+    requireApiData(
+      await apiClient.get<Chair[]>("/chairs"),
+      "Failed to load chairs",
+    ).filter((chair) => chair.isActive),
 
-  // Get appointment types
-  getAppointmentTypes: async (): Promise<AppointmentTypeConfig[]> => {
-    const response = await apiClient.get<AppointmentTypeConfig[]>('/appointment-types');
-    return response.success && response.data
-      ? response.data.filter(t => t.isActive)
-      : [];
-  },
+  getAppointmentTypes: async (): Promise<AppointmentTypeConfig[]> =>
+    requireApiData(
+      await apiClient.get<AppointmentTypeConfig[]>("/appointment-types"),
+      "Failed to load appointment types",
+    ).filter((type) => type.isActive),
 
-  // Search patients
   searchPatients: async (query: string): Promise<PatientSearchResult[]> => {
-    if (!query.trim()) return [];
-    const response = await apiClient.get<PatientSearchResult[]>('/patients/search', { query });
-    return response.success && response.data ? response.data : [];
+    if (!query.trim()) {
+      return [];
+    }
+
+    return requireApiData(
+      await apiClient.get<PatientSearchResult[]>("/patients/search", { query }),
+      "Failed to search patients",
+    );
   },
 };

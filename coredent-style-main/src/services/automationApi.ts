@@ -1,91 +1,84 @@
-// ============================================
-// CoreDent PMS - Automation API Service
-// Handles n8n webhook triggers and configuration
-// ============================================
-
+import { apiClient } from "./api";
+import { requireApiData, requireApiSuccess } from "./apiResponse";
 import type {
-  AutomationWebhook,
   AutomationEvent,
   AutomationPayload,
-} from '@/types/automation';
-import { apiClient } from './api';
+  AutomationWebhook,
+} from "@/types/automation";
 
 export const automationApi = {
-  // Get all configured webhooks
-  getWebhooks: async (): Promise<AutomationWebhook[]> => {
-    const response = await apiClient.get<AutomationWebhook[]>('/automations/webhooks');
-    return response.success && response.data ? response.data : [];
-  },
+  getWebhooks: async (): Promise<AutomationWebhook[]> =>
+    requireApiData(
+      await apiClient.get<AutomationWebhook[]>("/automations/webhooks"),
+      "Failed to load automation webhooks",
+    ),
 
-  // Get webhooks for a specific event
-  getWebhooksByEvent: async (event: AutomationEvent): Promise<AutomationWebhook[]> => {
-    const response = await apiClient.get<AutomationWebhook[]>('/automations/webhooks', { event });
-    return response.success && response.data ? response.data : [];
-  },
+  getWebhooksByEvent: async (
+    event: AutomationEvent,
+  ): Promise<AutomationWebhook[]> =>
+    requireApiData(
+      await apiClient.get<AutomationWebhook[]>("/automations/webhooks", { event }),
+      "Failed to load automation webhooks",
+    ),
 
-  // Create a new webhook
   createWebhook: async (
-    data: Omit<AutomationWebhook, 'id' | 'createdAt' | 'updatedAt'>
-  ): Promise<AutomationWebhook> => {
-    const response = await apiClient.post<AutomationWebhook>('/automations/webhooks', data);
-    if (response.success && response.data) {
-      return response.data;
-    }
-    throw new Error(response.error?.message || 'Failed to create webhook');
-  },
+    data: Omit<AutomationWebhook, "id" | "createdAt" | "updatedAt">,
+  ): Promise<AutomationWebhook> =>
+    requireApiData(
+      await apiClient.post<AutomationWebhook>("/automations/webhooks", data),
+      "Failed to create webhook",
+    ),
 
-  // Update a webhook
   updateWebhook: async (
     id: string,
-    data: Partial<AutomationWebhook>
-  ): Promise<AutomationWebhook> => {
-    const response = await apiClient.put<AutomationWebhook>(`/automations/webhooks/${id}`, data);
-    if (response.success && response.data) {
-      return response.data;
-    }
-    throw new Error(response.error?.message || 'Failed to update webhook');
-  },
+    data: Partial<AutomationWebhook>,
+  ): Promise<AutomationWebhook> =>
+    requireApiData(
+      await apiClient.put<AutomationWebhook>(`/automations/webhooks/${id}`, data),
+      "Failed to update webhook",
+    ),
 
-  // Delete a webhook
   deleteWebhook: async (id: string): Promise<void> => {
-    await apiClient.delete<void>(`/automations/webhooks/${id}`);
+    requireApiSuccess(
+      await apiClient.delete<void>(`/automations/webhooks/${id}`),
+      "Failed to delete webhook",
+    );
   },
 
-  // Toggle webhook active status
-  toggleWebhook: async (id: string): Promise<AutomationWebhook> => {
-    const response = await apiClient.post<AutomationWebhook>(`/automations/webhooks/${id}/toggle`);
-    if (response.success && response.data) {
-      return response.data;
-    }
-    throw new Error(response.error?.message || 'Failed to toggle webhook');
-  },
+  toggleWebhook: async (id: string): Promise<AutomationWebhook> =>
+    requireApiData(
+      await apiClient.post<AutomationWebhook>(`/automations/webhooks/${id}/toggle`),
+      "Failed to toggle webhook",
+    ),
 
-  // Trigger a webhook (call n8n)
   triggerWebhook: async (
     event: AutomationEvent,
-    payload: AutomationPayload
-  ): Promise<{ success: boolean; triggeredCount: number }> => {
-    const response = await apiClient.post<{ success: boolean; triggeredCount: number }>(
-      '/automations/trigger',
-      { event, payload }
-    );
-    return response.success && response.data ? response.data : { success: false, triggeredCount: 0 };
-  },
+    payload: AutomationPayload,
+  ): Promise<{ success: boolean; triggeredCount: number }> =>
+    requireApiData(
+      await apiClient.post<{ success: boolean; triggeredCount: number }>(
+        "/automations/trigger",
+        { event, payload },
+      ),
+      "Failed to trigger automation",
+    ),
 
-  // Test a webhook connection
-  testWebhook: async (webhookUrl: string, secretToken?: string): Promise<boolean> => {
-    const response = await apiClient.post<{ success: boolean }>('/automations/test', {
-      webhookUrl,
-      secretToken,
-    });
-    return response.success && response.data ? response.data.success : false;
-  },
+  testWebhook: async (
+    webhookUrl: string,
+    secretToken?: string,
+  ): Promise<boolean> =>
+    requireApiData(
+      await apiClient.post<{ success: boolean }>("/automations/test", {
+        webhookUrl,
+        secretToken,
+      }),
+      "Failed to test webhook",
+    ).success,
 };
 
-// Helper function to trigger automation from anywhere in the app
 export async function triggerAutomation(
   event: AutomationEvent,
-  payload: AutomationPayload
+  payload: AutomationPayload,
 ): Promise<void> {
   await automationApi.triggerWebhook(event, payload);
 }

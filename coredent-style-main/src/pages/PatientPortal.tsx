@@ -14,7 +14,6 @@ import {
   Clock,
   CheckCircle2,
   AlertCircle,
-  ArrowRight,
   LogOut,
   User,
   DollarSign,
@@ -24,13 +23,21 @@ import {
   Lock,
   Sparkles,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -219,6 +226,15 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
   const [insurance, setInsurance] = useState<InsurancePolicy[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [signingDoc, setSigningDoc] = useState<DocumentItem | null>(null);
+  const [signatureName, setSignatureName] = useState("");
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [isSubmittingSignature, setIsSubmittingSignature] = useState(false);
+
+  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const [payingInvoice, setPayingInvoice] = useState<InvoiceItem | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState<string>("");
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -437,7 +453,14 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
                       <p className="text-sm text-amber-600 font-medium">Pay online now to keep your account current.</p>
                     </div>
                   </div>
-                  <Button className="rounded-xl font-black bg-amber-600 hover:bg-amber-700 text-white shadow-lg shadow-amber-100">
+                  <Button 
+                    onClick={() => {
+                      setPayingInvoice(null);
+                      setPaymentAmount(totalOutstanding.toString());
+                      setIsPaymentOpen(true);
+                    }}
+                    className="rounded-xl font-black bg-amber-600 hover:bg-amber-700 text-white shadow-lg shadow-amber-100"
+                  >
                     <CreditCard className="w-4 h-4 mr-2" /> Pay Now
                   </Button>
                 </div>
@@ -473,7 +496,15 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
                         {inv.status}
                       </Badge>
                       {inv.balance_due > 0 && (
-                        <Button size="sm" className="rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700">
+                        <Button 
+                          size="sm" 
+                          className="rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700"
+                          onClick={() => {
+                            setPayingInvoice(inv);
+                            setPaymentAmount(inv.balance_due.toString());
+                            setIsPaymentOpen(true);
+                          }}
+                        >
                           Pay <ChevronRight className="w-3 h-3 ml-1" />
                         </Button>
                       )}
@@ -616,15 +647,10 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
                             <Button 
                               size="sm" 
                               className="rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700"
-                              onClick={async () => {
-                                // Real implementation would open a modal with the doc.content and a canvas
-                                // Here we mock the signing for demo purposes
-                                if(confirm(`Sign document: ${doc.name}?`)) {
-                                  const res = await fetch(`${API_BASE}/api/v1/portal/documents/${doc.id}/sign?token=${encodeURIComponent(session.access_token)}&signature_data=mock`, {
-                                    method: 'POST'
-                                  });
-                                  if(res.ok) fetchData();
-                                }
+                              onClick={() => {
+                                setSigningDoc(doc);
+                                setSignatureName("");
+                                setAgreedToTerms(false);
                               }}
                             >
                               Sign Now <ChevronRight className="w-3 h-3 ml-1" />
@@ -640,6 +666,110 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
           </Card>
         </Tabs>
 
+        {/* Electronic Signature Dialog */}
+        <Dialog open={!!signingDoc} onOpenChange={(open) => { if (!open) setSigningDoc(null); }}>
+          <DialogContent className="sm:max-w-[600px] rounded-3xl p-8">
+            <DialogHeader>
+              <DialogTitle className="text-2xl font-black text-slate-800 tracking-tight">
+                Sign Digital Document
+              </DialogTitle>
+              <DialogDescription className="text-slate-500 font-medium">
+                Please review the document and sign below to authorize.
+              </DialogDescription>
+            </DialogHeader>
+            {signingDoc && (
+              <div className="space-y-6 py-4">
+                <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100 max-h-[250px] overflow-y-auto font-medium text-slate-600 text-sm leading-relaxed whitespace-pre-wrap">
+                  {signingDoc.content || `By signing this document, you acknowledge that you have read and understood the patient agreement, medical history requirements, and treatment authorization for ${signingDoc.name}. You authorize the dental practice to proceed with scheduling and treatment planning under standard clinical protocols.`}
+                </div>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="sig-name" className="text-xs font-black uppercase tracking-widest text-slate-400">
+                      Type Full Name to Sign
+                    </Label>
+                    <Input
+                      id="sig-name"
+                      value={signatureName}
+                      onChange={(e) => setSignatureName(e.target.value)}
+                      placeholder="e.g. John Doe"
+                      className="h-12 rounded-xl border-slate-200 font-bold text-lg focus:ring-4 focus:ring-blue-100 transition-all"
+                    />
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      id="sig-agree"
+                      checked={agreedToTerms}
+                      onChange={(e) => setAgreedToTerms(e.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <Label htmlFor="sig-agree" className="text-xs text-slate-500 font-medium leading-relaxed cursor-pointer select-none">
+                      I agree that typing my name here acts as a binding electronic signature for this clinical document.
+                    </Label>
+                  </div>
+                </div>
+              </div>
+            )}
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                variant="outline"
+                onClick={() => setSigningDoc(null)}
+                className="rounded-xl font-bold h-12 border-slate-200"
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={!signatureName.trim() || !agreedToTerms || isSubmittingSignature}
+                onClick={async () => {
+                  if (!signingDoc) return;
+                  setIsSubmittingSignature(true);
+                  try {
+                    const res = await fetch(`${API_BASE}/api/v1/portal/documents/${signingDoc.id}/sign?token=${encodeURIComponent(session.access_token)}&signature_data=${encodeURIComponent(signatureName)}`, {
+                      method: 'POST'
+                    });
+                    if (res.ok) {
+                      await fetchData();
+                      setSigningDoc(null);
+                    }
+                  } catch (err) {
+                    console.error('Failed to sign document:', err);
+                  } finally {
+                    setIsSubmittingSignature(false);
+                  }
+                }}
+                className="rounded-xl font-black bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-100 h-12 flex items-center justify-center gap-2"
+              >
+                {isSubmittingSignature ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Signing...
+                  </>
+                ) : (
+                  'Agree & Sign'
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Online card entry is disabled until provider-hosted Stripe Elements is integrated. */}
+        <Dialog open={isPaymentOpen} onOpenChange={setIsPaymentOpen}>
+          <DialogContent className="sm:max-w-[500px] rounded-3xl p-8">
+            <DialogHeader>
+              <DialogTitle className="text-2xl font-black text-slate-800 tracking-tight">Online payment unavailable</DialogTitle>
+              <DialogDescription className="text-slate-500 font-medium">
+                For your security, CoreDent does not collect card numbers or CVV directly. Please contact the practice to pay this invoice until the Stripe-hosted payment form is enabled.
+              </DialogDescription>
+            </DialogHeader>
+            {payingInvoice && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-700">
+                Invoice {payingInvoice.invoice_number}: ${parseFloat(paymentAmount || "0").toFixed(2)}
+              </div>
+            )}
+            <DialogFooter>
+              <Button onClick={() => setIsPaymentOpen(false)} className="rounded-xl font-bold">Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         {/* Footer */}
         <div className="text-center pt-4 pb-8">
           <p className="text-xs text-slate-400 font-medium">

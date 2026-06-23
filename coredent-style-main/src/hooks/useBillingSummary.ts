@@ -34,19 +34,18 @@ export function useBillingSummary(
 ): UseBillingSummaryResult {
   const { enabled = true } = options;
 
-  const { data: response, isLoading, isError, error } = useQuery({
+  const { data: billingSummary, isLoading, isError, error } = useQuery({
     queryKey: ['dashboard', 'billing-summary'],
     queryFn: () => billingApi.getSummary(),
     staleTime: 5 * 60 * 1000, // 5 minutes
     enabled,
   });
 
-  const billingSummary = response?.success && response.data ? response.data : null;
   const pendingCount = billingSummary?.pendingCount ?? 0;
   const pendingAmount = billingSummary?.pendingAmount ?? 0;
 
   return {
-    billingSummary,
+    billingSummary: billingSummary ?? null,
     pendingCount,
     pendingAmount,
     isLoading,

@@ -13,6 +13,7 @@ import type {
   ImageAnnotation,
 } from '@/types/imaging';
 import { apiClient } from './api';
+import { requireApiData, requireApiSuccess } from './apiResponse';
 
 export const imagingApi = {
   // ============================================
@@ -27,13 +28,17 @@ export const imagingApi = {
     startDate?: string;
     endDate?: string;
   }): Promise<PatientImage[]> {
-    const response = await apiClient.get<PatientImage[]>('/imaging/images', filters as Record<string, unknown>);
-    return response.success && response.data ? response.data : [];
+    return requireApiData(
+      await apiClient.get<PatientImage[]>('/imaging/images', filters as Record<string, unknown>),
+      'Failed to load images',
+    );
   },
 
   async getImage(imageId: string): Promise<PatientImage | null> {
-    const response = await apiClient.get<PatientImage>(`/imaging/images/${imageId}`);
-    return response.success ? response.data ?? null : null;
+    return requireApiData(
+      await apiClient.get<PatientImage>(`/imaging/images/${imageId}`),
+      'Failed to load image',
+    );
   },
 
   async uploadImage(data: {
@@ -60,9 +65,7 @@ export const imagingApi = {
     formData.append('captureDate', data.captureDate);
     if (data.tags) formData.append('tags', JSON.stringify(data.tags));
 
-    const response = await apiClient.post<PatientImage>('/imaging/images/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
+    const response = await apiClient.post<PatientImage>('/imaging/images/upload', formData);
     
     if (response.success && response.data) {
       return response.data;
@@ -79,7 +82,10 @@ export const imagingApi = {
   },
 
   async deleteImage(imageId: string): Promise<void> {
-    await apiClient.delete<void>(`/imaging/images/${imageId}`);
+    requireApiSuccess(
+      await apiClient.delete<void>(`/imaging/images/${imageId}`),
+      'Failed to delete image',
+    );
   },
 
   async addAnnotation(imageId: string, annotation: Omit<ImageAnnotation, 'id'>): Promise<PatientImage> {
@@ -103,13 +109,17 @@ export const imagingApi = {
   // ============================================
 
   async getSeries(filters?: { patientId?: string }): Promise<ImageSeries[]> {
-    const response = await apiClient.get<ImageSeries[]>('/imaging/series', filters as Record<string, unknown>);
-    return response.success && response.data ? response.data : [];
+    return requireApiData(
+      await apiClient.get<ImageSeries[]>('/imaging/series', filters as Record<string, unknown>),
+      'Failed to load image series',
+    );
   },
 
   async getSeriesById(seriesId: string): Promise<ImageSeries | null> {
-    const response = await apiClient.get<ImageSeries>(`/imaging/series/${seriesId}`);
-    return response.success ? response.data ?? null : null;
+    return requireApiData(
+      await apiClient.get<ImageSeries>(`/imaging/series/${seriesId}`),
+      'Failed to load image series',
+    );
   },
 
   async createSeries(data: {
@@ -134,7 +144,10 @@ export const imagingApi = {
   },
 
   async deleteSeries(seriesId: string): Promise<void> {
-    await apiClient.delete<void>(`/imaging/series/${seriesId}`);
+    requireApiSuccess(
+      await apiClient.delete<void>(`/imaging/series/${seriesId}`),
+      'Failed to delete image series',
+    );
   },
 
   // ============================================
@@ -142,13 +155,17 @@ export const imagingApi = {
   // ============================================
 
   async getTemplates(filters?: { isActive?: boolean }): Promise<ImageTemplate[]> {
-    const response = await apiClient.get<ImageTemplate[]>('/imaging/templates', filters as Record<string, unknown>);
-    return response.success && response.data ? response.data : [];
+    return requireApiData(
+      await apiClient.get<ImageTemplate[]>('/imaging/templates', filters as Record<string, unknown>),
+      'Failed to load image templates',
+    );
   },
 
   async getTemplate(templateId: string): Promise<ImageTemplate | null> {
-    const response = await apiClient.get<ImageTemplate>(`/imaging/templates/${templateId}`);
-    return response.success ? response.data ?? null : null;
+    return requireApiData(
+      await apiClient.get<ImageTemplate>(`/imaging/templates/${templateId}`),
+      'Failed to load image template',
+    );
   },
 
   async createTemplate(data: Omit<ImageTemplate, 'id' | 'createdAt' | 'updatedAt'>): Promise<ImageTemplate> {
@@ -168,7 +185,10 @@ export const imagingApi = {
   },
 
   async deleteTemplate(templateId: string): Promise<void> {
-    await apiClient.delete<void>(`/imaging/templates/${templateId}`);
+    requireApiSuccess(
+      await apiClient.delete<void>(`/imaging/templates/${templateId}`),
+      'Failed to delete image template',
+    );
   },
 
   // ============================================
@@ -176,27 +196,10 @@ export const imagingApi = {
   // ============================================
 
   async getSummary(): Promise<ImagingSummary> {
-    const response = await apiClient.get<ImagingSummary>('/imaging/summary');
-    if (response.success && response.data) {
-      return response.data;
-    }
-    return {
-      totalImages: 0,
-      imagesByType: { xray: 0, photo: 0, scan: 0, other: 0 },
-      imagesByCategory: {
-        periapical: 0,
-        bitewing: 0,
-        panoramic: 0,
-        cephalometric: 0,
-        cbct: 0,
-        intraoral: 0,
-        extraoral: 0,
-        other: 0,
-      },
-      totalSeries: 0,
-      storageUsed: 0,
-      recentImages: [],
-    };
+    return requireApiData(
+      await apiClient.get<ImagingSummary>('/imaging/summary'),
+      'Failed to load imaging summary',
+    );
   },
 
   // ============================================

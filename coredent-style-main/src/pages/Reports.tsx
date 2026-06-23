@@ -39,7 +39,7 @@ import { reportsApi } from '@/services/reportsApi';
 import { useApiRequest } from '@/hooks/useApiRequest';
 import { useDateRange } from '@/hooks/useDateRange';
 import { cn } from '@/lib/utils';
-import type { ReportType } from '@/types/reports';
+import type { ReportType, DateRange } from '@/types/reports';
 
 // Extracted Charts
 import { RevenueChart } from '@/components/reports/charts/RevenueChart';
@@ -76,7 +76,10 @@ export default function Reports() {
     isLoading,
     error,
     execute: loadMetrics
-  } = useApiRequest(reportsApi.getDashboardMetrics, apiOptions);
+  } = useApiRequest(
+    (dateRange: unknown) => reportsApi.getDashboardMetrics(dateRange as DateRange),
+    apiOptions,
+  );
 
   const [activeTab, setActiveTab] = useState('overview');
 

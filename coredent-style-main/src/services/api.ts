@@ -149,13 +149,10 @@ class ApiClient {
         }
         this.token = null;
         this.refreshToken = null;
-        // Note: Tokens are in httpOnly cookies - cannot clear from client
-        // Logout will be handled by redirecting to login
+        // Note: Tokens are in httpOnly cookies - cannot clear from client.
+        // AuthProvider owns application state and route guards own navigation.
         window.dispatchEvent(new CustomEvent('auth:logout'));
-        logger.warn('Session expired, redirecting to login');
-        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
-          window.location.href = '/login';
-        }
+        logger.warn('Session expired; authentication state cleared');
         return {
           success: false,
           error: {
@@ -303,10 +300,17 @@ class ApiClient {
         if (response.ok) {
           const result = await response.json();
           this.token = result.access_token;
-          
-          // EXPERT: Update CSRF if backend rotated it
-          // getCsrfHeader will pick it up from cookie automatically
-          
+
+          // CRITICAL FIX: Persist rotated refresh token.
+          // Backend performs refresh-token rotation — the old token is
+          // permanently invalidated.  Failing to save the new one means
+          // the next 401 → refresh will be rejected and the user is
+          // force-logged-out after one access-token TTL (~15 min).
+          if (result.refresh_token) {
+            this.setRefreshToken(result.refresh_token);
+          }
+
+          // getCsrfHeader will pick up the new CSRF from cookie automatically
           return this.token;
         }
         
@@ -465,6 +469,9 @@ export const clinicalNotesApi = {
   
   update: (id: string, note: Partial<ClinicalNote>) => 
     apiClient.put<ClinicalNote>(`/notes/${id}`, note),
+
+  delete: (id: string) => 
+    apiClient.delete<void>(`/notes/${id}`),
 };
 
 // ============================================

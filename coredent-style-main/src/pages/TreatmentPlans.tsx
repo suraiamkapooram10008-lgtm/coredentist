@@ -3,13 +3,13 @@
 // Manage treatment plans for patients
 // ============================================
 
-import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,7 +27,7 @@ import { TreatmentPlanDetails } from '@/components/treatment/TreatmentPlanDetail
 import { TreatmentPlanVisualBuilder } from '@/components/treatment/TreatmentPlanVisualBuilder';
 import { treatmentPlanApi } from '@/services/treatmentPlanApi';
 import { triggerAutomation } from '@/services/automationApi';
-import type { TreatmentPlan, TreatmentStatus, ProcedurePhase } from '@/types/treatmentPlan';
+import type { TreatmentPlan, ProcedurePhase } from '@/types/treatmentPlan';
 
 type TabFilter = 'all' | 'active' | 'completed';
 
@@ -220,11 +220,11 @@ export default function TreatmentPlans() {
     if (!viewingPlan) return;
     
     try {
-      const updatedProcedure = await treatmentPlanApi.completeProcedure(
+      await treatmentPlanApi.completeProcedure(
         viewingPlan.id,
         procedureId
       );
-      
+
       // Refresh the plan to get updated status
       const refreshedPlan = await treatmentPlanApi.getPlan(viewingPlan.id);
       if (refreshedPlan) {
@@ -397,9 +397,6 @@ export default function TreatmentPlans() {
         open={!!viewingPlan}
         onOpenChange={(open) => !open && setViewingPlan(null)}
         plan={viewingPlan}
-        onEdit={() => {
-          setEditingPlan(viewingPlan);
-        }}
         onAddProcedure={handleAddProcedure}
         onCompleteProcedure={handleCompleteProcedure}
         onDeleteProcedure={handleDeleteProcedure}

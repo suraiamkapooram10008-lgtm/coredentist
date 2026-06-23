@@ -23,7 +23,6 @@ import {
   useCreateSubscription,
   useCancelSubscription,
 } from '@/hooks/useSubscriptions';
-import { subscriptionApi } from '@/services/subscriptionsApi';
 import type { SubscriptionPlan, Subscription } from '@/services/subscriptionsApi';
 import { format } from 'date-fns';
 import { useQueryClient } from '@tanstack/react-query';

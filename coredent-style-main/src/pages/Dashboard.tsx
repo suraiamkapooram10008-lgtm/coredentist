@@ -4,10 +4,10 @@ import { useAuth } from '@/contexts/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Users, 
-  Calendar, 
-  DollarSign, 
+import {
+  Users,
+  Calendar,
+  DollarSign,
   TrendingUp,
   Clock,
   UserPlus,
@@ -16,15 +16,13 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { Appointment, AppointmentStatus, UserRole } from '@/types/api';
+import type { AppointmentStatus, UserRole } from '@/types/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { format, formatDistanceToNow, startOfMonth } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { reportsApi } from '@/services/reportsApi';
 import { appointmentsApi } from '@/services/api';
 import { billingApi } from '@/services/billingApi';
-import type { BillingSummary } from '@/types/billing';
-import type { DashboardMetrics } from '@/types/reports';
 
 const quickActions = [
   {

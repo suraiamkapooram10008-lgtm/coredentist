@@ -17,13 +17,12 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table";
-import { 
-  Search, 
-  Plus, 
-  Beaker, 
-  Clock, 
-  CheckCircle, 
-  Truck,
+import {
+  Search,
+  Plus,
+  Beaker,
+  Clock,
+  CheckCircle,
   DollarSign
 } from "lucide-react";
 

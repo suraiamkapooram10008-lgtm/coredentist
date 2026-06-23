@@ -23,7 +23,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Select,
@@ -42,12 +41,9 @@ import {
   Phone,
   Clock,
   Send,
-  Inbox,
   CheckCircle,
-  AlertCircle,
   Trash2,
   Edit,
-  Eye,
   Loader2,
 } from "lucide-react";
 import { useCommunications } from "@/hooks/useCommunications";
@@ -66,7 +62,6 @@ export default function Communications() {
   // Dialog states
   const [showTemplateDialog, setShowTemplateDialog] = useState(false);
   const [showReminderDialog, setShowReminderDialog] = useState(false);
-  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<string | null>(null);
   const [editingReminder, setEditingReminder] = useState<string | null>(null);
 
@@ -97,8 +92,6 @@ export default function Communications() {
   });
 
   // Form states for settings
-  const [smsProvider, setSmsProvider] = useState("twilio");
-  const [emailProvider, setEmailProvider] = useState("sendgrid");
   const [smsEnabled, setSmsEnabled] = useState(false);
   const [emailEnabled, setEmailEnabled] = useState(false);
   const [autoRemindersEnabled, setAutoRemindersEnabled] = useState(false);
@@ -165,10 +158,10 @@ export default function Communications() {
       messageType: newTemplate.messageType as "sms" | "email",
       subject: newTemplate.subject,
       content: newTemplate.content,
-      category: newTemplate.category,
-      variables: newTemplate.variables,
-      isActive: newTemplate.isActive,
-      isDefault: newTemplate.isDefault,
+      category: newTemplate.category!,
+      variables: newTemplate.variables!,
+      isActive: newTemplate.isActive!,
+      isDefault: newTemplate.isDefault!,
     };
 
     if (editingTemplate) {
@@ -188,13 +181,13 @@ export default function Communications() {
     const reminderData: ReminderScheduleCreate = {
       name: newReminder.name,
       reminderType: newReminder.reminderType as "appointment" | "recall" | "treatment",
-      daysBefore: newReminder.daysBefore,
-      hoursBefore: newReminder.hoursBefore,
-      minutesBefore: newReminder.minutesBefore,
+      daysBefore: newReminder.daysBefore!,
+      hoursBefore: newReminder.hoursBefore!,
+      minutesBefore: newReminder.minutesBefore!,
       messageType: newReminder.messageType as "sms" | "email",
-      isActive: newReminder.isActive,
-      sendOnWeekends: newReminder.sendOnWeekends,
-      maxReminders: newReminder.maxReminders,
+      isActive: newReminder.isActive!,
+      sendOnWeekends: newReminder.sendOnWeekends!,
+      maxReminders: newReminder.maxReminders!,
       templateId: newReminder.templateId,
     };
 
