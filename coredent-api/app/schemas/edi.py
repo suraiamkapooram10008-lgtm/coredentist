@@ -3,7 +3,7 @@ EDI Schemas
 Insurance eligibility and claims request/response models
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Optional, List, Union
 from uuid import UUID
 from datetime import date

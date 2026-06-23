@@ -4,9 +4,9 @@ Patient messaging, SMS/email reminders, two-way messaging
 """
 
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from enum import Enum
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 
 from app.schemas.common import BaseSchema
 

@@ -3,25 +3,23 @@ Imaging Service
 Core business logic for imaging operations
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 import logging
 import json
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from sqlalchemy.orm import joinedload
+from sqlalchemy import select
 
 from app.models.imaging import PatientImage, ImageSeries, ImageTemplate, ImageType, ImageCategory
-from app.models.patient import Patient
 
 logger = logging.getLogger(__name__)
 
 
 class ImagingService:
     """Service for imaging operations"""
-    
+
     @staticmethod
     async def get_patient_images(
         db: AsyncSession,
@@ -39,27 +37,27 @@ class ImagingService:
             PatientImage.practice_id == practice_id,
             PatientImage.is_deleted == False,
         )
-        
+
         if image_type:
             query = query.where(PatientImage.image_type == image_type)
-        
+
         if category:
             query = query.where(PatientImage.category == category)
-        
+
         if tooth_number:
             query = query.where(PatientImage.tooth_number == tooth_number)
-        
+
         if start_date:
             query = query.where(PatientImage.acquisition_date >= start_date)
-        
+
         if end_date:
             query = query.where(PatientImage.acquisition_date <= end_date)
-        
+
         query = query.order_by(PatientImage.acquisition_date.desc())
-        
+
         result = await db.execute(query)
         return result.scalars().all()
-    
+
     @staticmethod
     async def get_image(
         db: AsyncSession,
@@ -75,7 +73,7 @@ class ImagingService:
             )
         )
         return result.scalar_one_or_none()
-    
+
     @staticmethod
     async def get_public_image(
         db: AsyncSession,
@@ -91,7 +89,7 @@ class ImagingService:
             )
         )
         return result.scalar_one_or_none()
-    
+
     @staticmethod
     async def create_image(
         db: AsyncSession,
@@ -123,7 +121,7 @@ class ImagingService:
         await db.refresh(image)
         logger.info(f"Created image record: {image.id}")
         return image
-    
+
     @staticmethod
     async def update_image(
         db: AsyncSession,
@@ -135,19 +133,19 @@ class ImagingService:
             select(PatientImage).where(PatientImage.id == image_id)
         )
         image = result.scalar_one_or_none()
-        
+
         if not image:
             return None
-        
+
         for key, value in kwargs.items():
             if hasattr(image, key):
                 setattr(image, key, value)
-        
+
         await db.commit()
         await db.refresh(image)
         logger.info(f"Updated image: {image_id}")
         return image
-    
+
     @staticmethod
     async def delete_image(
         db: AsyncSession,
@@ -158,16 +156,16 @@ class ImagingService:
             select(PatientImage).where(PatientImage.id == image_id)
         )
         image = result.scalar_one_or_none()
-        
+
         if not image:
             return False
-        
+
         image.is_deleted = True
         image.deleted_at = datetime.now()
         await db.commit()
         logger.info(f"Deleted image: {image_id}")
         return True
-    
+
     @staticmethod
     async def add_annotations(
         db: AsyncSession,
@@ -179,19 +177,19 @@ class ImagingService:
             select(PatientImage).where(PatientImage.id == image_id)
         )
         image = result.scalar_one_or_none()
-        
+
         if not image:
             return None
-        
+
         # Convert annotations to JSON string
         annotations_json = json.dumps(annotations)
         image.annotations = annotations_json
-        
+
         await db.commit()
         await db.refresh(image)
         logger.info(f"Added annotations to image: {image_id}")
         return image
-    
+
     @staticmethod
     async def get_image_series(
         db: AsyncSession,
@@ -203,10 +201,10 @@ class ImagingService:
             ImageSeries.patient_id == patient_id,
             ImageSeries.practice_id == practice_id,
         ).order_by(ImageSeries.acquisition_date.desc())
-        
+
         result = await db.execute(query)
         return result.scalars().all()
-    
+
     @staticmethod
     async def get_series(
         db: AsyncSession,
@@ -221,7 +219,7 @@ class ImagingService:
             )
         )
         return result.scalar_one_or_none()
-    
+
     @staticmethod
     async def create_series(
         db: AsyncSession,
@@ -242,7 +240,7 @@ class ImagingService:
         await db.refresh(series)
         logger.info(f"Created image series: {series.id}")
         return series
-    
+
     @staticmethod
     async def update_series(
         db: AsyncSession,
@@ -254,19 +252,19 @@ class ImagingService:
             select(ImageSeries).where(ImageSeries.id == series_id)
         )
         series = result.scalar_one_or_none()
-        
+
         if not series:
             return None
-        
+
         for key, value in kwargs.items():
             if hasattr(series, key):
                 setattr(series, key, value)
-        
+
         await db.commit()
         await db.refresh(series)
         logger.info(f"Updated image series: {series_id}")
         return series
-    
+
     @staticmethod
     async def get_templates(
         db: AsyncSession,
@@ -277,15 +275,15 @@ class ImagingService:
         query = select(ImageTemplate).where(
             ImageTemplate.practice_id == practice_id
         )
-        
+
         if is_active is not None:
             query = query.where(ImageTemplate.is_active == is_active)
-        
+
         query = query.order_by(ImageTemplate.name)
-        
+
         result = await db.execute(query)
         return result.scalars().all()
-    
+
     @staticmethod
     async def get_template(
         db: AsyncSession,
@@ -300,7 +298,7 @@ class ImagingService:
             )
         )
         return result.scalar_one_or_none()
-    
+
     @staticmethod
     async def create_template(
         db: AsyncSession,
@@ -312,7 +310,7 @@ class ImagingService:
         """Create an image template"""
         # Convert configuration to JSON string
         configuration_json = json.dumps(configuration)
-        
+
         template = ImageTemplate(
             practice_id=practice_id,
             name=name,
@@ -324,7 +322,7 @@ class ImagingService:
         await db.refresh(template)
         logger.info(f"Created image template: {template.id}")
         return template
-    
+
     @staticmethod
     async def update_template(
         db: AsyncSession,
@@ -336,19 +334,19 @@ class ImagingService:
             select(ImageTemplate).where(ImageTemplate.id == template_id)
         )
         template = result.scalar_one_or_none()
-        
+
         if not template:
             return None
-        
+
         # Handle configuration conversion
         if 'configuration' in kwargs and kwargs['configuration']:
             configuration_json = json.dumps(kwargs['configuration'])
             kwargs['configuration'] = configuration_json
-        
+
         for key, value in kwargs.items():
             if hasattr(template, key):
                 setattr(template, key, value)
-        
+
         await db.commit()
         await db.refresh(template)
         logger.info(f"Updated image template: {template_id}")

@@ -23,19 +23,19 @@ class SMSService:
     - Twilio
     - Console (development)
     """
-    
+
     def __init__(self, provider: Optional[SMSProvider] = None):
         self.provider = provider or SMSProvider(
             os.getenv("SMS_PROVIDER", "console")
         )
         self.from_number = os.getenv("TWILIO_PHONE_NUMBER", "+1234567890")
         self.client = None
-        
+
         # Initialize Twilio client if credentials are available
         if self.provider == SMSProvider.TWILIO:
             account_sid = os.getenv("TWILIO_ACCOUNT_SID")
             auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-            
+
             if account_sid and auth_token:
                 try:
                     from twilio.rest import Client
@@ -50,7 +50,7 @@ class SMSService:
             else:
                 logger.warning("Twilio credentials not found, using console mode")
                 self.provider = SMSProvider.CONSOLE
-    
+
     async def send_sms(
         self,
         to: str,
@@ -71,12 +71,12 @@ class SMSService:
         # Validate phone number format
         if not to.startswith('+'):
             logger.warning(f"Phone number {to} should be in E.164 format (+1234567890)")
-        
+
         if self.provider == SMSProvider.TWILIO and self.client:
             return await self._send_twilio(to, message, media_url)
         else:
             return await self._send_console(to, message, media_url)
-    
+
     async def _send_twilio(
         self,
         to: str,
@@ -90,12 +90,12 @@ class SMSService:
                 "from_": self.from_number,
                 "body": message
             }
-            
+
             if media_url:
                 params["media_url"] = [media_url]
-            
+
             message_obj = self.client.messages.create(**params)
-            
+
             logger.info(f"Twilio SMS sent successfully: {message_obj.sid}")
             return {
                 "success": True,
@@ -115,7 +115,7 @@ class SMSService:
                 "provider": "twilio",
                 "error": str(e),
             }
-    
+
     async def _send_console(
         self,
         to: str,
@@ -134,7 +134,7 @@ class SMSService:
         logger.info(f"Length: {len(message)} characters")
         logger.info(f"Segments: {(len(message) // 160) + 1}")
         logger.info("=" * 60)
-        
+
         return {
             "success": True,
             "provider": "console",
@@ -146,9 +146,9 @@ class SMSService:
             "currency": "USD",
             "segments": (len(message) // 160) + 1,
         }
-    
+
     # Convenience methods for common SMS types
-    
+
     async def send_appointment_reminder(
         self,
         to: str,
@@ -164,7 +164,7 @@ class SMSService:
             f"Reply CONFIRM to confirm or call us to reschedule."
         )
         return await self.send_sms(to=to, message=message)
-    
+
     async def send_appointment_confirmation(
         self,
         to: str,
@@ -180,7 +180,7 @@ class SMSService:
             f"See you then!"
         )
         return await self.send_sms(to=to, message=message)
-    
+
     async def send_appointment_cancellation(
         self,
         to: str,
@@ -194,7 +194,7 @@ class SMSService:
             f"{appointment_date} has been cancelled. Call us to reschedule."
         )
         return await self.send_sms(to=to, message=message)
-    
+
     async def send_recall_reminder(
         self,
         to: str,
@@ -210,7 +210,7 @@ class SMSService:
             f"Call {practice_phone} to schedule."
         )
         return await self.send_sms(to=to, message=message)
-    
+
     async def send_payment_reminder(
         self,
         to: str,
@@ -226,7 +226,7 @@ class SMSService:
             f"Pay online or call us."
         )
         return await self.send_sms(to=to, message=message)
-    
+
     async def send_insurance_update(
         self,
         to: str,
@@ -241,7 +241,7 @@ class SMSService:
             f"Call us if you have questions."
         )
         return await self.send_sms(to=to, message=message)
-    
+
     async def send_verification_code(
         self,
         to: str,
@@ -254,7 +254,7 @@ class SMSService:
             f"This code expires in 10 minutes. Do not share this code."
         )
         return await self.send_sms(to=to, message=message)
-    
+
     def get_status(self) -> Dict[str, Any]:
         """Get SMS service status"""
         return {

@@ -6,12 +6,12 @@ CRUD operations for practice staff (staff users)
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
-from typing import List, Any
+from typing import List
 from uuid import UUID
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from app.core.database import get_db
-from app.api.deps import get_current_user, require_role, verify_csrf
+from app.api.deps import require_role, verify_csrf
 from app.models.user import User, UserRole
 from app.core.audit import log_audit_event
 from app.core.security import get_password_hash, validate_password_strength
@@ -39,7 +39,7 @@ async def list_staff(
         User.practice_id == current_user.practice_id,
         User.is_active == is_active
     ).order_by(User.role, User.last_name)
-    
+
     result = await db.execute(stmt)
     return result.scalars().all()
 
@@ -79,7 +79,7 @@ async def create_staff(
         practice_id=current_user.practice_id,
         is_active=True
     )
-    
+
     db.add(new_staff)
     await db.commit()
     await db.refresh(new_staff)
@@ -89,7 +89,7 @@ async def create_staff(
         db, current_user, "staff_created", "user", new_staff.id, request
     )
     await db.commit()
-    
+
     return new_staff
 
 @router.put("/{user_id}", response_model=UserResponse)
@@ -110,7 +110,7 @@ async def update_staff(
     )
     result = await db.execute(stmt)
     staff = result.scalar_one_or_none()
-    
+
     if not staff:
         raise HTTPException(status_code=404, detail="Staff member not found")
 
@@ -127,7 +127,7 @@ async def update_staff(
              staff.password_changed_at = datetime.now(timezone.utc)
         else:
              setattr(staff, field, value)
-    
+
     await db.commit()
     await db.refresh(staff)
 
@@ -136,7 +136,7 @@ async def update_staff(
         db, current_user, "staff_updated", "user", staff.id, request
     )
     await db.commit()
-    
+
     return staff
 
 @router.delete("/{user_id}")
@@ -159,7 +159,7 @@ async def inactivate_staff(
     )
     result = await db.execute(stmt)
     staff = result.scalar_one_or_none()
-    
+
     if not staff:
         raise HTTPException(status_code=404, detail="Staff member not found")
 
@@ -172,7 +172,7 @@ async def inactivate_staff(
         )
 
     staff.is_active = False
-    
+
     # Expert Hardening: Terminate all active sessions IMMEDIATELY upon inactivation
     # We use UserSession from app.models.audit
     from app.models.audit import Session as UserSession
@@ -181,7 +181,7 @@ async def inactivate_staff(
         .where(UserSession.user_id == user_id)
         .values(expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
     )
-    
+
     await db.commit()
 
     # HIPAA Audit
@@ -189,5 +189,6 @@ async def inactivate_staff(
         db, current_user, "staff_inactivated", "user", staff.id, request
     )
     await db.commit()
-    
-    return {"message": "Staff member inactivated successfully"}
+    await db.refresh(staff)
+
+    return staff

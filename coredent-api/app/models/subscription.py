@@ -5,7 +5,7 @@ Supports: Auto-billing, Dunning, Proration, Trials, Cancellations, Usage-Based B
 
 from sqlalchemy import (
     Column, String, DateTime, ForeignKey, Enum, Text, Boolean, Numeric,
-    Integer, Date, JSON, Index
+    Integer, JSON, Index
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -196,10 +196,10 @@ class Subscription(Base):
     patient = relationship("Patient", back_populates="subscriptions")
     plan = relationship("SubscriptionPlan", back_populates="subscriptions")
     payment_card = relationship("PaymentCard")
-    latest_invoice = relationship("Invoice")
+    latest_invoice = relationship("Invoice", overlaps="invoices")
     usage_records = relationship("UsageRecord", back_populates="subscription", cascade="all, delete-orphan")
     dunning_events = relationship("DunningEvent", back_populates="subscription", cascade="all, delete-orphan")
-    invoices = relationship("Invoice", back_populates="subscription")
+    invoices = relationship("Invoice", back_populates="subscription", overlaps="latest_invoice")
 
     def __repr__(self):
         return f"<Subscription {self.id} - {self.status}>"

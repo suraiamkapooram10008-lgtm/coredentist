@@ -3,7 +3,7 @@ Advanced Subscription Schemas
 Pydantic models for subscription operations
 """
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator, EmailStr
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from uuid import UUID
@@ -64,7 +64,7 @@ class SubscriptionPlanUpdate(BaseModel):
 class SubscriptionPlanResponse(SubscriptionPlanBase):
     """API response for subscription plans"""
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: UUID
     is_active: bool
     stripe_price_id: Optional[str] = None
@@ -83,7 +83,7 @@ class SubscriptionCreate(BaseModel):
     trial_period_days: Optional[int] = None
     proration_behavior: str = "create_prorations"  # create_prorations, always_invoice, none
     metadata: Optional[Dict[str, Any]] = None
-    
+
     @field_validator("proration_behavior")
     @classmethod
     def validate_proration(cls, v: str) -> str:
@@ -131,7 +131,7 @@ class SubscriptionProratePreview(BaseModel):
 class SubscriptionResponse(BaseModel):
     """API response for subscriptions"""
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: UUID
     practice_id: UUID
     patient_id: Optional[UUID] = None
@@ -169,7 +169,7 @@ class UsageRecordCreate(BaseModel):
 class UsageRecordResponse(BaseModel):
     """API response for usage records"""
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: UUID
     subscription_id: UUID
     quantity: Decimal
@@ -180,7 +180,7 @@ class UsageRecordResponse(BaseModel):
 class UsageSummary(BaseModel):
     """Usage summary for current billing period"""
     model_config = ConfigDict(from_attributes=True)
-    
+
     meter_name: str
     unit_label: str
     included_quantity: Decimal
@@ -213,7 +213,7 @@ class DunningConfig(BaseModel):
 class DunningEventResponse(BaseModel):
     """API response for dunning events"""
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: UUID
     attempt_number: int
     action: str
@@ -264,7 +264,7 @@ class SubscriptionRevenue(BaseModel):
 class TrialResponse(BaseModel):
     """Info about a trial"""
     model_config = ConfigDict(from_attributes=True)
-    
+
     subscription_id: UUID
     plan_name: str
     trial_start: datetime

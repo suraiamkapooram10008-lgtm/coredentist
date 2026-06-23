@@ -6,16 +6,17 @@ Thin HTTP handlers that delegate to booking services
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import select, and_, or_
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from datetime import datetime, date, time, timedelta
-from typing import List, Optional, Any
+from typing import Optional
+import uuid
 import logging
 
 from app.core.database import get_db
 from app.api.deps import get_current_user, require_role, verify_csrf
 from app.models.user import User, UserRole
-from app.core.email import email_service
+from app.core.email import email_service, log_email_failure
 from app.core.limiter import limiter
 from app.core.audit import log_audit_event
 from app.core.ip_rate_limit import booking_rate_limiter
@@ -58,8 +59,9 @@ from app.schemas.booking import (
 
 # Import services
 from app.services.booking_service import BookingService
-from app.services.booking_validation import BookingValidationService
-from app.services.booking_availability import BookingAvailabilityService
+
+# CAPTCHA verification for public booking endpoints
+from app.core.recaptcha import verify_recaptcha_v3, CaptchaVerificationError
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -77,15 +79,15 @@ async def list_booking_pages(
     """List booking pages for the current practice"""
     try:
         query = select(BookingPage).where(BookingPage.practice_id == current_user.practice_id)
-        
+
         if status:
             query = query.where(BookingPage.status == status)
-        
+
         query = query.order_by(BookingPage.created_at.desc())
-        
+
         result = await db.execute(query)
         pages = result.scalars().all()
-        
+
         return BookingPageListResponse(pages=pages, count=len(pages))
     except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing booking pages: {e}")
@@ -105,16 +107,16 @@ async def create_booking_page(
         result = await db.execute(select(BookingPage).where(BookingPage.page_slug == page_data.page_slug))
         if result.scalar_one_or_none():
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Booking page with this slug already exists")
-        
+
         # Convert business_hours to dict
         business_hours_dict = {}
         if page_data.business_hours:
             for day, hours in page_data.business_hours.items():
-                business_hours_dict[day] = hours.dict()
-        
+                business_hours_dict[day] = hours.model_dump()
+
         # Convert intake_form_fields to list of dicts
-        intake_form_fields_list = [field.dict() for field in page_data.intake_form_fields] if page_data.intake_form_fields else []
-        
+        intake_form_fields_list = [field.model_dump() for field in page_data.intake_form_fields] if page_data.intake_form_fields else []
+
         page = BookingPage(
             practice_id=current_user.practice_id,
             page_slug=page_data.page_slug,
@@ -147,7 +149,7 @@ async def create_booking_page(
             meta_description=page_data.meta_description,
             meta_keywords=page_data.meta_keywords,
         )
-        
+
         db.add(page)
         await db.commit()
         await db.refresh(page)
@@ -164,7 +166,7 @@ async def create_booking_page(
 
 @router.get("/pages/{page_id}", response_model=BookingPageResponse)
 async def get_booking_page(
-    page_id: str,
+    page_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> BookingPageResponse:
@@ -177,10 +179,10 @@ async def get_booking_page(
             )
         )
         page = result.scalar_one_or_none()
-        
+
         if not page:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking page not found")
-        
+
         return page
     except HTTPException:
         raise
@@ -193,7 +195,7 @@ async def get_booking_page(
 
 @router.put("/pages/{page_id}", response_model=BookingPageResponse)
 async def update_booking_page(
-    page_id: str,
+    page_id: uuid.UUID,
     page_data: BookingPageUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -208,31 +210,31 @@ async def update_booking_page(
             )
         )
         page = result.scalar_one_or_none()
-        
+
         if not page:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking page not found")
-        
-        update_data = page_data.dict(exclude_unset=True)
-        
+
+        update_data = page_data.model_dump(exclude_unset=True)
+
         # Convert business_hours if provided
         if 'business_hours' in update_data and update_data['business_hours']:
             business_hours_dict = {}
             for day, hours in update_data['business_hours'].items():
-                business_hours_dict[day] = hours.dict() if hasattr(hours, 'dict') else hours
+                business_hours_dict[day] = hours.model_dump() if hasattr(hours, 'model_dump') else hours
             update_data['business_hours'] = business_hours_dict
-        
+
         # Convert intake_form_fields if provided
         if 'intake_form_fields' in update_data and update_data['intake_form_fields']:
-            intake_form_fields_list = [field.dict() if hasattr(field, 'dict') else field for field in update_data['intake_form_fields']]
+            intake_form_fields_list = [field.model_dump() if hasattr(field, 'model_dump') else field for field in update_data['intake_form_fields']]
             update_data['intake_form_fields'] = intake_form_fields_list
-        
+
         # Convert dates if provided
         if 'blocked_dates' in update_data and update_data['blocked_dates']:
             update_data['blocked_dates'] = [d.isoformat() if hasattr(d, 'isoformat') else d for d in update_data['blocked_dates']]
-        
+
         for field, value in update_data.items():
             setattr(page, field, value)
-        
+
         await db.commit()
         await db.refresh(page)
         logger.info(f"Updated booking page: {page_id}")
@@ -262,14 +264,14 @@ async def get_public_booking_page(
             )
         )
         page = result.scalar_one_or_none()
-        
+
         if not page:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking page not found or inactive")
-        
+
         # Increment view count
         page.total_views += 1
         await db.commit()
-        
+
         # Return only public-facing data
         return BookingPagePublicResponse(
             page_slug=page.page_slug,
@@ -318,10 +320,10 @@ async def create_online_booking(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid request"
             )
-        
+
         # SECURITY FIX #2: IP-based rate limiting (10 bookings per hour per IP)
         await booking_rate_limiter.check_rate_limit(request)
-        
+
         # SECURITY FIX #3: CAPTCHA verification (reCAPTCHA v3)
         if booking_data.captcha_token:
             try:
@@ -336,7 +338,7 @@ async def create_online_booking(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="CAPTCHA verification failed. Please try again."
                 )
-        
+
         # Get booking page
         result = await db.execute(
             select(BookingPage).where(
@@ -345,10 +347,10 @@ async def create_online_booking(
             )
         )
         page = result.scalar_one_or_none()
-        
+
         if not page:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking page not found or inactive")
-        
+
         # Check for duplicate bookings (anti-spam)
         cooldown_window = datetime.now() - timedelta(hours=24)
         duplicate_check = await db.execute(
@@ -369,23 +371,23 @@ async def create_online_booking(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="A booking request from this email or phone is already pending. Please wait for confirmation or contact the office."
             )
-        
+
         # Validate booking window
         min_date = date.today() + timedelta(hours=page.min_notice_hours // 24)
         max_date = date.today() + timedelta(days=page.booking_window_days)
-        
+
         if booking_data.requested_date < min_date or booking_data.requested_date > max_date:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Requested date must be between {min_date} and {max_date}",
             )
-        
+
         # Check if date is blocked
         if booking_data.requested_date.isoformat() in page.blocked_dates:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Requested date is not available")
-        
+
         # Create booking using service (exclude security fields)
-        booking_dict = booking_data.dict(exclude={'captcha_token', 'honeypot'})
+        booking_dict = booking_data.model_dump(exclude={'captcha_token', 'honeypot'})
         booking = OnlineBooking(
             booking_page_id=page.id,
             practice_id=page.practice_id,
@@ -394,15 +396,15 @@ async def create_online_booking(
             phone_verification_code=BookingService.generate_verification_code() if page.require_phone_verification else None,
             **booking_dict
         )
-        
+
         db.add(booking)
         page.total_bookings += 1
         page.conversion_rate = int((page.total_bookings / page.total_views) * 100) if page.total_views > 0 else 0
-        
+
         await db.commit()
         await db.refresh(booking)
         logger.info(f"Created online booking: {booking.id}")
-        
+
         # Send confirmation email
         try:
             await email_service.send_appointment_confirmation(
@@ -413,8 +415,8 @@ async def create_online_booking(
                 procedure=booking.appointment_type or 'Dental Appointment'
             )
         except Exception as e:
-            logger.warning(f"Failed to send confirmation email: {e}")
-        
+            log_email_failure(e, "booking_confirmation", booking.email)
+
         return booking
     except HTTPException:
         raise
@@ -438,28 +440,28 @@ async def list_online_bookings(
     """List online bookings for the current practice"""
     try:
         query = select(OnlineBooking).where(OnlineBooking.practice_id == current_user.practice_id)
-        
+
         if status_filter:
             query = query.where(OnlineBooking.status == status_filter)
-        
+
         if start_date:
             query = query.where(OnlineBooking.requested_date >= start_date)
-        
+
         if end_date:
             query = query.where(OnlineBooking.requested_date <= end_date)
-        
+
         if is_new_patient is not None:
             query = query.where(OnlineBooking.is_new_patient == is_new_patient)
-        
+
         query = query.order_by(OnlineBooking.submitted_at.desc())
-        
+
         result = await db.execute(query)
         bookings = result.scalars().all()
-        
+
         # HIPAA: Log access
         await log_audit_event(db, current_user, "list_online_bookings", "online_booking", None, request)
         await db.commit()
-        
+
         return OnlineBookingListResponse(bookings=bookings, count=len(bookings))
     except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing online bookings: {e}")
@@ -469,7 +471,7 @@ async def list_online_bookings(
 @router.get("/bookings/{booking_id}", response_model=OnlineBookingResponse)
 async def get_online_booking(
     request: Request,
-    booking_id: str,
+    booking_id: uuid.UUID,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
 ) -> OnlineBookingResponse:
@@ -482,14 +484,14 @@ async def get_online_booking(
             )
         )
         booking = result.scalar_one_or_none()
-        
+
         if not booking:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
-        
+
         # HIPAA: Log access
         await log_audit_event(db, current_user, "view_online_booking", "online_booking", booking.id, request)
         await db.commit()
-        
+
         return booking
     except HTTPException:
         raise
@@ -502,7 +504,7 @@ async def get_online_booking(
 
 @router.put("/bookings/{booking_id}", response_model=OnlineBookingResponse)
 async def update_online_booking(
-    booking_id: str,
+    booking_id: uuid.UUID,
     booking_data: OnlineBookingUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -517,12 +519,12 @@ async def update_online_booking(
             )
         )
         booking = result.scalar_one_or_none()
-        
+
         if not booking:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
-        
-        update_data = booking_data.dict(exclude_unset=True)
-        
+
+        update_data = booking_data.model_dump(exclude_unset=True)
+
         # Handle status changes
         if 'status' in update_data:
             new_status = update_data['status']
@@ -533,10 +535,10 @@ async def update_online_booking(
             elif new_status == BookingStatus.CANCELLED and not booking.cancelled_at:
                 booking.cancelled_at = datetime.now()
                 booking.cancelled_by = "staff"
-        
+
         for field, value in update_data.items():
             setattr(booking, field, value)
-        
+
         await db.commit()
         await db.refresh(booking)
         logger.info(f"Updated online booking: {booking_id}")
@@ -552,7 +554,7 @@ async def update_online_booking(
 
 @router.post("/bookings/{booking_id}/confirm", response_model=BookingConfirmationResponse)
 async def confirm_booking(
-    booking_id: str,
+    booking_id: uuid.UUID,
     confirmation_data: BookingConfirmationRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -567,20 +569,20 @@ async def confirm_booking(
             )
         )
         booking = result.scalar_one_or_none()
-        
+
         if not booking:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
-        
+
         # Update booking status
         booking.status = BookingStatus.CONFIRMED
         booking.confirmed_at = datetime.now()
-        
+
         appointment_id = None
-        
+
         # Create appointment if requested
         if confirmation_data.create_appointment:
             patient_id = booking.patient_id
-            
+
             if not patient_id and booking.is_new_patient:
                 # Create new patient
                 patient = Patient(
@@ -596,7 +598,7 @@ async def confirm_booking(
                 await db.flush()
                 patient_id = patient.id
                 booking.patient_id = patient_id
-            
+
             # Create appointment
             appointment = Appointment(
                 practice_id=booking.practice_id,
@@ -610,13 +612,13 @@ async def confirm_booking(
             )
             db.add(appointment)
             await db.flush()
-            
+
             appointment_id = appointment.id
             booking.appointment_id = appointment_id
-        
+
         await db.commit()
         logger.info(f"Confirmed booking: {booking_id}")
-        
+
         # Send confirmation email if requested
         if booking.send_confirmation_email:
             try:
@@ -628,8 +630,8 @@ async def confirm_booking(
                     procedure=booking.appointment_type or 'Dental Appointment'
                 )
             except Exception as e:
-                logger.warning(f"Failed to send confirmation email: {e}")
-        
+                log_email_failure(e, "booking_confirmation", booking.email)
+
         return BookingConfirmationResponse(
             booking_id=booking.id,
             appointment_id=appointment_id,
@@ -666,39 +668,39 @@ async def get_availability(
             )
         )
         page = result.scalar_one_or_none()
-        
+
         if not page:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking page not found or inactive")
-        
+
         # Use availability service to get slots
         days = []
         current_date = availability_request.start_date
         total_slots = 0
-        
+
         while current_date <= availability_request.end_date:
             day_name = current_date.strftime("%A").lower()
-            
+
             # Check if day is in business hours
             if day_name in page.business_hours and page.business_hours[day_name].get('enabled', False):
                 # Check if date is not blocked
                 if current_date.isoformat() not in page.blocked_dates:
                     slots = []
-                    
+
                     # Get business hours for this day
                     day_hours = page.business_hours[day_name].get('slots', [])
-                    
+
                     for slot_config in day_hours:
                         start_time_str = slot_config.get('start', '09:00')
                         end_time_str = slot_config.get('end', '17:00')
-                        
+
                         # Parse times
                         start_hour, start_minute = map(int, start_time_str.split(':'))
                         end_hour, end_minute = map(int, end_time_str.split(':'))
-                        
+
                         # Generate time slots
                         current_time = time(start_hour, start_minute)
                         end_time_obj = time(end_hour, end_minute)
-                        
+
                         while current_time < end_time_obj:
                             slot = TimeSlot(
                                 start_time=current_time,
@@ -710,10 +712,10 @@ async def get_availability(
                             )
                             slots.append(slot)
                             total_slots += 1
-                            
+
                             # Move to next slot
                             current_time = (datetime.combine(date.today(), current_time) + timedelta(minutes=availability_request.duration_minutes)).time()
-                    
+
                     day_availability = DayAvailability(
                         date=current_date,
                         day_of_week=day_name.capitalize(),
@@ -721,9 +723,9 @@ async def get_availability(
                         slots=slots,
                     )
                     days.append(day_availability)
-            
+
             current_date += timedelta(days=1)
-        
+
         return AvailabilityResponse(days=days, total_slots=total_slots)
     except HTTPException:
         raise
@@ -754,23 +756,23 @@ async def add_to_waitlist(
             )
         )
         page = result.scalar_one_or_none()
-        
+
         if not page:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking page not found or inactive")
-        
+
         # Create waitlist entry
         entry = WaitlistEntry(
             booking_page_id=page.id,
             practice_id=page.practice_id,
             expires_at=datetime.now() + timedelta(days=30),
-            **waitlist_data.dict()
+            **waitlist_data.model_dump()
         )
-        
+
         db.add(entry)
         await db.commit()
         await db.refresh(entry)
         logger.info(f"Added to waitlist: {entry.id}")
-        
+
         return entry
     except HTTPException:
         raise
@@ -790,15 +792,15 @@ async def list_waitlist_entries(
     """List waitlist entries for the current practice"""
     try:
         query = select(WaitlistEntry).where(WaitlistEntry.practice_id == current_user.practice_id)
-        
+
         if status_filter:
             query = query.where(WaitlistEntry.status == status_filter)
-        
+
         query = query.order_by(WaitlistEntry.priority, WaitlistEntry.created_at)
-        
+
         result = await db.execute(query)
         entries = result.scalars().all()
-        
+
         return WaitlistEntryListResponse(entries=entries, count=len(entries))
     except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing waitlist entries: {e}")
@@ -807,7 +809,7 @@ async def list_waitlist_entries(
 
 @router.put("/waitlist/{entry_id}", response_model=WaitlistEntryResponse)
 async def update_waitlist_entry(
-    entry_id: str,
+    entry_id: uuid.UUID,
     entry_data: WaitlistEntryUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -822,18 +824,18 @@ async def update_waitlist_entry(
             )
         )
         entry = result.scalar_one_or_none()
-        
+
         if not entry:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Waitlist entry not found")
-        
-        update_data = entry_data.dict(exclude_unset=True)
+
+        update_data = entry_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(entry, field, value)
-        
+
         await db.commit()
         await db.refresh(entry)
         logger.info(f"Updated waitlist entry: {entry_id}")
-        
+
         return entry
     except HTTPException:
         raise
@@ -846,7 +848,7 @@ async def update_waitlist_entry(
 
 @router.post("/waitlist/{entry_id}/notify")
 async def notify_waitlist_entry(
-    entry_id: str,
+    entry_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
@@ -860,18 +862,18 @@ async def notify_waitlist_entry(
             )
         )
         entry = result.scalar_one_or_none()
-        
+
         if not entry:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Waitlist entry not found")
-        
+
         # Update notification tracking
         entry.notified_count += 1
         entry.last_notified_at = datetime.now()
         entry.status = WaitlistStatus.NOTIFIED
-        
+
         await db.commit()
         logger.info(f"Notified waitlist entry: {entry_id}")
-        
+
         # Send notification email
         try:
             await email_service.send_appointment_confirmation(
@@ -882,8 +884,8 @@ async def notify_waitlist_entry(
                 procedure=entry.appointment_type or 'Dental Appointment'
             )
         except Exception as e:
-            logger.warning(f"Failed to send waitlist notification: {e}")
-        
+            log_email_failure(e, "waitlist_notification", entry.email)
+
         return {"message": "Notification sent successfully"}
     except HTTPException:
         raise
@@ -905,17 +907,17 @@ async def verify_email(
     try:
         result = await db.execute(select(OnlineBooking).where(OnlineBooking.id == verification_data.booking_id))
         booking = result.scalar_one_or_none()
-        
+
         if not booking:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
-        
+
         if booking.email_verification_token != verification_data.verification_token:
             return VerificationResponse(verified=False, message="Invalid verification token")
-        
+
         booking.email_verified = True
         await db.commit()
         logger.info(f"Email verified for booking: {booking.id}")
-        
+
         return VerificationResponse(verified=True, message="Email verified successfully")
     except HTTPException:
         raise
@@ -935,17 +937,17 @@ async def verify_phone(
     try:
         result = await db.execute(select(OnlineBooking).where(OnlineBooking.id == verification_data.booking_id))
         booking = result.scalar_one_or_none()
-        
+
         if not booking:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
-        
+
         if booking.phone_verification_code != verification_data.verification_code:
             return VerificationResponse(verified=False, message="Invalid verification code")
-        
+
         booking.phone_verified = True
         await db.commit()
         logger.info(f"Phone verified for booking: {booking.id}")
-        
+
         return VerificationResponse(verified=True, message="Phone verified successfully")
     except HTTPException:
         raise
@@ -968,16 +970,16 @@ async def get_booking_analytics(
     """Get booking analytics for the current practice"""
     try:
         query = select(OnlineBooking).where(OnlineBooking.practice_id == current_user.practice_id)
-        
+
         if start_date:
             query = query.where(OnlineBooking.submitted_at >= datetime.combine(start_date, time.min))
-        
+
         if end_date:
             query = query.where(OnlineBooking.submitted_at <= datetime.combine(end_date, time.max))
-        
+
         result = await db.execute(query)
         bookings = result.scalars().all()
-        
+
         # Calculate analytics
         total_bookings = len(bookings)
         confirmed_bookings = sum(1 for b in bookings if b.status == BookingStatus.CONFIRMED)
@@ -986,39 +988,39 @@ async def get_booking_analytics(
         cancelled_bookings = sum(1 for b in bookings if b.status == BookingStatus.CANCELLED)
         new_patients = sum(1 for b in bookings if b.is_new_patient)
         existing_patients = total_bookings - new_patients
-        
+
         # Get total views from booking pages
         pages_result = await db.execute(select(BookingPage).where(BookingPage.practice_id == current_user.practice_id))
         pages = pages_result.scalars().all()
         total_views = sum(p.total_views for p in pages)
-        
+
         # Calculate conversion rate
         conversion_rate = (total_bookings / total_views * 100) if total_views > 0 else 0
-        
+
         # Calculate average response time
         response_times = []
         for booking in bookings:
             if booking.confirmed_at:
                 response_time = (booking.confirmed_at - booking.submitted_at).total_seconds() / 3600
                 response_times.append(response_time)
-        
+
         average_response_time = sum(response_times) / len(response_times) if response_times else 0
-        
+
         # Popular times
         popular_times = {}
         for booking in bookings:
             hour = booking.requested_time.hour
             time_slot = f"{hour:02d}:00"
             popular_times[time_slot] = popular_times.get(time_slot, 0) + 1
-        
+
         # Referral sources
         referral_sources = {}
         for booking in bookings:
             if booking.referral_source:
                 referral_sources[booking.referral_source] = referral_sources.get(booking.referral_source, 0) + 1
-        
+
         logger.info(f"Generated booking analytics for practice: {current_user.practice_id}")
-        
+
         return BookingAnalytics(
             total_bookings=total_bookings,
             total_views=total_views,

@@ -4,9 +4,8 @@ CRUD operations for patients
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import select, func, or_
-from typing import List, Any
+from sqlalchemy.orm import selectinload
+from sqlalchemy import select, or_
 from uuid import UUID
 
 from app.core.database import get_db
@@ -16,15 +15,17 @@ from app.schemas.patient import PatientCreate, PatientUpdate, PatientResponse, P
 from app.schemas.common import PaginatedResponse
 from app.api.deps import get_current_user, get_current_practice_id, Pagination, verify_csrf, require_role
 from app.core.audit import log_audit_event
-from app.core.sanitization import sanitize_search_query, sanitize_phone
+from app.core.sanitization import sanitize_search_query
+from app.core.search_index import hmac_index
+from app.core.rate_limit import user_rate_limit
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
-import re
 
 router = APIRouter()
 
 
 @router.get("", response_model=PaginatedResponse[PatientListItem])
+@user_rate_limit("30/minute")  # SECURITY: per-user cap on PHI list endpoint
 async def list_patients(
     request: Request,
     query: str = Query(None, description="Search by name, email, or phone"),
@@ -49,65 +50,95 @@ async def list_patients(
         .where(Patient.practice_id == practice_id)
         .options(selectinload(Patient.appointments))
     )
-    
-    # Apply search - Use parameterized queries to prevent SQL injection
+
+    # Apply search - two-phase approach for encrypted fields:
+    # Phase 1: HMAC exact match (fast path, O(1))
+    # Phase 2: In-memory prefix/substring fallback on decrypted values
+    # when no exact match found and query >= 2 chars (type-ahead UX).
+    use_in_memory_fallback = False
     if query:
-        # HIGH-04 FIX: Sanitize search input
         query = sanitize_search_query(query)
-        
         if query:
-            # Normalize search pattern
-            search_pattern = f"%{query}%"
-            filters = [
-                Patient.first_name.ilike(search_pattern),
-                Patient.last_name.ilike(search_pattern),
-                Patient.email.ilike(search_pattern),
-            ]
-            
-            # Expert Hardening: Smart Phone Search (strip formatting)
-            clean_phone = re.sub(r"\D", "", query)
-            if clean_phone:
-                filters.append(Patient.phone.like(f"%{clean_phone}%"))
+            search_hmac = hmac_index(query)
+            filters = []
+            if search_hmac:
+                filters.append(Patient.search_index_email == search_hmac)
+                filters.append(Patient.search_index_last_name == search_hmac)
+            # Also try exact match on non-encrypted fields
+            filters.append(Patient.first_name == query)
+            filters.append(Patient.last_name == query)
+
+            if len(query) >= 2:
+                # Phase 1: Try exact HMAC match first
+                exact_stmt = base_stmt.where(or_(*filters))
+                exact_result = await db.execute(exact_stmt)
+                exact_patients = exact_result.scalars().all()
+
+                if not exact_patients:
+                    # Phase 2: Load all practice patients, filter in-memory
+                    # on decrypted values.  Dental practices typically <5k
+                    # patients so this is acceptable.
+                    use_in_memory_fallback = True
+                    base_stmt = base_stmt.order_by(Patient.updated_at.desc())
+                else:
+                    base_stmt = exact_stmt
             else:
-                filters.append(Patient.phone.ilike(search_pattern))
-                
-            base_stmt = base_stmt.where(or_(*filters))
-    
-    # Apply status filter
-    if status_filter:
+                base_stmt = base_stmt.where(or_(*filters))
+
+    # Apply status filter (only for SQL path; in-memory filters below)
+    if status_filter and not use_in_memory_fallback:
         base_stmt = base_stmt.where(Patient.status == status_filter)
 
     # Get total count BEFORE pagination
     from sqlalchemy import func
-    count_stmt = select(func.count()).select_from(Patient).where(Patient.practice_id == practice_id)
-    if query:
-        query = sanitize_search_query(query)
-        if query:
-            search_pattern = f"%{query}%"
-            count_filters = [
-                Patient.first_name.ilike(search_pattern),
-                Patient.last_name.ilike(search_pattern),
-                Patient.email.ilike(search_pattern),
+
+    if use_in_memory_fallback:
+        # In-memory path: load all, filter, then paginate manually.
+        all_result = await db.execute(base_stmt)
+        all_patients = all_result.scalars().all()
+        q_lower = query.lower() if query else ""
+        matched = [
+            p for p in all_patients
+            if q_lower in (p.first_name or "").lower()
+            or q_lower in (p.last_name or "").lower()
+            or q_lower in (p.email or "").lower()
+            or q_lower in (p.phone or "").lower()
+            or q_lower in f"{(p.first_name or '').lower()} {(p.last_name or '').lower()}"
+        ]
+        if status_filter:
+            matched = [
+                p for p in matched
+                if (p.status.value if hasattr(p.status, 'value') else p.status) == status_filter
             ]
-            clean_phone = re.sub(r"\D", "", query)
-            if clean_phone:
-                count_filters.append(Patient.phone.like(f"%{clean_phone}%"))
-            else:
-                count_filters.append(Patient.phone.ilike(search_pattern))
-            count_stmt = count_stmt.where(or_(*count_filters))
-    if status_filter:
-        count_stmt = count_stmt.where(Patient.status == status_filter)
-    
-    count_result = await db.execute(count_stmt)
-    total = count_result.scalar() or 0
-    
-    # Apply pagination to data query
-    stmt = base_stmt.offset(pagination.offset).limit(pagination.limit)
-    
-    # Execute query
-    result = await db.execute(stmt)
-    patients = result.scalars().all()
-    
+        total = len(matched)
+        patients = matched[pagination.offset:pagination.offset + pagination.limit]
+    else:
+        # SQL path: count + paginate as before.
+        count_stmt = select(func.count()).select_from(Patient).where(Patient.practice_id == practice_id)
+        if query and not use_in_memory_fallback:
+            query_clean = sanitize_search_query(query)
+            if query_clean:
+                search_hmac = hmac_index(query_clean)
+                count_filters = []
+                if search_hmac:
+                    count_filters.append(Patient.search_index_email == search_hmac)
+                    count_filters.append(Patient.search_index_last_name == search_hmac)
+                count_filters.append(Patient.first_name == query_clean)
+                count_filters.append(Patient.last_name == query_clean)
+                count_stmt = count_stmt.where(or_(*count_filters))
+        if status_filter:
+            count_stmt = count_stmt.where(Patient.status == status_filter)
+
+        count_result = await db.execute(count_stmt)
+        total = count_result.scalar() or 0
+
+        # Apply pagination to data query
+        stmt = base_stmt.offset(pagination.offset).limit(pagination.limit)
+
+        # Execute query
+        result = await db.execute(stmt)
+        patients = result.scalars().all()
+
     # Return paginated response
     return PaginatedResponse.create(
         items=patients,
@@ -130,36 +161,52 @@ async def create_patient(
     Create new patient (includes integrity check for duplicates)
     """
     # Expert Integrity: Check for duplicate patient in the same practice
-    duplicate_query = select(Patient).where(
-        Patient.practice_id == practice_id,
-        or_(
-            Patient.email == patient_in.email,
-            Patient.phone == patient_in.phone
+    # Use HMAC index columns since email/phone are encrypted at rest
+    email_hmac = hmac_index(patient_in.email)
+    phone_hmac = hmac_index(patient_in.phone)
+    dup_filters = []
+    if email_hmac:
+        dup_filters.append(Patient.search_index_email == email_hmac)
+    if phone_hmac:
+        dup_filters.append(Patient.search_index_phone == phone_hmac)
+    if dup_filters:
+        duplicate_query = select(Patient).where(
+            Patient.practice_id == practice_id,
+            or_(*dup_filters)
         )
-    )
-    result = await db.execute(duplicate_query)
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A patient with this email or phone already exists in this practice. Please verify the record."
-        )
+        result = await db.execute(duplicate_query)
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A patient with this email or phone already exists in this practice. Please verify the record."
+            )
 
     # Create patient
+    data = patient_in.model_dump()
+    # Pop the search-index fields if they came in from the schema (defense in depth).
+    for f in ("search_index_email", "search_index_phone", "search_index_last_name"):
+        data.pop(f, None)
     patient = Patient(
         practice_id=practice_id,
-        **patient_in.model_dump(),
+        **data,
     )
-    
+    # Compute the search index from the plaintext values BEFORE encryption.
+    # The EncryptedString type has already overwritten these with ciphertext,
+    # so we compute the HMAC from the *input* dictionary we just built.
+    patient.search_index_email = hmac_index(patient_in.email)
+    patient.search_index_phone = hmac_index(patient_in.phone)
+    patient.search_index_last_name = hmac_index(patient_in.last_name)
+
     db.add(patient)
     await db.commit()
     await db.refresh(patient)
-    
+
     # HIPAA: Log creation
     await log_audit_event(
         db, current_user, "patient_created", "patient", patient.id, request
     )
     await db.commit()
-    
+
     return patient
 
 
@@ -181,26 +228,26 @@ async def get_patient(
         )
     )
     patient = result.scalar_one_or_none()
-    
+
     if not patient:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Patient not found",
         )
-    
+
     # HIPAA: Log PHI read access
     await log_audit_event(
         db, current_user, "patient_viewed", "patient", patient.id, request
     )
     await db.commit()
-    
+
     # EXPERT HARDENING: Adaptive PHI Visibility (Least Privilege)
     # Front-Desk and Hygienists don't need access to specific insurance IDs/keys unless authorized.
     if current_user.role not in [UserRole.OWNER, UserRole.ADMIN, UserRole.DENTIST]:
         # Redact the JSON content of insurance_info if present
         if patient.insurance_info:
              patient.insurance_info = {"status": "present", "redacted": True, "note": "Contact Admin for details"}
-    
+
     return patient
 
 
@@ -225,27 +272,27 @@ async def update_patient(
         )
     )
     patient = result.scalar_one_or_none()
-    
+
     if not patient:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Patient not found",
         )
-    
+
     # Update fields
     update_data = patient_in.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(patient, field, value)
-    
+
     await db.commit()
     await db.refresh(patient)
-    
+
     # HIPAA: Log patient update
     await log_audit_event(
         db, current_user, "patient_updated", "patient", patient.id, request
     )
     await db.commit()
-    
+
     return patient
 
 
@@ -269,17 +316,17 @@ async def delete_patient(
         )
     )
     patient = result.scalar_one_or_none()
-    
+
     if not patient:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Patient not found",
         )
-    
+
     # Soft delete
     patient.status = "inactive"
     await db.commit()
-    
+
     # HIPAA: Log patient deletion (soft delete)
     await log_audit_event(
         db, current_user, "patient_deleted", "patient", patient.id, request

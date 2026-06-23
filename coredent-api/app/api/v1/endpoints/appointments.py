@@ -6,9 +6,9 @@ CRUD operations for appointments
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select
 from datetime import datetime, timedelta
-from typing import List, Optional, Any, Union
+from typing import List, Optional, Union
 import uuid as uuid_lib
 import asyncio
 
@@ -16,7 +16,7 @@ from app.core.database import get_db
 from app.models.user import User, UserRole
 from app.api.deps import get_current_user, require_role, verify_csrf
 from app.core.audit import log_audit_event
-from app.models.appointment import Appointment, AppointmentStatus, AppointmentTypeEnum, Chair
+from app.models.appointment import Appointment, AppointmentStatus, Chair
 from app.models.patient import Patient
 from app.schemas.appointment import (
     AppointmentCreate,
@@ -62,7 +62,7 @@ async def list_appointments(
             selectinload(Appointment.chair)
         )
     )
-    
+
     # Apply filters
     if start_date:
         query = query.where(Appointment.start_time >= start_date)
@@ -74,19 +74,19 @@ async def list_appointments(
         query = query.where(Appointment.provider_id == provider_id)
     if patient_id:
         query = query.where(Appointment.patient_id == patient_id)
-    
+
     # Order by start time
     query = query.order_by(Appointment.start_time)
-    
+
     result = await _execute(db, query)
     appointments = result.scalars().all()
-    
+
     # HIPAA: Log calendar/appointment list access
     await log_audit_event(
         db, current_user, "list_appointments", "appointment", None, request
     )
     await db.commit()
-    
+
     return AppointmentListResponse(
         appointments=appointments,
         count=len(appointments),
@@ -110,19 +110,19 @@ async def get_appointment(
         )
     )
     appointment = result.scalar_one_or_none()
-    
+
     if not appointment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Appointment not found",
         )
-    
+
     # HIPAA: Log appointment access
     await log_audit_event(
         db, current_user, "view_appointment", "appointment", appointment.id, request
     )
     await db.commit()
-    
+
     return appointment
 
 
@@ -145,13 +145,13 @@ async def create_appointment(
         ),
     )
     patient = result.scalar_one_or_none()
-    
+
     if not patient:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Patient not found",
         )
-    
+
     # Expert Hardening: Verify chair belongs to practice
     if appointment_data.chair_id:
         chair_check = await db.execute(
@@ -179,7 +179,7 @@ async def create_appointment(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid provider selection for your practice"
             )
-    
+
     # Check for scheduling conflicts
     conflict_query = select(Appointment).where(
         Appointment.practice_id == current_user.practice_id,
@@ -187,22 +187,22 @@ async def create_appointment(
         Appointment.end_time > appointment_data.start_time,
         Appointment.status != AppointmentStatus.CANCELLED,
     )
-    
+
     if appointment_data.provider_id:
         conflict_query = conflict_query.where(Appointment.provider_id == appointment_data.provider_id)
-    
+
     if appointment_data.chair_id:
         conflict_query = conflict_query.where(Appointment.chair_id == appointment_data.chair_id)
-    
+
     result = await _execute(db, conflict_query)
     conflicts = result.scalars().all()
-    
+
     if conflicts:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Scheduling conflict detected",
         )
-    
+
     # Create appointment
     appointment = Appointment(
         practice_id=current_user.practice_id,
@@ -216,11 +216,11 @@ async def create_appointment(
         duration=appointment_data.duration,
         notes=appointment_data.notes,
     )
-    
+
     db.add(appointment)
     await db.commit()
     await db.refresh(appointment)
-    
+
     return appointment
 
 
@@ -242,18 +242,18 @@ async def update_appointment(
         )
     )
     appointment = result.scalar_one_or_none()
-    
+
     if not appointment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Appointment not found",
         )
-    
+
     # Check for scheduling conflicts (excluding current appointment)
     if appointment_data.start_time or appointment_data.end_time:
         start_time = appointment_data.start_time or appointment.start_time
         end_time = appointment_data.end_time or appointment.end_time
-        
+
         conflict_query = select(Appointment).where(
             Appointment.practice_id == current_user.practice_id,
             Appointment.id != appointment_id,
@@ -261,32 +261,32 @@ async def update_appointment(
             Appointment.end_time > start_time,
             Appointment.status != AppointmentStatus.CANCELLED,
         )
-        
+
         if appointment_data.provider_id or appointment.provider_id:
             provider_id = appointment_data.provider_id or appointment.provider_id
             conflict_query = conflict_query.where(Appointment.provider_id == provider_id)
-        
+
         if appointment_data.chair_id or appointment.chair_id:
             chair_id = appointment_data.chair_id or appointment.chair_id
             conflict_query = conflict_query.where(Appointment.chair_id == chair_id)
-        
+
         result = await db.execute(conflict_query)
         conflicts = result.scalars().all()
-        
+
         if conflicts:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Scheduling conflict detected",
             )
-    
+
     # Update fields
-    update_data = appointment_data.dict(exclude_unset=True)
+    update_data = appointment_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(appointment, field, value)
-    
+
     await db.commit()
     await db.refresh(appointment)
-    
+
     return appointment
 
 
@@ -307,17 +307,17 @@ async def delete_appointment(
         )
     )
     appointment = result.scalar_one_or_none()
-    
+
     if not appointment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Appointment not found",
         )
-    
+
     # Soft delete by cancelling
     appointment.status = AppointmentStatus.CANCELLED
     await db.commit()
-    
+
     return {"message": "Appointment cancelled successfully"}
 
 
@@ -336,11 +336,11 @@ async def get_available_slots(
     # Define business hours (9 AM to 5 PM)
     start_hour = 9
     end_hour = 17
-    
+
     # Calculate day boundaries for query
     day_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
     day_end = day_start + timedelta(days=1)
-    
+
     # PERFORMANCE OPTIMIZATION: Fetch all appointments for the day in a single query
     # instead of querying inside the loop.
     query = select(Appointment).where(
@@ -349,23 +349,23 @@ async def get_available_slots(
         Appointment.start_time < day_end,
         Appointment.status != AppointmentStatus.CANCELLED,
     )
-    
+
     if provider_id:
         query = query.where(Appointment.provider_id == provider_id)
     if chair_id:
         query = query.where(Appointment.chair_id == chair_id)
-        
+
     result = await db.execute(query)
     day_appointments = result.scalars().all()
-    
+
     # Generate slots for the day
     slots = []
     current_time = date.replace(hour=start_hour, minute=0, second=0, microsecond=0)
     business_end_time = date.replace(hour=end_hour, minute=0, second=0, microsecond=0)
-    
+
     while current_time + timedelta(minutes=duration) <= business_end_time:
         slot_end = current_time + timedelta(minutes=duration)
-        
+
         # Check if slot is available (in-memory overlap check)
         is_available = True
         for apt in day_appointments:
@@ -373,7 +373,7 @@ async def get_available_slots(
             if current_time < apt.end_time and slot_end > apt.start_time:
                 is_available = False
                 break
-        
+
         if is_available:
             slots.append(AppointmentSlot(
                 start_time=current_time,
@@ -381,9 +381,9 @@ async def get_available_slots(
                 duration=duration,
                 is_available=True,
             ))
-        
+
         current_time += timedelta(minutes=15)  # 15 minute intervals
-    
+
     return slots
 
 
@@ -397,7 +397,7 @@ async def get_appointment_stats(
     """
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
-    
+
     # Get today's appointments
     today_query = select(Appointment).where(
         Appointment.practice_id == current_user.practice_id,
@@ -406,13 +406,13 @@ async def get_appointment_stats(
     )
     today_result = await db.execute(today_query)
     today_appointments = today_result.scalars().all()
-    
+
     # Count by status
     confirmed = sum(1 for apt in today_appointments if apt.status == AppointmentStatus.CONFIRMED)
     pending = sum(1 for apt in today_appointments if apt.status == AppointmentStatus.SCHEDULED)
     cancelled = sum(1 for apt in today_appointments if apt.status == AppointmentStatus.CANCELLED)
     completed = sum(1 for apt in today_appointments if apt.status == AppointmentStatus.COMPLETED)
-    
+
     return {
         "todayAppointments": len(today_appointments),
         "confirmed": confirmed,
@@ -463,13 +463,13 @@ async def send_appointment_reminder(
         )
     )
     appointment = result.scalar_one_or_none()
-    
+
     if not appointment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Appointment not found",
         )
-    
+
     # In production, this would send SMS/email via Twilio/SendGrid
     # For now, just return success message
     return {"message": f"Reminder sent for appointment on {appointment.start_time.strftime('%Y-%m-%d %H:%M')}"}

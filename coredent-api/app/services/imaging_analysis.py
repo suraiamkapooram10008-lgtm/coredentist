@@ -3,7 +3,7 @@ Imaging Analysis Service
 Handles imaging statistics, analysis, and reporting
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from uuid import UUID
 import logging
 from datetime import datetime, timedelta
@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
-from app.models.imaging import PatientImage, ImageSeries, ImageType, ImageCategory
+from app.models.imaging import PatientImage
 from app.models.patient import Patient
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 class ImagingAnalysisService:
     """Service for imaging analysis and statistics"""
-    
+
     @staticmethod
     async def get_imaging_statistics(
         db: AsyncSession,
@@ -34,7 +34,7 @@ class ImagingAnalysisService:
                 start_date = datetime.now() - timedelta(days=30)
             if not end_date:
                 end_date = datetime.now()
-            
+
             # Total images
             total_result = await db.execute(
                 select(func.count(PatientImage.id)).where(
@@ -43,7 +43,7 @@ class ImagingAnalysisService:
                 )
             )
             total_images = total_result.scalar() or 0
-            
+
             # Images in date range
             recent_result = await db.execute(
                 select(func.count(PatientImage.id)).where(
@@ -54,7 +54,7 @@ class ImagingAnalysisService:
                 )
             )
             recent_images = recent_result.scalar() or 0
-            
+
             # Total storage used
             storage_result = await db.execute(
                 select(func.sum(PatientImage.file_size)).where(
@@ -63,7 +63,7 @@ class ImagingAnalysisService:
                 )
             )
             total_storage = storage_result.scalar() or 0
-            
+
             # Images by type
             type_result = await db.execute(
                 select(
@@ -77,7 +77,7 @@ class ImagingAnalysisService:
             images_by_type = {
                 str(row[0]): row[1] for row in type_result.fetchall()
             }
-            
+
             # Images by category
             category_result = await db.execute(
                 select(
@@ -91,7 +91,7 @@ class ImagingAnalysisService:
             images_by_category = {
                 str(row[0]): row[1] for row in category_result.fetchall()
             }
-            
+
             # Shared images
             shared_result = await db.execute(
                 select(func.count(PatientImage.id)).where(
@@ -101,9 +101,9 @@ class ImagingAnalysisService:
                 )
             )
             shared_images = shared_result.scalar() or 0
-            
+
             logger.info(f"Generated imaging statistics for practice: {practice_id}")
-            
+
             return {
                 "total_images": total_images,
                 "recent_images": recent_images,
@@ -117,7 +117,7 @@ class ImagingAnalysisService:
                     "end": end_date.isoformat(),
                 },
             }
-            
+
         except Exception as e:
             logger.error(f"Error generating imaging statistics: {str(e)}")
             return {
@@ -129,7 +129,7 @@ class ImagingAnalysisService:
                 "images_by_category": {},
                 "shared_images": 0,
             }
-    
+
     @staticmethod
     async def get_patient_imaging_summary(
         db: AsyncSession,
@@ -146,10 +146,10 @@ class ImagingAnalysisService:
                 )
             )
             patient = patient_result.scalar_one_or_none()
-            
+
             if not patient:
                 return {}
-            
+
             # Total images
             total_result = await db.execute(
                 select(func.count(PatientImage.id)).where(
@@ -158,7 +158,7 @@ class ImagingAnalysisService:
                 )
             )
             total_images = total_result.scalar() or 0
-            
+
             # Latest image
             latest_result = await db.execute(
                 select(PatientImage).where(
@@ -167,7 +167,7 @@ class ImagingAnalysisService:
                 ).order_by(PatientImage.acquisition_date.desc()).limit(1)
             )
             latest_image = latest_result.scalar_one_or_none()
-            
+
             # Images by type
             type_result = await db.execute(
                 select(
@@ -181,7 +181,7 @@ class ImagingAnalysisService:
             images_by_type = {
                 str(row[0]): row[1] for row in type_result.fetchall()
             }
-            
+
             # Total storage
             storage_result = await db.execute(
                 select(func.sum(PatientImage.file_size)).where(
@@ -190,9 +190,9 @@ class ImagingAnalysisService:
                 )
             )
             total_storage = storage_result.scalar() or 0
-            
+
             logger.info(f"Generated imaging summary for patient: {patient_id}")
-            
+
             return {
                 "patient_id": str(patient_id),
                 "total_images": total_images,
@@ -205,11 +205,11 @@ class ImagingAnalysisService:
                 "total_storage_bytes": total_storage,
                 "total_storage_mb": round(total_storage / (1024 * 1024), 2),
             }
-            
+
         except Exception as e:
             logger.error(f"Error generating patient imaging summary: {str(e)}")
             return {}
-    
+
     @staticmethod
     async def get_imaging_trends(
         db: AsyncSession,
@@ -219,7 +219,7 @@ class ImagingAnalysisService:
         """Get imaging trends over time"""
         try:
             start_date = datetime.now() - timedelta(days=days)
-            
+
             # Get daily image counts
             result = await db.execute(
                 select(
@@ -232,22 +232,22 @@ class ImagingAnalysisService:
                 ).group_by(func.date(PatientImage.acquisition_date))
                 .order_by(func.date(PatientImage.acquisition_date))
             )
-            
+
             daily_counts = [
                 {
                     "date": str(row[0]),
                     "count": row[1],
                 } for row in result.fetchall()
             ]
-            
+
             logger.info(f"Generated imaging trends for practice: {practice_id}")
-            
+
             return {
                 "period_days": days,
                 "daily_counts": daily_counts,
                 "total_images": sum(item["count"] for item in daily_counts),
             }
-            
+
         except Exception as e:
             logger.error(f"Error generating imaging trends: {str(e)}")
             return {
@@ -255,7 +255,7 @@ class ImagingAnalysisService:
                 "daily_counts": [],
                 "total_images": 0,
             }
-    
+
     @staticmethod
     async def get_storage_breakdown(
         db: AsyncSession,
@@ -273,10 +273,10 @@ class ImagingAnalysisService:
                     PatientImage.is_deleted == False,
                 ).group_by(PatientImage.image_type)
             )
-            
+
             breakdown = []
             total_size = 0
-            
+
             for row in result.fetchall():
                 size = row[2] or 0
                 total_size += size
@@ -286,16 +286,16 @@ class ImagingAnalysisService:
                     "size_bytes": size,
                     "size_mb": round(size / (1024 * 1024), 2),
                 })
-            
+
             logger.info(f"Generated storage breakdown for practice: {practice_id}")
-            
+
             return {
                 "breakdown": breakdown,
                 "total_size_bytes": total_size,
                 "total_size_mb": round(total_size / (1024 * 1024), 2),
                 "total_size_gb": round(total_size / (1024 * 1024 * 1024), 2),
             }
-            
+
         except Exception as e:
             logger.error(f"Error generating storage breakdown: {str(e)}")
             return {

@@ -6,7 +6,7 @@ Provides optional Redis/Celery support with in-memory fallback for development/s
 import logging
 import threading
 import queue
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Any, Optional, Dict
 from concurrent.futures import ThreadPoolExecutor
 
@@ -122,7 +122,7 @@ class TaskQueue:
                     'func': func,
                     'args': args,
                     'kwargs': kwargs,
-                    'id': f"task_{datetime.utcnow().timestamp()}"
+                    'id': f"task_{datetime.now(timezone.utc).timestamp()}"
                 })
             return None
 
@@ -234,7 +234,7 @@ class RateLimiter:
         Returns:
             True if allowed, False if rate limited
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         window_start = now - timedelta(seconds=window_seconds)
 
         if self._redis_client:

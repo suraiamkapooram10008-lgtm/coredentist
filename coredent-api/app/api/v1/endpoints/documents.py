@@ -3,10 +3,9 @@ Documents and Digital Intake Forms API
 Manages document templates, patient forms, and e-signatures
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List, Any
 from uuid import UUID
 
 from app.core.database import get_db
@@ -17,7 +16,6 @@ from app.models.document import (
     Document,
     DocumentTemplate,
     DocumentStatus,
-    DocumentCategory,
 )
 
 router = APIRouter()

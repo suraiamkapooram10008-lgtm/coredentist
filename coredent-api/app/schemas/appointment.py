@@ -22,13 +22,13 @@ class AppointmentBase(BaseModel):
     end_time: datetime
     duration: int = Field(..., gt=0, description="Duration in minutes")
     notes: Optional[str] = None
-    
+
     @validator('end_time')
     def validate_end_time(cls, v, values):
         if 'start_time' in values and v <= values['start_time']:
             raise ValueError('end_time must be after start_time')
         return v
-    
+
     @validator('duration')
     def validate_duration(cls, v, values):
         if 'start_time' in values and 'end_time' in values:
@@ -61,7 +61,7 @@ class AppointmentResponse(AppointmentBase):
     practice_id: UUID
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 

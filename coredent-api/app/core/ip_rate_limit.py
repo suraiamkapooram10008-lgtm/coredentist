@@ -5,7 +5,7 @@ Prevents abuse from specific IPs
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Dict
 from fastapi import Request, HTTPException, status
 from collections import defaultdict
 import asyncio
@@ -20,7 +20,7 @@ rate_limit_lock = asyncio.Lock()
 
 class IPRateLimiter:
     """IP-based rate limiter for specific endpoints"""
-    
+
     def __init__(
         self,
         max_requests: int = 10,
@@ -38,7 +38,7 @@ class IPRateLimiter:
         self.max_requests = max_requests
         self.window_hours = window_hours
         self.endpoint = endpoint
-    
+
     def _get_client_ip(self, request: Request) -> str:
         """Extract client IP from request"""
         # Check X-Forwarded-For header (for proxies/load balancers)
@@ -46,10 +46,10 @@ class IPRateLimiter:
         if forwarded_for:
             # Take the first IP (original client)
             return forwarded_for.split(",")[0].strip()
-        
+
         # Fallback to direct client IP
         return request.client.host if request.client else "unknown"
-    
+
     async def check_rate_limit(self, request: Request) -> bool:
         """
         Check if request exceeds rate limit
@@ -66,21 +66,21 @@ class IPRateLimiter:
         client_ip = self._get_client_ip(request)
         now = datetime.now()
         window_start = now - timedelta(hours=self.window_hours)
-        
+
         async with rate_limit_lock:
             # Get request history for this IP and endpoint
             requests = rate_limit_store[client_ip][self.endpoint]
-            
+
             # Remove old requests outside window
             requests = [
                 (timestamp, count) 
                 for timestamp, count in requests 
                 if timestamp > window_start
             ]
-            
+
             # Count total requests in window
             total_requests = sum(count for _, count in requests)
-            
+
             if total_requests >= self.max_requests:
                 logger.warning(
                     f"Rate limit exceeded for IP {client_ip} on {self.endpoint}",
@@ -95,21 +95,21 @@ class IPRateLimiter:
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail=f"Rate limit exceeded. Maximum {self.max_requests} requests per {self.window_hours} hour(s)."
                 )
-            
+
             # Add current request
             requests.append((now, 1))
             rate_limit_store[client_ip][self.endpoint] = requests
-            
+
             logger.debug(
                 f"Rate limit check passed for IP {client_ip} on {self.endpoint}: {total_requests + 1}/{self.max_requests}"
             )
             return True
-    
+
     async def cleanup_old_entries(self):
         """Clean up old rate limit entries (call periodically)"""
         now = datetime.now()
         window_start = now - timedelta(hours=self.window_hours * 2)  # Keep 2x window for safety
-        
+
         async with rate_limit_lock:
             for ip in list(rate_limit_store.keys()):
                 for endpoint in list(rate_limit_store[ip].keys()):
@@ -119,12 +119,12 @@ class IPRateLimiter:
                         for timestamp, count in requests 
                         if timestamp > window_start
                     ]
-                    
+
                     if requests:
                         rate_limit_store[ip][endpoint] = requests
                     else:
                         del rate_limit_store[ip][endpoint]
-                
+
                 if not rate_limit_store[ip]:
                     del rate_limit_store[ip]
 

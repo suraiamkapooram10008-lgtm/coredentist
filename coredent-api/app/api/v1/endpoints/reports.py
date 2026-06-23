@@ -3,18 +3,15 @@ Reports Endpoints
 Aggregation logic for dashboard and clinic analytics
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
-from datetime import datetime, date, timedelta
-from typing import Any
-import math
+from datetime import date, timedelta
 
 from app.core.database import get_db
-from app.api.deps import get_current_user
 from app.models.user import User
-from app.models.appointment import Appointment, AppointmentStatus, AppointmentTypeEnum, Chair
-from app.models.billing import Invoice, Payment, PaymentStatus
+from app.models.appointment import Appointment, AppointmentStatus, Chair
+from app.models.billing import Invoice
 from app.models.treatment import TreatmentPlan, TreatmentPlanStatus
 from app.schemas.reports import DashboardMetricsResponse
 from app.core.audit import log_audit_event
@@ -36,7 +33,7 @@ async def get_dashboard_metrics(
     Get aggregated dashboard metrics for the practice
     """
     practice_id = current_user.practice_id
-    
+
     # HIPAA Audit Logging (Standardized Utility)
     await log_audit_event(
         db, current_user, "dashboard_report_viewed", "report", "dashboard", request,
@@ -60,16 +57,16 @@ async def get_dashboard_metrics(
     )
     res = await db.execute(metrics_stmt)
     apps_metrics = res.one()
-    
+
     total_appts = apps_metrics.total or 0
     completed = apps_metrics.completed or 0
     cancelled = apps_metrics.cancelled or 0
     no_show = apps_metrics.no_show or 0
     scheduled = apps_metrics.scheduled or 0
-    
+
     completion_rate = (completed / total_appts * 100) if total_appts > 0 else 0
     no_show_rate = (no_show / total_appts * 100) if total_appts > 0 else 0
-    
+
     # 1.5 Appointment by Type & Day (SQL-Level Aggregation)
     type_stmt = select(
         Appointment.appointment_type,
@@ -81,13 +78,13 @@ async def get_dashboard_metrics(
             func.date(Appointment.start_time) <= to_date
         )
     ).group_by(Appointment.appointment_type)
-    
+
     type_res = await db.execute(type_stmt)
     by_type = [
         {"type": t.replace('_', ' ').capitalize(), "count": c, "color": "#3B82F6"} 
         for t, c in type_res.all()
     ]
-    
+
     day_stmt = select(
         func.date(Appointment.start_time).label('day'),
         func.count(Appointment.id).label('count')
@@ -98,10 +95,10 @@ async def get_dashboard_metrics(
             func.date(Appointment.start_time) <= to_date
         )
     ).group_by(func.date(Appointment.start_time))
-    
+
     day_res = await db.execute(day_stmt)
     days_data = {str(d): c for d, c in day_res.all()}
-    
+
     # Fill in gaps for all days in range
     by_day = []
     curr = from_date
@@ -124,9 +121,9 @@ async def get_dashboard_metrics(
     )
     rev_res = await db.execute(revenue_stmt)
     rev_metrics = rev_res.one()
-    
+
     total_revenue = float(rev_metrics.revenue or 0)
-    
+
     # Calculate collected amount from payments
     from app.models.billing import Payment, PaymentStatus
     collected_stmt = select(
@@ -141,7 +138,7 @@ async def get_dashboard_metrics(
     )
     collected_res = await db.execute(collected_stmt)
     collected_metrics = collected_res.one()
-    
+
     total_collected = float(collected_metrics.collected or 0)
     total_outstanding = total_revenue - total_collected
     avg_per_visit = (total_revenue / completed) if completed > 0 else 0
@@ -164,11 +161,11 @@ async def get_dashboard_metrics(
     )
     plan_res = await db.execute(plan_stmt)
     plan_metrics = plan_res.one()
-    
+
     proposed = plan_metrics.proposed or 0
     accepted = plan_metrics.accepted or 0
     completed_plans = plan_metrics.completed_plans or 0
-    
+
     acceptance_rate = (accepted / proposed * 100) if proposed > 0 else 0
     plan_completion_rate = (completed_plans / accepted * 100) if accepted > 0 else 0
 
@@ -176,10 +173,10 @@ async def get_dashboard_metrics(
     chair_query = select(Chair).where(Chair.practice_id == practice_id)
     chair_result = await db.execute(chair_query)
     chairs = chair_result.scalars().all()
-    
+
     # Simplified utilization logic
     avg_util = 65.0 # Mocking complex calc for now
-    
+
     return {
         "appointments": {
             "total": total_appts,

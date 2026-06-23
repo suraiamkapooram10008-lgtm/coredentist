@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, Form
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_
 
 from app.api.deps import get_db, get_current_user, get_current_practice
 from app.services.communications_service import CommunicationsEngine
@@ -49,14 +49,14 @@ def list_templates(
     query = db.query(MessageTemplate).filter(
         MessageTemplate.practice_id == current_practice.id
     )
-    
+
     if category:
         query = query.filter(MessageTemplate.category == category)
     if is_active is not None:
         query = query.filter(MessageTemplate.is_active == is_active)
     if message_type:
         query = query.filter(MessageTemplate.message_type == message_type)
-    
+
     templates = query.order_by(MessageTemplate.is_default.desc(), MessageTemplate.name).offset(skip).limit(limit).all()
     return templates
 
@@ -75,10 +75,10 @@ def get_template(
             MessageTemplate.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
-    
+
     return template
 
 
@@ -99,7 +99,7 @@ def create_template(
                 MessageTemplate.is_default == True
             )
         ).update({"is_default": False})
-    
+
     db_template = MessageTemplate(
         **template.model_dump(),
         practice_id=current_practice.id,
@@ -126,10 +126,10 @@ def update_template(
             MessageTemplate.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not db_template:
         raise HTTPException(status_code=404, detail="Template not found")
-    
+
     # If setting as default, unset other defaults
     if template_update.is_default:
         db.query(MessageTemplate).filter(
@@ -140,14 +140,14 @@ def update_template(
                 MessageTemplate.id != template_id
             )
         ).update({"is_default": False})
-    
+
     update_data = template_update.model_dump(exclude_unset=True)
     if 'variables' in update_data and update_data['variables'] is not None:
         update_data['variables'] = update_data['variables'].model_dump_json()
-    
+
     for field, value in update_data.items():
         setattr(db_template, field, value)
-    
+
     db.commit()
     db.refresh(db_template)
     return db_template
@@ -167,10 +167,10 @@ def delete_template(
             MessageTemplate.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not db_template:
         raise HTTPException(status_code=404, detail="Template not found")
-    
+
     db.delete(db_template)
     db.commit()
     return None
@@ -198,7 +198,7 @@ def list_messages(
     query = db.query(PatientMessage).filter(
         PatientMessage.practice_id == current_practice.id
     )
-    
+
     if patient_id:
         query = query.filter(PatientMessage.patient_id == patient_id)
     if message_type:
@@ -211,7 +211,7 @@ def list_messages(
         query = query.filter(PatientMessage.created_at >= date_from)
     if date_to:
         query = query.filter(PatientMessage.created_at <= date_to)
-    
+
     messages = query.order_by(PatientMessage.created_at.desc()).offset(skip).limit(limit).all()
     return messages
 
@@ -230,10 +230,10 @@ def get_message(
             PatientMessage.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not message:
         raise HTTPException(status_code=404, detail="Message not found")
-    
+
     return message
 
 
@@ -252,10 +252,10 @@ def send_message(
             Patient.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
-    
+
     # Get template if provided
     template = None
     if message.template_id:
@@ -268,11 +268,11 @@ def send_message(
         if template:
             # Increment template usage
             template.times_used += 1
-    
+
     # Set recipient info from patient if not provided
     recipient_phone = message.recipient_phone or patient.phone
     recipient_email = message.recipient_email or patient.email
-    
+
     db_message = PatientMessage(
         **message.model_dump(exclude={'template_id', 'appointment_id', 'parent_message_id'}),
         practice_id=current_practice.id,
@@ -281,7 +281,7 @@ def send_message(
         recipient_email=recipient_email,
         status=MessageStatus.PENDING if not message.scheduled_at else MessageStatus.PENDING
     )
-    
+
     db.add(db_message)
     db.commit()
     db.refresh(db_message)
@@ -307,14 +307,14 @@ def update_message(
             PatientMessage.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not db_message:
         raise HTTPException(status_code=404, detail="Message not found")
-    
+
     update_data = message_update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(db_message, field, value)
-    
+
     db.commit()
     db.refresh(db_message)
     return db_message
@@ -338,12 +338,12 @@ def list_reminders(
     query = db.query(ReminderSchedule).filter(
         ReminderSchedule.practice_id == current_practice.id
     )
-    
+
     if is_active is not None:
         query = query.filter(ReminderSchedule.is_active == is_active)
     if reminder_type:
         query = query.filter(ReminderSchedule.reminder_type == reminder_type)
-    
+
     reminders = query.order_by(ReminderSchedule.name).offset(skip).limit(limit).all()
     return reminders
 
@@ -362,10 +362,10 @@ def get_reminder(
             ReminderSchedule.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not reminder:
         raise HTTPException(status_code=404, detail="Reminder schedule not found")
-    
+
     return reminder
 
 
@@ -384,10 +384,10 @@ def create_reminder(
             MessageTemplate.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
-    
+
     db_reminder = ReminderSchedule(
         **reminder.model_dump(),
         practice_id=current_practice.id,
@@ -414,17 +414,17 @@ def update_reminder(
             ReminderSchedule.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not db_reminder:
         raise HTTPException(status_code=404, detail="Reminder schedule not found")
-    
+
     update_data = reminder_update.model_dump(exclude_unset=True)
     if 'patient_types' in update_data and update_data['patient_types'] is not None:
         update_data['patient_types'] = update_data['patient_types'].model_dump_json()
-    
+
     for field, value in update_data.items():
         setattr(db_reminder, field, value)
-    
+
     db.commit()
     db.refresh(db_reminder)
     return db_reminder
@@ -444,10 +444,10 @@ def delete_reminder(
             ReminderSchedule.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not db_reminder:
         raise HTTPException(status_code=404, detail="Reminder schedule not found")
-    
+
     db.delete(db_reminder)
     db.commit()
     return None
@@ -471,12 +471,12 @@ def list_conversations(
     query = db.query(Conversation).filter(
         Conversation.practice_id == current_practice.id
     )
-    
+
     if status:
         query = query.filter(Conversation.status == status)
     if patient_id:
         query = query.filter(Conversation.patient_id == patient_id)
-    
+
     conversations = query.order_by(Conversation.last_message_at.desc().nullsfirst()).offset(skip).limit(limit).all()
     return conversations
 
@@ -495,10 +495,10 @@ def get_conversation(
             Conversation.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     return conversation
 
 
@@ -517,10 +517,10 @@ def create_conversation(
             Patient.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
-    
+
     # Check if conversation already exists
     existing = db.query(Conversation).filter(
         and_(
@@ -530,10 +530,10 @@ def create_conversation(
             Conversation.status == 'active'
         )
     ).first()
-    
+
     if existing:
         return existing
-    
+
     db_conversation = Conversation(
         **conversation.model_dump(),
         practice_id=current_practice.id,
@@ -560,14 +560,14 @@ def update_conversation(
             Conversation.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not db_conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     update_data = conversation_update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(db_conversation, field, value)
-    
+
     db.commit()
     db.refresh(db_conversation)
     return db_conversation
@@ -590,14 +590,14 @@ def get_conversation_messages(
             Conversation.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     messages = db.query(ConversationMessage).filter(
         ConversationMessage.conversation_id == conversation_id
     ).order_by(ConversationMessage.created_at.asc()).offset(skip).limit(limit).all()
-    
+
     return messages
 
 
@@ -617,18 +617,18 @@ def send_conversation_message(
             Conversation.practice_id == current_practice.id
         )
     ).first()
-    
+
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-        
+
     engine = CommunicationsEngine(db)
-    
+
     # Actually send the SMS if channel is SMS
     if conversation.channel == MessageType.SMS:
         patient = db.query(Patient).get(conversation.patient_id)
         if patient and patient.phone:
             engine.send_sms(patient.phone, message.content, current_practice)
-            
+
     db_message = ConversationMessage(
         **message.model_dump(),
         conversation_id=conversation_id,
@@ -637,14 +637,14 @@ def send_conversation_message(
     db.add(db_message)
     db.commit()
     db.refresh(db_message)
-    
+
     # Update conversation's last message info
     conversation.last_message_at = db_message.created_at
     conversation.last_message_preview = message.content[:255]
     if message.sender_type == 'patient':
         conversation.unread_count += 1
     db.commit()
-    
+
     return db_message
 
 
@@ -667,7 +667,7 @@ async def twilio_inbound_sms(
     """
     engine = CommunicationsEngine(db)
     success = engine.handle_inbound_sms(From, To, Body, MessageSid)
-    
+
     # Return empty TwiML response to acknowledge receipt
     return "<Response></Response>"
 
@@ -696,14 +696,14 @@ def get_communication_settings(
     # Message stats
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     week_ago = today - timedelta(days=7)
-    
+
     messages_sent = db.query(PatientMessage).filter(
         and_(
             PatientMessage.practice_id == current_practice.id,
             PatientMessage.sent_at >= week_ago
         )
     ).count()
-    
+
     messages_delivered = db.query(PatientMessage).filter(
         and_(
             PatientMessage.practice_id == current_practice.id,
@@ -711,7 +711,7 @@ def get_communication_settings(
             PatientMessage.delivered_at >= week_ago
         )
     ).count()
-    
+
     messages_failed = db.query(PatientMessage).filter(
         and_(
             PatientMessage.practice_id == current_practice.id,
@@ -719,9 +719,9 @@ def get_communication_settings(
             PatientMessage.sent_at >= week_ago
         )
     ).count()
-    
+
     delivery_rate = (messages_delivered / messages_sent * 100) if messages_sent > 0 else 0.0
-    
+
     # Reminder stats
     reminders_scheduled = db.query(ReminderSchedule).filter(
         and_(
@@ -729,7 +729,7 @@ def get_communication_settings(
             ReminderSchedule.is_active == True
         )
     ).count()
-    
+
     reminders_pending = db.query(PatientMessage).filter(
         and_(
             PatientMessage.practice_id == current_practice.id,
@@ -737,7 +737,7 @@ def get_communication_settings(
             PatientMessage.scheduled_at.isnot(None)
         )
     ).count()
-    
+
     # Conversation stats
     active_conversations = db.query(Conversation).filter(
         and_(
@@ -745,14 +745,14 @@ def get_communication_settings(
             Conversation.status == 'active'
         )
     ).count()
-    
+
     unread_messages = db.query(Conversation).filter(
         and_(
             Conversation.practice_id == current_practice.id,
             Conversation.status == 'active'
         )
     ).with_entities(Conversation.unread_count).scalar() or 0
-    
+
     return CommunicationSummary(
         messages=MessageStats(
             total_sent=messages_sent,

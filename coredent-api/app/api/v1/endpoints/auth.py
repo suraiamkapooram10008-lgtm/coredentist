@@ -22,7 +22,7 @@ from app.core.security import (
     generate_password_reset_token,
 )
 from app.core.config_simple import settings
-from app.core.email import email_service
+from app.core.email import log_email_failure as _log_email_failure
 from app.models.user import User
 from app.models.audit import Session as UserSession
 from app.models.password_reset import PasswordResetToken
@@ -47,6 +47,13 @@ async def _await_if_needed(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+def _log_email_failure(exc: Exception, kind: str, recipient: str) -> None:
+    """DEPRECATED: Use ``log_email_failure`` from ``app.core.email`` directly.
+    Kept as a thin wrapper for backward compat within this module."""
+    from app.core.email import log_email_failure
+    log_email_failure(exc, kind, recipient)
 
 # Account lockout configuration
 MAX_FAILED_ATTEMPTS = 5
@@ -76,7 +83,7 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
         )
-    
+
     # Check if account is locked
     if user.locked_until:
         if datetime.now(timezone.utc) < user.locked_until:
@@ -88,16 +95,16 @@ async def login(
             # Lockout expired, reset
             user.failed_login_attempts = 0
             user.locked_until = None
-    
+
     if not verify_password(credentials.password, user.password_hash):
         # Increment failed attempts
         user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
         user.last_failed_login = datetime.now(timezone.utc)
-        
+
         # Lock account if max attempts reached
         if user.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
             user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
-        
+
         await _await_if_needed(db.commit())
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -109,7 +116,7 @@ async def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive",
         )
-    
+
     # Reset failed attempts on successful login
     user.failed_login_attempts = 0
     user.locked_until = None
@@ -133,16 +140,15 @@ async def login(
             .values(last_login=datetime.now(timezone.utc))
         )
     )
-    
+
     # SECURITY FIX: Hash refresh token before storing
     from app.core.security import hash_token
     token_hash = hash_token(refresh_token)
-    
-    # Store refresh token in database
+
+    # Store refresh token in database (hashed only, no plaintext)
     session = UserSession(
         user_id=user.id,
-        refresh_token=refresh_token,  # DEPRECATED: Keep for backward compatibility
-        token_hash=token_hash,  # SECURITY FIX: Store hashed token
+        token_hash=token_hash,
         expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
@@ -155,7 +161,7 @@ async def login(
     from fastapi.responses import JSONResponse
     from app.core.security import generate_csrf_token
     csrf_token = generate_csrf_token()
-    
+
     # CRIT-01/CRIT-03 FIX: Use Bearer token auth strategy for cross-origin deployment.
     # httpOnly cookies don't work cross-origin unless domains share a parent domain.
     # For Railway deployment with separate frontend/backend domains, use Authorization header.
@@ -168,20 +174,22 @@ async def login(
         "csrf_token": csrf_token,
         "message": "Login successful",
     })
-    
-    # Set CSRF cookie (httpOnly for security, Lax SameSite for cross-origin safety)
-    # CRIT-03 FIX: Changed samesite from "none" to "lax" to prevent CSRF attacks
-    # while still allowing safe cross-origin navigation
+
+    # CSRF cookie: SameSite=None required for cross-origin subresource
+    # requests (fetch/XHR).  The double-submit pattern (header + cookie
+    # matching) still prevents CSRF because the cookie is httponly — an
+    # attacker cannot read its value via JavaScript and cannot forge a
+    # matching X-CSRF-Token header.
     response.set_cookie(
         key="csrf_token",
         value=csrf_token,
         httponly=True,
         secure=True,
-        samesite="lax",    # FIX: Prevent CSRF - only sent on safe cross-origin requests
+        samesite="none",  # Required for cross-origin cookie delivery
         max_age=86400,  # 24 hours
         path="/"
     )
-    
+
     return response
 
 
@@ -282,7 +290,6 @@ async def register(
 
     session = UserSession(
         user_id=user.id,
-        refresh_token=refresh_token,
         token_hash=hash_token(refresh_token),
         expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
         ip_address=request.client.host if request.client else None,
@@ -309,18 +316,22 @@ async def register(
         value=csrf_token,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",  # Required for cross-origin cookie delivery
         max_age=86400,
         path="/",
     )
 
-    # Best-effort verification email (non-blocking)
+    # Durable-queue verification email (non-blocking).
+    # SECURITY: enqueue on Celery so the request returns immediately
+    # and SMTP is retried with backoff.  Failures are tracked in
+    # Sentry with event_type=email_permanent_failure.
     try:
         verification_token = generate_password_reset_token()
         user.email_verification_token = verification_token
         await _await_if_needed(db.commit())
         verification_link = f"{settings.FRONTEND_URL}/verify-email?token={verification_token}"
-        await email_service.send_email(
+        from app.core.email_tasks import enqueue_email
+        enqueue_email(
             to=user.email,
             subject="Welcome to CoreDent - Verify Your Email",
             html_content=(
@@ -330,8 +341,12 @@ async def register(
             text_content=f"Welcome to CoreDent! Verify your email: {verification_link}",
         )
     except Exception as e:
-        import logging
-        logging.warning(f"Failed to send welcome/verification email: {e}")
+        # SECURITY: For HIPAA, a failed verification email must not be
+        # silently swallowed.  Log to Sentry at error level so the team
+        # can act on it.  The user is still logged in (account exists)
+        # so we don't need to surface the error to them here, but it
+        # is tracked.
+        _log_email_failure(e, "welcome_verification", user.email)
 
     return response
 
@@ -344,7 +359,7 @@ async def logout(
     _csrf: bool = Depends(verify_csrf),
 ) -> LoginResponse:
     """
-    Logout and invalidate refresh token
+    Logout and invalidate refresh token + revoke access token.
     CRIT-01 FIX: Uses Authorization header for auth, no cookie cleanup needed
     """
     # Try to get refresh_token from request body
@@ -355,28 +370,43 @@ async def logout(
         refresh_token = body_data.get("refresh_token")
     except json.JSONDecodeError:
         refresh_token = None
-    
+
     # Delete session if refresh token provided
     if refresh_token:
+        from app.core.security import hash_token
+        token_hash = hash_token(refresh_token)
         result = await _await_if_needed(
             db.execute(
                 select(UserSession).where(
                     UserSession.user_id == current_user.id,
-                    UserSession.refresh_token == refresh_token,
+                    UserSession.token_hash == token_hash,
                 )
             )
         )
         session = result.scalar_one_or_none()
-        
+
         if session:
             await _await_if_needed(db.delete(session))
             await _await_if_needed(db.commit())
-    
+
+    # SECURITY: Revoke the access token (jti blacklist) so it can't be used
+    # even within its remaining TTL window.
+    from app.core.security import decode_token
+    from app.core.token_blacklist import revoke_token
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        access_token = auth_header[7:]
+        payload = decode_token(access_token)
+        if payload and payload.get("jti"):
+            exp_ts = payload.get("exp", 0)
+            remaining = int(exp_ts - datetime.now(timezone.utc).timestamp())
+            revoke_token(payload["jti"], ttl_seconds=max(remaining, 1))
+
     # Clear CSRF cookie only (no token cookies to clear with Bearer auth)
     from fastapi.responses import JSONResponse
     response = JSONResponse(content={"message": "Successfully logged out"})
     response.delete_cookie(key="csrf_token", path="/")
-    
+
     return response
 
 
@@ -397,28 +427,19 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
         )
-    
+
     # SECURITY FIX: Hash the provided token to compare with stored hash
     from app.core.security import hash_token
     token_hash = hash_token(refresh_in.refresh_token)
-    
-    # Check if session exists using hashed token
+
+    # Check if session exists using hashed token only (no legacy fallback)
     result = await _await_if_needed(
         db.execute(
             select(UserSession).where(UserSession.token_hash == token_hash)
         )
     )
     session = result.scalar_one_or_none()
-    
-    # FALLBACK: Try legacy unhashed token for backward compatibility
-    if not session:
-        result = await _await_if_needed(
-            db.execute(
-                select(UserSession).where(UserSession.refresh_token == refresh_in.refresh_token)
-            )
-        )
-        session = result.scalar_one_or_none()
-    
+
     # Normalize expires_at to aware UTC for cross-DB compatibility (SQLite strips tz)
     if session is not None:
         expires_at = session.expires_at
@@ -431,34 +452,33 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token expired or invalid",
         )
-    
+
     # Get user
     result = await _await_if_needed(db.execute(select(User).where(User.id == session.user_id)))
     user = result.scalar_one_or_none()
-    
+
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
-    
+
     # Create new tokens
     token_data = {
         "sub": str(user.id),
         "role": user.role.value,
         "practice_id": str(user.practice_id),
     }
-    
+
     access_token = create_access_token(token_data)
     new_refresh_token = create_refresh_token(token_data)
-    new_token_hash = hash_token(new_refresh_token)  # SECURITY FIX: Hash new token
-    
-    # Update session with new refresh token
-    session.refresh_token = new_refresh_token  # DEPRECATED: Keep for backward compatibility
-    session.token_hash = new_token_hash  # SECURITY FIX: Store hashed token
+    new_token_hash = hash_token(new_refresh_token)
+
+    # Update session with new hashed refresh token
+    session.token_hash = new_token_hash
     session.expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     await _await_if_needed(db.commit())
-    
+
     return TokenResponse(
         access_token=access_token,
         refresh_token=new_refresh_token,
@@ -490,17 +510,17 @@ async def forgot_password(
     # Find user
     result = await _await_if_needed(db.execute(select(User).where(User.email == forgot_in.email)))
     user = result.scalar_one_or_none()
-    
+
     # Always return success to prevent email enumeration
     if not user:
         return {"message": "If the email exists, a password reset link has been sent"}
-    
+
     # Generate reset token
     from app.core.security import generate_password_reset_token, hash_token
     from datetime import datetime, timedelta
     reset_token = generate_password_reset_token()
-    token_hash = hash_token(reset_token)  # SECURITY FIX: Hash token before storing
-    
+    token_hash = hash_token(reset_token)
+
     # Store reset token in separate table for security (with expiration)
     # First, invalidate any existing tokens for this user
     existing_tokens = await _await_if_needed(
@@ -514,22 +534,22 @@ async def forgot_password(
     )
     for token in existing_tokens.scalars().all():
         token.is_used = True
-    
-    # Create new reset token
+
+    # Create new reset token (hashed only)
     password_reset = PasswordResetToken(
         user_id=user.id,
-        token=reset_token,  # DEPRECATED: Keep for backward compatibility
-        token_hash=token_hash,  # SECURITY FIX: Store hashed token
+        token_hash=token_hash,
         expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
         ip_address=request.client.host if request.client else None,
     )
     db.add(password_reset)
     await _await_if_needed(db.commit())
-    
-    # Send password reset email
+
+    # Durable-queue password-reset email.
     try:
+        from app.core.email_tasks import enqueue_email
         reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token}"
-        await email_service.send_email(
+        enqueue_email(
             to=user.email,
             subject="Password Reset - CoreDent",
             html_content=f"""
@@ -549,9 +569,11 @@ async def forgot_password(
             text_content=f"Reset your password: {reset_link}. This link expires in 24 hours."
         )
     except Exception as e:
-        import logging
-        logging.warning(f"Failed to send password reset email: {e}")
-    
+        # SECURITY: For HIPAA, a failed password-reset email is a
+        # notification failure.  The user thinks "I requested a reset"
+        # but no email went out.  Log to Sentry at error level.
+        _log_email_failure(e, "password_reset", user.email)
+
     return {"message": "If the email exists, a password reset link has been sent"}
 
 
@@ -568,19 +590,21 @@ async def resend_verification_email(
     """
     if current_user.is_email_verified:
         return {"message": "Email already verified"}
-    
+
     # Generate new verification token
     from app.core.security import generate_password_reset_token
-    from datetime import datetime, timedelta, timezone
-    
+
     verification_token = generate_password_reset_token()
     current_user.email_verification_token = verification_token
     await _await_if_needed(db.commit())
-    
-    # Send verification email
+
+    # Send verification email via durable Celery queue.
+    # SECURITY: Uses enqueue_email (not direct send) so SMTP failures
+    # are retried with exponential backoff and don't block the request.
     try:
         verification_link = f"{settings.FRONTEND_URL}/verify-email?token={verification_token}"
-        await email_service.send_email(
+        from app.core.email_tasks import enqueue_email
+        enqueue_email(
             to=current_user.email,
             subject="Verify Your Email - CoreDent",
             html_content=f"""
@@ -599,9 +623,14 @@ async def resend_verification_email(
             text_content=f"Verify your email: {verification_link}. This link expires in 24 hours."
         )
     except Exception as e:
-        import logging
-        logging.warning(f"Failed to send verification email: {e}")
-    
+        # SECURITY: HIPAA notification failure — log to Sentry at error level
+        # and inform the user so they know to contact support.
+        _log_email_failure(e, "resend_verification", current_user.email)
+        return {
+            "message": "We were unable to send the verification email. Please try again later or contact support.",
+            "email_failed": True,
+        }
+
     return {"message": "Verification email sent"}
 
 
@@ -613,8 +642,7 @@ async def verify_email(
     """
     Verify email with token
     """
-    from datetime import datetime, timezone
-    
+
     # Find user with matching verification token
     result = await _await_if_needed(
         db.execute(
@@ -625,18 +653,18 @@ async def verify_email(
         )
     )
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired verification token",
         )
-    
+
     # Mark email as verified
     user.is_email_verified = True
     user.email_verification_token = None
     await _await_if_needed(db.commit())
-    
+
     return {"message": "Email verified successfully"}
 
 
@@ -653,40 +681,28 @@ async def reset_password(
     # Validate reset token using separate table
     from datetime import datetime
     from app.core.security import hash_token
-    
+
     # SECURITY FIX: Hash the provided token to compare with stored hash
     token_hash = hash_token(reset_in.token)
-    
+
+    # Only check hashed tokens (no legacy plaintext fallback)
     result = await _await_if_needed(
         db.execute(
             select(PasswordResetToken).where(
-                PasswordResetToken.token_hash == token_hash,  # SECURITY FIX: Compare hashed tokens
+                PasswordResetToken.token_hash == token_hash,
                 PasswordResetToken.is_used == False,
                 PasswordResetToken.expires_at > datetime.now(timezone.utc)
             )
         )
     )
     password_reset = result.scalar_one_or_none()
-    
-    # FALLBACK: Try legacy unhashed token for backward compatibility
-    if not password_reset:
-        result = await _await_if_needed(
-            db.execute(
-                select(PasswordResetToken).where(
-                    PasswordResetToken.token == reset_in.token,
-                    PasswordResetToken.is_used == False,
-                    PasswordResetToken.expires_at > datetime.now(timezone.utc)
-                )
-            )
-        )
-        password_reset = result.scalar_one_or_none()
-    
+
     if not password_reset:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token",
         )
-    
+
     # Get user from token
     user_result = await _await_if_needed(
         db.execute(
@@ -694,13 +710,13 @@ async def reset_password(
         )
     )
     user = user_result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token",
         )
-    
+
     # Validate password strength
     is_valid, error_message = validate_password_strength(reset_in.new_password)
     if not is_valid:
@@ -708,22 +724,22 @@ async def reset_password(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error_message,
         )
-    
+
     # Update user password
     user.password_hash = get_password_hash(reset_in.new_password)
     user.password_changed_at = datetime.now(timezone.utc)
-    
+
     # SECURITY FIX: Invalidate all sessions on password change
     await _await_if_needed(
         db.execute(
             delete(UserSession).where(UserSession.user_id == user.id)
         )
     )
-    
+
     # Mark reset token as used
     password_reset.is_used = True
     password_reset.used_at = datetime.now(timezone.utc)
-    
+
     await _await_if_needed(db.commit())
-    
+
     return {"message": "Password reset successful"}

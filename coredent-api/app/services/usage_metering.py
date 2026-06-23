@@ -16,14 +16,13 @@ Usage:
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from decimal import Decimal
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 import logging
 
 from app.models.subscription import SubscriptionPlan, Subscription, UsageMeter, UsageRecord
-from app.models.practice import Practice
 
 logger = logging.getLogger(__name__)
 

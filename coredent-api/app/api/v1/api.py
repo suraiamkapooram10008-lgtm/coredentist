@@ -26,6 +26,7 @@ from app.api.v1.endpoints import (
     clinical,
     patient_portal,
     documents,
+    stripe,
 )
 
 api_router = APIRouter()
@@ -34,6 +35,7 @@ api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(patients.router, prefix="/patients", tags=["Patients"])
 api_router.include_router(appointments.router, prefix="/appointments", tags=["Appointments"])
 api_router.include_router(billing.router, prefix="/billing", tags=["Billing"])
+api_router.include_router(stripe.router, prefix="/stripe", tags=["Stripe Payments"])
 api_router.include_router(insurance.router, prefix="/insurance", tags=["Insurance"])
 api_router.include_router(imaging.router, prefix="/imaging", tags=["Imaging"])
 api_router.include_router(treatment.router, prefix="/treatment", tags=["Treatment Planning"])

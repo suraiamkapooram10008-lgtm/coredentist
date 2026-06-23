@@ -6,7 +6,6 @@ DentalXChange integration for eligibility and claims
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Optional, Any
 from uuid import UUID
 from datetime import datetime, timedelta, timezone
 import requests
@@ -66,7 +65,7 @@ async def check_eligibility(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Insurance verification service not configured",
         )
-    
+
     # Verify patient insurance exists
     result = await db.execute(
         select(PatientInsurance).where(
@@ -75,13 +74,13 @@ async def check_eligibility(
         )
     )
     insurance = result.scalar_one_or_none()
-    
+
     if not insurance:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Patient insurance not found",
         )
-    
+
     # Get patient details
     result = await db.execute(
         select(Patient).where(
@@ -90,13 +89,13 @@ async def check_eligibility(
         )
     )
     patient = result.scalar_one_or_none()
-    
+
     if not patient:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Patient not found",
         )
-    
+
     # Build eligibility request payload
     payload = {
         "payerId": insurance.payer_id,
@@ -111,7 +110,7 @@ async def check_eligibility(
             "memberId": insurance.subscriber_id,
         }
     }
-    
+
     try:
         response = requests.post(
             f"{settings.DXC_BASE_URL}/eligibility",
@@ -119,7 +118,7 @@ async def check_eligibility(
             headers=_get_dxc_headers(),
             timeout=30,
         )
-        
+
         if response.status_code == 200:
             data = response.json()
             return EligibilityCheckResponse(
@@ -141,7 +140,7 @@ async def check_eligibility(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Eligibility check failed: {response.text}",
             )
-            
+
     except requests.RequestException as e:
         # HIPAA: Log failed eligibility check (still an access attempt)
         await log_audit_event(
@@ -152,7 +151,7 @@ async def check_eligibility(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Unable to verify eligibility: {str(e)}",
         )
-    
+
     # HIPAA: Log successful eligibility check
     await log_audit_event(
         db, current_user, "check_eligibility_success", "patient", patient.id, request
@@ -180,7 +179,7 @@ async def submit_claim(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Claims submission service not configured",
         )
-    
+
     # Expert Hardening: Strictly verify insurance ownership to prevent 'Pivot ID Injection'
     result = await db.execute(
         select(PatientInsurance).join(Patient).where(
@@ -189,13 +188,13 @@ async def submit_claim(
         )
     )
     insurance = result.scalar_one_or_none()
-    
+
     if not insurance:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Valid patient insurance not found for your practice",
         )
-    
+
     # Expert Hardening: Anti-Fraud Idempotency (Prevent Duplicate Submission)
     # Check if we submitted this exact procedure list for this patient in last 5 mins
     idempotency_window = datetime.now(timezone.utc) - timedelta(minutes=5)
@@ -213,7 +212,7 @@ async def submit_claim(
             status_code=status.HTTP_409_CONFLICT,
             detail="A claim for this patient was recently submitted. Please wait 5 minutes to prevent duplicate billing."
         )
-    
+
     # Get patient
     result = await db.execute(
         select(Patient).where(
@@ -222,13 +221,13 @@ async def submit_claim(
         )
     )
     patient = result.scalar_one_or_none()
-    
+
     if not patient:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Patient not found",
         )
-    
+
     # Build claim payload (837D format via JSON API)
     procedures = []
     for proc in claim_data.procedures:
@@ -239,7 +238,7 @@ async def submit_claim(
             "fee": proc.fee,
             "dateOfService": proc.date_of_service.isoformat(),
         })
-    
+
     payload = {
         "claim": {
             "patientFirstName": patient.first_name,
@@ -255,7 +254,7 @@ async def submit_claim(
             "diagnosisCodes": claim_data.diagnosis_codes or [],
         }
     }
-    
+
     try:
         response = requests.post(
             f"{settings.DXC_BASE_URL}/claims",
@@ -263,10 +262,10 @@ async def submit_claim(
             headers=_get_dxc_headers(),
             timeout=60,
         )
-        
+
         if response.status_code in (200, 201):
             data = response.json()
-            
+
             claim = InsuranceClaim(
                 practice_id=current_user.practice_id,
                 patient_id=patient.id,
@@ -282,13 +281,13 @@ async def submit_claim(
             db.add(claim)
             await db.commit()
             await db.refresh(claim)
-            
+
             # HIPAA: Log successful claim submission
             await log_audit_event(
                 db, current_user, "submit_claim_success", "insurance_claim", claim.id, request
             )
             await db.commit()
-            
+
             return ClaimSubmitResponse(
                 claim_id=str(claim.id),
                 external_claim_id=data.get("claimId", ""),
@@ -301,7 +300,7 @@ async def submit_claim(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Claim submission failed: {response.text}",
             )
-            
+
     except requests.RequestException as e:
         # HIPAA: Log failed claim submission
         await log_audit_event(
@@ -329,7 +328,7 @@ async def get_claim_status(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Claims service not configured",
         )
-    
+
     # Get claim from database
     result = await db.execute(
         select(InsuranceClaim).where(
@@ -337,13 +336,13 @@ async def get_claim_status(
         )
     )
     claim = result.scalar_one_or_none()
-    
+
     if not claim:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Claim not found",
         )
-    
+
     # Verify ownership
     result = await db.execute(
         select(Patient).where(
@@ -356,13 +355,13 @@ async def get_claim_status(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized",
         )
-    
+
     # HIPAA: Log claim status read (PHI read)
     await log_audit_event(
         db, current_user, "view_claim_status", "insurance_claim", claim.id, request
     )
     await db.commit()
-    
+
     # Query DentalXChange for status
     try:
         response = requests.get(
@@ -370,7 +369,7 @@ async def get_claim_status(
             headers=_get_dxc_headers(),
             timeout=30,
         )
-        
+
         if response.status_code == 200:
             data = response.json()
             return ClaimStatusResponse(
@@ -390,7 +389,7 @@ async def get_claim_status(
                 external_claim_id=claim.claim_number,
                 status=claim.status.value,
             )
-            
+
     except requests.RequestException:
         # Return database status if API unavailable
         return ClaimStatusResponse(

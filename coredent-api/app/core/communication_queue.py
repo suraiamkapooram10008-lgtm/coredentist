@@ -41,7 +41,7 @@ def _do_send_message(message_id: str) -> Dict[str, Any]:
         practice = db.query(Practice).filter(Practice.id == message.practice_id).first()
 
         message.status = MessageStatus.SENDING
-        message.sent_at = message.sent_at or datetime.utcnow()
+        message.sent_at = message.sent_at or datetime.now(timezone.utc)
         db.commit()
 
         success = False
@@ -81,7 +81,7 @@ def _do_send_message(message_id: str) -> Dict[str, Any]:
         if success:
             message.status = MessageStatus.SENT
             message.external_id = external_id
-            message.delivered_at = datetime.utcnow()
+            message.delivered_at = datetime.now(timezone.utc)
             logger.info(f"Message {message_id} sent successfully via {message.message_type}")
         else:
             message.status = MessageStatus.FAILED
@@ -115,7 +115,7 @@ def _do_send_message(message_id: str) -> Dict[str, Any]:
         db.close()
 
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def send_message_task(message_id: str) -> Dict[str, Any]:

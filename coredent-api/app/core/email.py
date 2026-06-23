@@ -12,6 +12,46 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
+def log_email_failure(exc: Exception, kind: str, recipient: str) -> None:
+    """
+    SECURITY: Centralized email-failure reporting.
+
+    A failed transactional email (password reset, email verification,
+    payment receipt) is a HIPAA notification failure: the user thinks
+    something happened that did not.  We log to Sentry at error level
+    so the on-call engineer can act on it.  We do NOT include the raw
+    email body or PHI; we include the recipient and the kind of email
+    so on-call can identify and follow up.
+    """
+    logger.error(
+        f"Failed to send {kind} email to {recipient}: {exc}",
+        extra={
+            "event_type": "email_failure",
+            "email_kind": kind,
+            "recipient_domain": recipient.split("@")[-1] if "@" in recipient else "unknown",
+        },
+    )
+    try:
+        import sentry_sdk
+        with sentry_sdk.push_scope() as scope:
+            scope.set_tag("event_type", "email_failure")
+            scope.set_tag("email_kind", kind)
+            scope.set_context(
+                "email_failure",
+                {
+                    "kind": kind,
+                    "recipient_domain": (
+                        recipient.split("@")[-1] if "@" in recipient else "unknown"
+                    ),
+                    "error": str(exc),
+                },
+            )
+            sentry_sdk.capture_exception(exc)
+    except Exception:
+        # Sentry is optional; never let a logging error break the request.
+        pass
+
+
 class EmailProvider(str, Enum):
     SENDGRID = "sendgrid"
     AWS_SES = "aws_ses"
@@ -25,14 +65,14 @@ class EmailService:
     - AWS SES
     - Console (development)
     """
-    
+
     def __init__(self, provider: Optional[EmailProvider] = None):
         self.provider = provider or EmailProvider(
             os.getenv("EMAIL_PROVIDER", "console")
         )
         self.from_email = os.getenv("EMAIL_FROM", "noreply@coredent.app")
         self.from_name = os.getenv("EMAIL_FROM_NAME", "CoreDent")
-        
+
     async def send_email(
         self,
         to: str | List[str],
@@ -47,7 +87,7 @@ class EmailService:
         Send an email using the configured provider
         """
         recipients = [to] if isinstance(to, str) else to
-        
+
         email_data = {
             "from": f"{self.from_name} <{self.from_email}>",
             "to": recipients,
@@ -56,14 +96,14 @@ class EmailService:
             "text": text_content,
             "attachments": attachments,
         }
-        
+
         if self.provider == EmailProvider.SENDGRID:
             return await self._send_sendgrid(email_data, template_id, dynamic_template_data)
         elif self.provider == EmailProvider.AWS_SES:
             return await self._send_aws_ses(email_data)
         else:
             return await self._send_console(email_data)
-    
+
     async def _send_sendgrid(
         self,
         email_data: Dict[str, Any],
@@ -74,31 +114,30 @@ class EmailService:
         try:
             from sendgrid import SendGridAPIClient
             from sendgrid.helpers.mail import (
-                Mail, Email, To, Content, Attachment, FileContent, 
-                FileName, FileType, Disposition
+                Mail
             )
-            
+
             sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
-            
+
             message = Mail(
                 from_email=email_data["from"],
                 to_emails=email_data["to"],
                 subject=email_data["subject"],
             )
-            
+
             if template_id:
                 message.template_id = template_id
                 message.dynamic_template_data = dynamic_template_data or {}
-            
+
             if email_data.get("html"):
                 message.html_content = email_data["html"]
             if email_data.get("text"):
                 message.content = [
                     {"type": "text/plain", "value": email_data["text"]}
                 ]
-            
+
             response = sg.send(message)
-            
+
             logger.info(f"SendGrid email sent successfully: {response.status_code}")
             return {
                 "success": True,
@@ -109,38 +148,38 @@ class EmailService:
         except Exception as e:
             logger.error(f"SendGrid error: {str(e)}")
             raise
-    
+
     async def _send_aws_ses(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """Send email via AWS SES"""
         try:
             import boto3
             from botocore.exceptions import ClientError
-            
+
             ses_client = boto3.client(
                 "ses",
                 aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
                 aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
                 region_name=os.getenv("AWS_REGION", "us-east-1"),
             )
-            
+
             destination = {"ToAddresses": email_data["to"]}
-            
+
             message = {
                 "Subject": {"Data": email_data["subject"]},
                 "Body": {},
             }
-            
+
             if email_data.get("html"):
                 message["Body"]["Html"] = {"Data": email_data["html"]}
             if email_data.get("text"):
                 message["Body"]["Text"] = {"Data": email_data["text"]}
-            
+
             response = ses_client.send_email(
                 Source=email_data["from"],
                 Destination=destination,
                 Message=message,
             )
-            
+
             logger.info(f"AWS SES email sent successfully")
             return {
                 "success": True,
@@ -150,7 +189,7 @@ class EmailService:
         except ClientError as e:
             logger.error(f"AWS SES error: {str(e)}")
             raise
-    
+
     async def _send_console(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """Log email to console (development)"""
         logger.info("=" * 50)
@@ -162,15 +201,15 @@ class EmailService:
         if email_data.get("text"):
             logger.info(f"Body: {email_data['text'][:200]}...")
         logger.info("=" * 50)
-        
+
         return {
             "success": True,
             "provider": "console",
             "message_id": f"dev-{datetime.now().timestamp()}",
         }
-    
+
     # Convenience methods for common emails
-    
+
     async def send_welcome_email(self, to: str, first_name: str) -> Dict[str, Any]:
         """Send welcome email to new patients"""
         return await self.send_email(
@@ -191,7 +230,7 @@ class EmailService:
             """,
             text_content=f"Welcome to CoreDent, {first_name}! Thank you for choosing us.",
         )
-    
+
     async def send_appointment_reminder(
         self,
         to: str,
@@ -225,7 +264,7 @@ class EmailService:
             </html>
             """,
         )
-    
+
     async def send_appointment_confirmation(
         self,
         to: str,
@@ -258,7 +297,7 @@ class EmailService:
             </html>
             """,
         )
-    
+
     async def send_insurance_claim_submitted(
         self,
         to: str,
@@ -573,5 +612,5 @@ async def send_payment_confirmation_email(
             ),
         )
     except Exception as exc:
-        logger.error("Failed to send payment confirmation email: %s", exc)
+        log_email_failure(exc, "payment_confirmation", to_email)
         return {"status": "error", "error": str(exc)}

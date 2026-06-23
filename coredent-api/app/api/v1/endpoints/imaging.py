@@ -6,7 +6,7 @@ CRUD operations for patient images and X-rays
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional
 import logging
 
 from app.core.database import get_db
@@ -16,7 +16,6 @@ from app.models.user import User, UserRole
 from app.models.imaging import ImageType, ImageCategory
 from app.models.patient import Patient
 from app.schemas.imaging import (
-    PatientImageCreate,
     PatientImageUpdate,
     PatientImageResponse,
     PatientImageListResponse,
@@ -37,11 +36,9 @@ from app.services.imaging_service import ImagingService
 from app.services.imaging_processing import (
     ImageFileProcessor,
     ImageSharingProcessor,
-    ImageMetadataProcessor,
 )
-from app.services.imaging_analysis import ImagingAnalysisService
 from app.core.email import email_service
-from sqlalchemy import select, func, and_
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 logger = logging.getLogger(__name__)
@@ -77,33 +74,33 @@ async def list_patient_images(
             )
         )
         patient = result.scalar_one_or_none()
-        
+
         if not patient:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Patient not found",
             )
-        
+
         # Get images using service
         images = await ImagingService.get_patient_images(
             db, patient_id, current_user.practice_id,
             image_type, category, tooth_number, start_date, end_date
         )
-        
+
         # Generate URLs for each image
         for image in images:
             image.url = ImageFileProcessor.get_file_url(image.file_path)
-        
+
         # HIPAA: Log list images access
         await log_audit_event(
             db, current_user, "list_patient_images", "patient", patient_id, request
         )
-        
+
         return PatientImageListResponse(
             images=images,
             count=len(images),
         )
-        
+
     except HTTPException:
         raise
     except IntegrityError:
@@ -146,28 +143,28 @@ async def upload_image(
             )
         )
         patient = result.scalar_one_or_none()
-        
+
         if not patient:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Patient not found",
             )
-        
+
         # Validate file
         content, file_extension = await ImageFileProcessor.validate_file(file)
         file_size = len(content)
-        
+
         # Sanitize filename
         safe_filename = ImageFileProcessor.sanitize_filename(file.filename)
-        
+
         # Generate unique filename
         unique_filename = ImageFileProcessor.generate_unique_filename(patient_id, file_extension)
-        
+
         # Upload file
         storage_path = await ImageFileProcessor.upload_file(
             content, unique_filename, file.content_type
         )
-        
+
         # Create image record
         image = await ImagingService.create_image(
             db=db,
@@ -187,15 +184,15 @@ async def upload_image(
             device_name=device_name,
             device_serial=device_serial,
         )
-        
+
         # HIPAA: Log image upload
         await log_audit_event(
             db, current_user, "upload_image", "patient_image", image.id, request,
             {"file_size": file_size, "mime_type": file.content_type}
         )
-        
+
         return image
-        
+
     except ValueError as e:
         logger.warning(f"File validation error: {str(e)}")
         raise HTTPException(
@@ -226,23 +223,23 @@ async def get_image(
     """
     try:
         image = await ImagingService.get_image(db, image_id, current_user.practice_id)
-        
+
         if not image:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Image not found",
             )
-        
+
         # Generate URL
         image.url = ImageFileProcessor.get_file_url(image.file_path)
-        
+
         # HIPAA: Log image access
         await log_audit_event(
             db, current_user, "view_image", "patient_image", image.id, request
         )
-        
+
         return image
-        
+
     except HTTPException:
         raise
     except IntegrityError:
@@ -268,19 +265,19 @@ async def update_image(
     """
     try:
         image = await ImagingService.get_image(db, image_id, current_user.practice_id)
-        
+
         if not image:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Image not found",
             )
-        
+
         # Update image
         update_data = image_data.dict(exclude_unset=True)
         image = await ImagingService.update_image(db, image_id, **update_data)
-        
+
         return image
-        
+
     except HTTPException:
         raise
     except IntegrityError:
@@ -305,15 +302,15 @@ async def delete_image(
     """
     try:
         success = await ImagingService.delete_image(db, image_id)
-        
+
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Image not found",
             )
-        
+
         return {"message": "Image deleted successfully"}
-        
+
     except HTTPException:
         raise
     except IntegrityError:
@@ -339,23 +336,23 @@ async def add_annotations(
     """
     try:
         image = await ImagingService.get_image(db, image_id, current_user.practice_id)
-        
+
         if not image:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Image not found",
             )
-        
+
         # Add annotations
         annotations_list = [ann.dict() for ann in annotation_data.annotations]
         image = await ImagingService.add_annotations(db, image_id, annotations_list)
-        
+
         return ImageAnnotationResponse(
             image_id=image.id,
             annotations=annotation_data.annotations,
             updated_at=image.updated_at,
         )
-        
+
     except HTTPException:
         raise
     except IntegrityError:
@@ -382,18 +379,18 @@ async def share_image(
     """
     try:
         image = await ImagingService.get_image(db, image_id, current_user.practice_id)
-        
+
         if not image:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Image not found",
             )
-        
+
         # Update sharing settings
         share_link, expires_at = await ImageSharingProcessor.update_sharing_settings(
             db, image, share_data.share_with_patient, share_data.share_with_referral
         )
-        
+
         # HIPAA: Log image sharing
         await log_audit_event(
             db, current_user, "share_image", "patient_image", image.id, request,
@@ -403,9 +400,9 @@ async def share_image(
                 "referral_email": share_data.referral_email
             }
         )
-        
+
         message = "Image sharing settings updated"
-        
+
         # Send email to referral if provided
         if share_data.share_with_referral and share_data.referral_email:
             try:
@@ -413,7 +410,7 @@ async def share_image(
                     select(Patient).where(Patient.id == image.patient_id)
                 )
                 patient = result.scalar_one_or_none()
-                
+
                 await email_service.send_email(
                     to=share_data.referral_email,
                     subject=f"Dental Image Referral - {patient.first_name if patient else 'Patient'}",
@@ -437,15 +434,16 @@ async def share_image(
                 )
                 message = "Image shared and notification sent to referral"
             except Exception as e:
-                logger.warning(f"Failed to send referral email: {str(e)}")
-        
+                from app.core.email import log_email_failure
+                log_email_failure(e, "imaging_referral_notification", share_data.referral_email)
+
         return ImageShareResponse(
             image_id=image.id,
             share_link=share_link,
             expires_at=expires_at,
             message=message,
         )
-        
+
     except HTTPException:
         raise
     except IntegrityError:
@@ -474,24 +472,24 @@ async def get_public_image(
     """
     try:
         image = await ImagingService.get_public_image(db, image_id, token)
-        
+
         if not image:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Valid sharing link not found or expired",
             )
-        
+
         # Generate URL
         image.url = ImageFileProcessor.get_file_url(image.file_path)
-        
+
         # HIPAA: Log public access
         await log_audit_event(
             db, None, "public_image_viewed", "patient_image", image.id, request,
             {"source": "public_link", "token_used": token[:8] + "..."}
         )
-        
+
         return image
-        
+
     except HTTPException:
         raise
     except IntegrityError:
@@ -526,21 +524,21 @@ async def list_image_series(
             )
         )
         patient = result.scalar_one_or_none()
-        
+
         if not patient:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Patient not found",
             )
-        
+
         # Get series using service
         series = await ImagingService.get_image_series(db, patient_id, current_user.practice_id)
-        
+
         return ImageSeriesListResponse(
             series=series,
             count=len(series),
         )
-        
+
     except HTTPException:
         raise
     except IntegrityError:
@@ -573,13 +571,13 @@ async def create_image_series(
             )
         )
         patient = result.scalar_one_or_none()
-        
+
         if not patient:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Patient not found",
             )
-        
+
         # Create series
         series = await ImagingService.create_series(
             db=db,
@@ -588,9 +586,9 @@ async def create_image_series(
             provider_id=series_data.provider_id or current_user.id,
             **series_data.dict(exclude={'provider_id'})
         )
-        
+
         return series
-        
+
     except HTTPException:
         raise
     except IntegrityError:
@@ -614,15 +612,15 @@ async def get_image_series(
     """
     try:
         series = await ImagingService.get_series(db, series_id, current_user.practice_id)
-        
+
         if not series:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Image series not found",
             )
-        
+
         return series
-        
+
     except HTTPException:
         raise
     except IntegrityError:
@@ -648,19 +646,19 @@ async def update_image_series(
     """
     try:
         series = await ImagingService.get_series(db, series_id, current_user.practice_id)
-        
+
         if not series:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Image series not found",
             )
-        
+
         # Update series
         update_data = series_data.dict(exclude_unset=True)
         series = await ImagingService.update_series(db, series_id, **update_data)
-        
+
         return series
-        
+
     except HTTPException:
         raise
     except IntegrityError:
@@ -688,12 +686,12 @@ async def list_templates(
     """
     try:
         templates = await ImagingService.get_templates(db, current_user.practice_id, is_active)
-        
+
         return ImageTemplateListResponse(
             templates=templates,
             count=len(templates),
         )
-        
+
     except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing templates: {str(e)}")
         raise HTTPException(
@@ -722,9 +720,9 @@ async def create_template(
             description=template_data.description,
             is_active=template_data.is_active,
         )
-        
+
         return template
-        
+
     except (ValueError, TypeError, SQLAlchemyError) as e:
         logger.error(f"Error creating template: {str(e)}")
         raise HTTPException(
@@ -746,22 +744,22 @@ async def update_template(
     """
     try:
         template = await ImagingService.get_template(db, template_id, current_user.practice_id)
-        
+
         if not template:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Template not found",
             )
-        
+
         # Update template
         update_data = template_data.dict(exclude_unset=True)
         if 'configuration' in update_data and update_data['configuration']:
             update_data['configuration'] = [conf.dict() for conf in update_data['configuration']]
-        
+
         template = await ImagingService.update_template(db, template_id, **update_data)
-        
+
         return template
-        
+
     except HTTPException:
         raise
     except IntegrityError:

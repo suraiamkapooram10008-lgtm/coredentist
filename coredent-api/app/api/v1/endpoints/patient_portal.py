@@ -6,10 +6,7 @@ Uses a separate token-based auth flow (magic link / access code).
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from sqlalchemy.orm import selectinload
-from typing import Any, Optional
-from uuid import UUID
+from sqlalchemy import select
 from datetime import datetime, timezone
 import secrets
 import hashlib
@@ -19,9 +16,8 @@ from app.core.config_simple import settings
 from app.models.patient import Patient
 from app.models.appointment import Appointment
 from app.models.billing import Invoice
-from app.models.treatment import TreatmentPlan, TreatmentProcedure
+from app.models.treatment import TreatmentPlan
 from app.models.insurance import PatientInsurance
-from app.core.audit import log_audit_event
 
 router = APIRouter()
 
@@ -339,13 +335,20 @@ async def make_payment(
             detail=f"Payment amount exceeds balance due of ${balance_due:.2f}",
         )
 
-    # Create Stripe PaymentIntent if configured
+    # Fail closed when the provider is unavailable; never report an unprocessed payment.
+    stripe_key = settings.STRIPE_SECRET_KEY
+    if not stripe_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Online payments are not configured. Please contact the practice.",
+        )
+
     payment_intent_id = None
     client_secret = None
-    if hasattr(settings, 'STRIPE_API_KEY') and settings.STRIPE_API_KEY:
+    if stripe_key:
         try:
             import stripe as stripe_lib
-            stripe_lib.api_key = settings.STRIPE_API_KEY
+            stripe_lib.api_key = stripe_key
 
             intent = stripe_lib.PaymentIntent.create(
                 amount=int(amount * 100),
@@ -371,7 +374,7 @@ async def make_payment(
         "client_secret": client_secret,
         "amount": amount,
         "invoice_id": str(invoice.id),
-        "message": "Complete payment using the client secret with Stripe.js" if client_secret else "Payment recorded. Please contact the office for processing.",
+        "message": "Complete payment using the client secret with Stripe.js",
     }
 
 
@@ -385,14 +388,14 @@ async def get_my_documents(
     """Get documents and forms assigned to the patient"""
     patient = await _get_portal_patient(token, db)
     from app.models.document import Document
-    
+
     result = await db.execute(
         select(Document).where(
             Document.patient_id == patient.id,
         ).order_by(Document.created_at.desc())
     )
     docs = result.scalars().all()
-    
+
     return {
         "documents": [
             {
@@ -419,7 +422,7 @@ async def sign_document(
     """Submit an electronic signature for a form"""
     patient = await _get_portal_patient(token, db)
     from app.models.document import Document
-    
+
     result = await db.execute(
         select(Document).where(
             Document.id == document_id,
@@ -427,14 +430,14 @@ async def sign_document(
         )
     )
     doc = result.scalar_one_or_none()
-    
+
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-        
+
     doc.is_completed = True
     doc.completed_at = datetime.now(timezone.utc)
-    
+
     db.add(doc)
     await db.commit()
-    
+
     return {"status": "success", "message": "Document signed successfully"}

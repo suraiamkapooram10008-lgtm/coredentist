@@ -4,7 +4,7 @@ Pydantic models for clinical records and periodontal charts
 """
 
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from pydantic import BaseModel, Field
 from uuid import UUID
 

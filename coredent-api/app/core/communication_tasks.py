@@ -4,11 +4,10 @@ Handles async message sending for SMS/Email via task queue
 """
 
 from celery import shared_task
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Optional, List, Dict, Any
 
-from app.core.celery_app import celery_app
 from app.core.email import EmailService, EmailProvider
 from app.core.sms import SMSService, SMSProvider
 from app.core.config_simple import settings
@@ -39,82 +38,82 @@ def send_message_task(self, message_id: str) -> Dict[str, Any]:
         Dict with status and details
     """
     db = get_db_session()
-    
+
     try:
         message = db.query(PatientMessage).filter(PatientMessage.id == message_id).first()
-        
+
         if not message:
             logger.error(f"Message not found: {message_id}")
             return {"status": "error", "error": "Message not found"}
-        
+
         if message.status not in [MessageStatus.PENDING, MessageStatus.QUEUED]:
             logger.warning(f"Message {message_id} already processed, status: {message.status}")
             return {"status": "skipped", "reason": f"Message already has status {message.status}"}
-        
+
         practice = db.query(Practice).filter(Practice.id == message.practice_id).first()
         patient = db.query(Patient).filter(Patient.id == message.patient_id).first()
-        
+
         message.status = MessageStatus.SENDING
-        message.sent_at = datetime.utcnow()
+        message.sent_at = datetime.now(timezone.utc)
         db.commit()
-        
+
         success = False
         error_message = None
         external_id = None
-        
+
         if message.message_type == MessageType.SMS:
             sms_service = SMSService(
                 provider=SMSProvider.TWILIO if settings.TWILIO_ACCOUNT_SID else SMSProvider.CONSOLE
             )
-            
+
             result = sms_service.send_sms(
                 to=message.recipient_phone,
                 message=message.content
             )
-            
+
             success = result.get("status") == "sent"
             external_id = result.get("external_id")
             error_message = result.get("error")
-            
+
         elif message.message_type == MessageType.EMAIL:
             email_service = EmailService(
                 provider=EmailProvider.SENDGRID if settings.SENDGRID_API_KEY else EmailProvider.CONSOLE
             )
-            
+
             result = email_service.send_email(
                 to=message.recipient_email,
                 subject=message.subject or f"Message from {practice.name if practice else 'CoreDent'}",
                 html_content=message.content,
                 text_content=message.content
             )
-            
+
             success = result.get("status") == "sent"
             external_id = result.get("message_id")
             error_message = result.get("error")
-        
+
         if success:
             message.status = MessageStatus.SENT
             message.external_id = external_id
-            message.delivered_at = datetime.utcnow()
+            message.delivered_at = datetime.now(timezone.utc)
             logger.info(f"Message {message_id} sent successfully via {message.message_type}")
         else:
             message.status = MessageStatus.FAILED
             message.error_message = error_message
             logger.error(f"Message {message_id} failed: {error_message}")
-            
+
             raise self.retry(exc=Exception(error_message or "Send failed"))
-        
+
         db.commit()
         return {
             "status": "sent",
             "message_id": message_id,
             "external_id": external_id
         }
-        
+
     except Exception as e:
         logger.error(f"Error sending message {message_id}: {e}")
         db.rollback()
-        
+
         try:
             message = db.query(PatientMessage).filter(PatientMessage.id == message_id).first()
             if message:
@@ -123,9 +122,9 @@ def send_message_task(self, message_id: str) -> Dict[str, Any]:
                 db.commit()
         except Exception:
             pass
-        
+
         raise self.retry(exc=e, countdown=120)
-    
+
     finally:
         db.close()
 
@@ -150,7 +149,7 @@ def send_bulk_messages_task(
     failed_count = 0
     skipped_count = 0
     results = []
-    
+
     for message_id in message_ids:
         try:
             result = send_message_task(message_id)
@@ -165,11 +164,11 @@ def send_bulk_messages_task(
             failed_count += 1
             results.append({"message_id": message_id, "error": str(e)})
             logger.error(f"Failed to process message {message_id} in bulk send: {e}")
-    
+
     logger.info(
         f"Bulk send completed: {sent_count} sent, {failed_count} failed, {skipped_count} skipped"
     )
-    
+
     return {
         "status": "completed",
         "total": len(message_ids),
@@ -203,30 +202,30 @@ def send_template_message_task(
         Dict with send status
     """
     db = get_db_session()
-    
+
     try:
         patient = db.query(Patient).filter(Patient.id == patient_id).first()
         template = db.query(MessageTemplate).filter(MessageTemplate.id == template_id).first()
         practice = db.query(Practice).filter(Practice.id == practice_id).first()
-        
+
         if not all([patient, template, practice]):
             missing = []
             if not patient: missing.append("patient")
             if not template: missing.append("template")
             if not practice: missing.append("practice")
             return {"status": "error", "error": f"Missing: {', '.join(missing)}"}
-        
+
         context = context_variables or {}
         context.setdefault("patient_name", patient.first_name)
         context.setdefault("practice_name", practice.name)
-        
+
         content = template.content
         for key, value in context.items():
             content = content.replace(f"[{key}]", str(value))
-        
+
         recipient_phone = patient.phone if channel == "sms" else None
         recipient_email = patient.email if channel == "email" else None
-        
+
         message = PatientMessage(
             practice_id=practice_id,
             patient_id=patient_id,
@@ -239,28 +238,28 @@ def send_template_message_task(
             recipient_phone=recipient_phone,
             recipient_email=recipient_email
         )
-        
+
         db.add(message)
         db.commit()
         db.refresh(message)
-        
+
         send_message_task.delay(str(message.id))
-        
+
         template.times_used += 1
         db.commit()
-        
+
         return {
             "status": "queued",
             "message_id": str(message.id),
             "template_id": template_id,
             "patient_id": patient_id
         }
-        
+
     except Exception as e:
         logger.error(f"Error in send_template_message_task: {e}")
         db.rollback()
         raise self.retry(exc=e)
-    
+
     finally:
         db.close()
 
@@ -277,16 +276,16 @@ def process_scheduled_messages_task(self) -> Dict[str, Any]:
         Dict with processing results
     """
     db = get_db_session()
-    
+
     try:
-        now = datetime.utcnow()
-        
+        now = datetime.now(timezone.utc)
+
         messages_to_send = db.query(PatientMessage).filter(
             PatientMessage.status == MessageStatus.PENDING,
             PatientMessage.scheduled_at <= now,
             PatientMessage.scheduled_at.isnot(None)
         ).limit(100).all()
-        
+
         queued_count = 0
         for message in messages_to_send:
             try:
@@ -294,18 +293,18 @@ def process_scheduled_messages_task(self) -> Dict[str, Any]:
                 queued_count += 1
             except Exception as e:
                 logger.error(f"Failed to queue message {message.id}: {e}")
-        
+
         logger.info(f"Scheduled messages processed: {queued_count} queued")
         return {
             "status": "completed",
             "processed": len(messages_to_send),
             "queued": queued_count
         }
-        
+
     except Exception as e:
         logger.error(f"Error in process_scheduled_messages_task: {e}")
         raise self.retry(exc=e)
-    
+
     finally:
         db.close()
 
@@ -322,15 +321,15 @@ def retry_failed_messages_task(self, older_than_hours: int = 24) -> Dict[str, An
         Dict with retry results
     """
     db = get_db_session()
-    
+
     try:
-        cutoff_time = datetime.utcnow() - timedelta(hours=older_than_hours)
-        
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+
         failed_messages = db.query(PatientMessage).filter(
             PatientMessage.status == MessageStatus.FAILED,
             PatientMessage.updated_at < cutoff_time
         ).limit(50).all()
-        
+
         retried_count = 0
         for message in failed_messages:
             try:
@@ -342,18 +341,18 @@ def retry_failed_messages_task(self, older_than_hours: int = 24) -> Dict[str, An
             except Exception as e:
                 logger.error(f"Failed to retry message {message.id}: {e}")
                 db.rollback()
-        
+
         logger.info(f"Failed message retry: {retried_count} messages requeued")
         return {
             "status": "completed",
             "retried": retried_count,
             "total_failed": len(failed_messages)
         }
-        
+
     except Exception as e:
         logger.error(f"Error in retry_failed_messages_task: {e}")
         raise self.retry(exc=e)
-    
+
     finally:
         db.close()
 
@@ -370,28 +369,28 @@ def cleanup_old_messages_task(self, days_old: int = 90) -> Dict[str, Any]:
         Dict with cleanup results
     """
     db = get_db_session()
-    
+
     try:
-        cutoff_date = datetime.utcnow() - timedelta(days=days_old)
-        
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_old)
+
         deleted_count = db.query(PatientMessage).filter(
             PatientMessage.status.in_([MessageStatus.SENT, MessageStatus.DELIVERED, MessageStatus.FAILED]),
             PatientMessage.created_at < cutoff_date
         ).delete()
-        
+
         db.commit()
-        
+
         logger.info(f"Cleaned up {deleted_count} old messages")
         return {
             "status": "completed",
             "deleted": deleted_count,
             "cutoff_date": cutoff_date.isoformat()
         }
-        
+
     except Exception as e:
         logger.error(f"Error in cleanup_old_messages_task: {e}")
         db.rollback()
         return {"status": "error", "error": str(e)}
-    
+
     finally:
         db.close()

@@ -6,7 +6,7 @@ Handles file uploads, downloads, and management
 import boto3
 from botocore.exceptions import ClientError
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 import uuid
 import os
 import logging
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 class S3StorageService:
     """AWS S3 storage service for file management"""
-    
+
     def __init__(self):
         """Initialize S3 client"""
         self.s3_client = boto3.client(
@@ -28,7 +28,7 @@ class S3StorageService:
         )
         self.bucket_name = settings.AWS_S3_BUCKET_NAME
         self.cloudfront_domain = settings.AWS_CLOUDFRONT_DOMAIN
-    
+
     def upload_file(
         self,
         file_content: bytes,
@@ -58,18 +58,18 @@ class S3StorageService:
             # SECURITY FIX: Validate file before upload
             if not skip_validation:
                 from app.core.file_security import validate_file_upload, FileSecurityError
-                
+
                 try:
                     validation_result = validate_file_upload(
                         file_content=file_content,
                         filename=filename
                     )
-                    
+
                     # Use secure filename
                     unique_filename = validation_result['secure_filename']
                     content_type = validation_result['mime_type']  # Use detected MIME type
                     file_hash = validation_result['hash']
-                    
+
                     logger.info(
                         f"File validation passed: {filename} -> {unique_filename}",
                         extra={
@@ -79,7 +79,7 @@ class S3StorageService:
                             "hash": file_hash[:16] + "..."
                         }
                     )
-                    
+
                 except FileSecurityError as e:
                     logger.error(f"File validation failed: {e}")
                     return {
@@ -91,7 +91,7 @@ class S3StorageService:
                 file_extension = os.path.splitext(filename)[1]
                 unique_filename = f"{uuid.uuid4().hex}{file_extension}"
                 file_hash = None
-            
+
             # Build S3 key path
             s3_key = f"{folder}"
             if patient_id:
@@ -99,15 +99,15 @@ class S3StorageService:
             if user_id:
                 s3_key += f"/user-{user_id}"
             s3_key += f"/{unique_filename}"
-            
+
             # Prepare metadata
             metadata = {
                 'original_filename': filename,
-                'uploaded_at': datetime.utcnow().isoformat()
+                'uploaded_at': datetime.now(timezone.utc).isoformat()
             }
             if file_hash:
                 metadata['sha256_hash'] = file_hash
-            
+
             # Upload to S3 with security headers
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
@@ -122,14 +122,14 @@ class S3StorageService:
                 # SECURITY: Server-side encryption
                 ServerSideEncryption='AES256'
             )
-            
+
             # Generate file URL
             file_url = f"https://{self.bucket_name}.s3.{settings.AWS_REGION}.amazonaws.com/{s3_key}"
             if self.cloudfront_domain:
                 file_url = f"https://{self.cloudfront_domain}/{s3_key}"
-            
+
             logger.info(f"File uploaded successfully: {s3_key}")
-            
+
             return {
                 "success": True,
                 "file_url": file_url,
@@ -140,7 +140,7 @@ class S3StorageService:
                 "size": len(file_content),
                 "hash": file_hash
             }
-            
+
         except ClientError as e:
             logger.error(f"S3 upload error: {e}")
             return {
@@ -153,7 +153,7 @@ class S3StorageService:
                 "success": False,
                 "error": str(e)
             }
-    
+
     def download_file(self, s3_key: str) -> Optional[bytes]:
         """
         Download a file from S3
@@ -170,14 +170,14 @@ class S3StorageService:
                 Key=s3_key
             )
             return response['Body'].read()
-            
+
         except ClientError as e:
             logger.error(f"S3 download error: {e}")
             return None
         except Exception as e:
             logger.error(f"Unexpected error during download: {e}")
             return None
-    
+
     def generate_presigned_url(
         self,
         s3_key: str,
@@ -203,14 +203,14 @@ class S3StorageService:
                 ExpiresIn=expiration
             )
             return url
-            
+
         except ClientError as e:
             logger.error(f"Error generating presigned URL: {e}")
             return None
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
             return None
-    
+
     def delete_file(self, s3_key: str) -> bool:
         """
         Delete a file from S3
@@ -228,14 +228,14 @@ class S3StorageService:
             )
             logger.info(f"File deleted: {s3_key}")
             return True
-            
+
         except ClientError as e:
             logger.error(f"S3 delete error: {e}")
             return False
         except Exception as e:
             logger.error(f"Unexpected error during delete: {e}")
             return False
-    
+
     def list_files(
         self,
         prefix: str = "",
@@ -257,7 +257,7 @@ class S3StorageService:
                 Prefix=prefix,
                 MaxKeys=max_keys
             )
-            
+
             files = []
             if 'Contents' in response:
                 for obj in response['Contents']:
@@ -267,16 +267,16 @@ class S3StorageService:
                         'last_modified': obj['LastModified'].isoformat(),
                         'etag': obj['ETag']
                     })
-            
+
             return files
-            
+
         except ClientError as e:
             logger.error(f"S3 list error: {e}")
             return []
         except Exception as e:
             logger.error(f"Unexpected error during list: {e}")
             return []
-    
+
     def get_file_metadata(self, s3_key: str) -> Optional[Dict[str, Any]]:
         """
         Get metadata for a specific file
@@ -292,7 +292,7 @@ class S3StorageService:
                 Bucket=self.bucket_name,
                 Key=s3_key
             )
-            
+
             return {
                 'content_type': response.get('ContentType'),
                 'content_length': response.get('ContentLength'),
@@ -300,7 +300,7 @@ class S3StorageService:
                 'etag': response.get('ETag'),
                 'metadata': response.get('Metadata', {})
             }
-            
+
         except ClientError as e:
             logger.error(f"S3 metadata error: {e}")
             return None

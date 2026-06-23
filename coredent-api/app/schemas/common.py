@@ -3,7 +3,7 @@ Common Response Schemas
 Standardized API response structures
 """
 
-from typing import Any, Generic, TypeVar, Optional, List
+from typing import Generic, TypeVar, Optional, List
 from pydantic import BaseModel
 
 T = TypeVar("T")

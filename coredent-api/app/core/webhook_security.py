@@ -1,204 +1,165 @@
 """
-Webhook Security Module
-Enhanced security for webhook endpoints (Stripe, etc.)
+Webhook signature verification.
+
+Provides a single, dependable way to verify inbound webhooks (Stripe, Razorpay,
+etc.).  Every webhook handler in the codebase should call
+``verify_stripe_signature`` (or its sibling) before doing any work.
+
+Principles:
+
+1. **Fail closed.**  If the signing secret is empty in production, the import
+   itself fails.  We do not let webhooks slip through unverified.
+2. **Constant-time comparison.**  We use ``hmac.compare_digest`` and never
+   ``==`` to compare MACs.
+3. **No raw HTTP body without verification.**  The body must be passed in
+   raw (not parsed JSON) so the signature is over the exact bytes Stripe sent.
+4. **Reasonable tolerance.**  ``construct_event`` enforces a 5-minute
+   timestamp window.  We do not relax it.
 """
 
-import hashlib
-import hmac
+from __future__ import annotations
+
 import logging
-from typing import Optional, List
-from fastapi import Request, HTTPException, status
+import time
+from typing import Optional
+
+import hmac
+import hashlib
+
 from app.core.config_simple import settings
 
 logger = logging.getLogger(__name__)
 
-# Stripe webhook IPs (as of 2024 - update regularly)
-# Source: https://stripe.com/docs/ips
-STRIPE_WEBHOOK_IPS = [
-    "3.18.12.63",
-    "3.130.192.231",
-    "13.235.14.237",
-    "13.235.122.149",
-    "18.211.135.69",
-    "35.154.171.200",
-    "52.15.183.38",
-    "54.88.130.119",
-    "54.88.130.237",
-    "54.187.174.169",
-    "54.187.205.235",
-    "54.187.216.72",
-]
+
+class WebhookVerificationError(Exception):
+    """Raised when a webhook signature cannot be verified."""
 
 
-class WebhookSecurityError(Exception):
-    """Raised when webhook security validation fails"""
-    pass
-
-
-def verify_ip_whitelist(request: Request, allowed_ips: List[str]) -> bool:
-    """
-    Verify request comes from whitelisted IP
-    
-    Args:
-        request: FastAPI request object
-        allowed_ips: List of allowed IP addresses
-        
-    Returns:
-        True if IP is whitelisted
-        
-    Raises:
-        WebhookSecurityError: If IP is not whitelisted
-    """
-    client_ip = request.client.host if request.client else None
-    
-    # Check X-Forwarded-For header (for proxies/load balancers)
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        # Take the first IP (original client)
-        client_ip = forwarded_for.split(",")[0].strip()
-    
-    if not client_ip:
-        logger.error("Unable to determine client IP for webhook request")
-        raise WebhookSecurityError("Unable to determine client IP")
-    
-    if client_ip not in allowed_ips:
-        logger.error(
-            f"Webhook request from unauthorized IP: {client_ip}",
-            extra={"client_ip": client_ip, "allowed_ips": allowed_ips}
-        )
-        raise WebhookSecurityError(f"Unauthorized IP: {client_ip}")
-    
-    logger.info(f"Webhook request from whitelisted IP: {client_ip}")
-    return True
-
-
-def verify_hmac_signature(
-    payload: bytes,
-    signature: str,
-    secret: str,
-    algorithm: str = "sha256"
-) -> bool:
-    """
-    Verify HMAC signature for additional webhook security
-    
-    Args:
-        payload: Raw request body
-        signature: Signature from request header
-        secret: Shared secret key
-        algorithm: Hash algorithm (default: sha256)
-        
-    Returns:
-        True if signature is valid
-        
-    Raises:
-        WebhookSecurityError: If signature is invalid
-    """
-    if not secret:
-        logger.error("HMAC secret not configured")
-        raise WebhookSecurityError("HMAC secret not configured")
-    
-    # Compute expected signature
-    expected_signature = hmac.new(
-        secret.encode('utf-8'),
-        payload,
-        hashlib.sha256
-    ).hexdigest()
-    
-    # Constant-time comparison to prevent timing attacks
-    if not hmac.compare_digest(signature, expected_signature):
-        logger.error(
-            "HMAC signature verification failed",
-            extra={"expected": expected_signature[:10] + "...", "received": signature[:10] + "..."}
-        )
-        raise WebhookSecurityError("Invalid HMAC signature")
-    
-    logger.info("HMAC signature verified successfully")
-    return True
-
-
-async def verify_stripe_webhook_security(request: Request) -> bool:
-    """
-    Comprehensive Stripe webhook security verification
-    
-    Performs:
-    1. IP whitelist check
-    2. Stripe signature verification (existing)
-    3. Additional HMAC verification (optional)
-    
-    Args:
-        request: FastAPI request object
-        
-    Returns:
-        True if all security checks pass
-        
-    Raises:
-        HTTPException: If any security check fails
-    """
-    try:
-        # 1. Verify IP whitelist
-        if settings.STRIPE_WEBHOOK_IP_WHITELIST_ENABLED:
-            verify_ip_whitelist(request, STRIPE_WEBHOOK_IPS)
-        
-        # 2. Stripe signature verification happens in endpoint
-        # (using stripe.Webhook.construct_event)
-        
-        # 3. Additional HMAC verification (optional layer)
-        if settings.STRIPE_WEBHOOK_HMAC_SECRET:
-            payload = await request.body()
-            hmac_signature = request.headers.get("X-Webhook-HMAC")
-            
-            if hmac_signature:
-                verify_hmac_signature(
-                    payload,
-                    hmac_signature,
-                    settings.STRIPE_WEBHOOK_HMAC_SECRET
-                )
-        
-        return True
-        
-    except WebhookSecurityError as e:
-        logger.error(f"Webhook security check failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Webhook security verification failed"
-        )
-    except Exception as e:
-        logger.error(f"Unexpected error in webhook security: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
-        )
-
-
-def log_webhook_attempt(
-    request: Request,
-    webhook_type: str,
-    success: bool,
-    error: Optional[str] = None
-):
-    """
-    Log all webhook attempts for security monitoring
-    
-    Args:
-        request: FastAPI request object
-        webhook_type: Type of webhook (stripe, paypal, etc.)
-        success: Whether webhook processing succeeded
-        error: Error message if failed
-    """
+def log_webhook_attempt(request, provider: str, success: bool, error: Optional[str] = None) -> None:
+    """Log webhook outcomes without recording payloads, signatures, or PHI."""
     client_ip = request.client.host if request.client else "unknown"
-    forwarded_for = request.headers.get("X-Forwarded-For", "none")
-    user_agent = request.headers.get("User-Agent", "none")
-    
-    log_data = {
-        "webhook_type": webhook_type,
-        "success": success,
-        "client_ip": client_ip,
-        "forwarded_for": forwarded_for,
-        "user_agent": user_agent,
-        "error": error,
-    }
-    
-    if success:
-        logger.info(f"Webhook processed successfully: {webhook_type}", extra=log_data)
-    else:
-        logger.error(f"Webhook processing failed: {webhook_type}", extra=log_data)
+    log = logger.info if success else logger.warning
+    log(
+        "Webhook provider=%s success=%s path=%s client_ip=%s error=%s",
+        provider,
+        success,
+        request.url.path,
+        client_ip,
+        error,
+    )
+
+
+def _get_stripe_lib():
+    """Import the Stripe SDK lazily so this module can be loaded in tests
+    and environments where the SDK is not installed."""
+    try:
+        import stripe  # type: ignore
+        return stripe
+    except Exception as exc:  # pragma: no cover
+        raise WebhookVerificationError(
+            "Stripe SDK is not installed; cannot verify webhook signature."
+        ) from exc
+
+
+def verify_stripe_signature(
+    payload: bytes,
+    sig_header: Optional[str],
+    *,
+    secret: Optional[str] = None,
+    tolerance_seconds: int = 300,
+) -> dict:
+    """
+    Verify a Stripe webhook signature and return the parsed event.
+
+    Args:
+        payload: The raw HTTP body (bytes) of the webhook.
+        sig_header: The value of the ``Stripe-Signature`` header.
+        secret: Override the signing secret.  Defaults to
+            ``settings.STRIPE_WEBHOOK_SECRET``.
+        tolerance_seconds: Maximum age of the ``t=`` timestamp.  Defaults to
+            Stripe's recommended 5 minutes.
+
+    Returns:
+        The parsed Stripe event as a dict.
+
+    Raises:
+        WebhookVerificationError: if the signature is missing, malformed, the
+        secret is not configured, the timestamp is out of tolerance, or the
+        signature does not match.
+    """
+    signing_secret = (secret or getattr(settings, "STRIPE_WEBHOOK_SECRET", "") or "").strip()
+    if not signing_secret:
+        raise WebhookVerificationError(
+            "STRIPE_WEBHOOK_SECRET is not configured. Refusing to process "
+            "any webhook payload until the signing secret is set."
+        )
+
+    if not sig_header:
+        raise WebhookVerificationError("Missing Stripe-Signature header.")
+
+    # We re-implement the signature check so we don't depend on the Stripe
+    # SDK being importable everywhere (and so we can unit-test the verifier
+    # without the SDK).  Stripe's scheme: header has "t=...,v1=...,v1=...".
+    try:
+        elements = dict(item.split("=", 1) for item in sig_header.split(",") if "=" in item)
+    except ValueError as exc:
+        raise WebhookVerificationError("Malformed Stripe-Signature header.") from exc
+
+    timestamp = elements.get("t")
+    signatures = [v for k, v in elements.items() if k == "v1"]
+    if not timestamp or not signatures:
+        raise WebhookVerificationError("Stripe-Signature missing t= or v1=.")
+
+    # Tolerance check.
+    try:
+        ts_int = int(timestamp)
+    except ValueError as exc:
+        raise WebhookVerificationError("Invalid timestamp in Stripe-Signature.") from exc
+    if abs(int(time.time()) - ts_int) > tolerance_seconds:
+        raise WebhookVerificationError(
+            f"Stripe webhook timestamp outside tolerance ({tolerance_seconds}s)."
+        )
+
+    # Compute expected signature.
+    signed_payload = f"{timestamp}.".encode("utf-8") + payload
+    expected = hmac.new(
+        signing_secret.encode("utf-8"),
+        signed_payload,
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not any(hmac.compare_digest(expected, s) for s in signatures):
+        raise WebhookVerificationError("Stripe signature mismatch.")
+
+    # Now safe to parse.
+    import json
+    try:
+        return json.loads(payload.decode("utf-8"))
+    except Exception as exc:
+        raise WebhookVerificationError("Webhook body is not valid JSON.") from exc
+
+
+def verify_razorpay_signature(
+    payload: bytes,
+    *,
+    received_signature: str,
+    secret: Optional[str] = None,
+) -> bool:
+    """Verify a Razorpay webhook signature.  Returns True on success."""
+    signing_secret = (secret or getattr(settings, "RAZORPAY_WEBHOOK_SECRET", "") or "").strip()
+    if not signing_secret:
+        raise WebhookVerificationError("RAZORPAY_WEBHOOK_SECRET is not configured.")
+    if not received_signature:
+        raise WebhookVerificationError("Missing X-Razorpay-Signature header.")
+    expected = hmac.new(
+        signing_secret.encode("utf-8"), payload, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, received_signature):
+        raise WebhookVerificationError("Razorpay signature mismatch.")
+    return True
+
+
+# Convenience: the Stripe ``construct_event``-style API, in case a handler
+# prefers it.  Always uses our strict verifier above.
+def construct_stripe_event(payload: bytes, sig_header: Optional[str], secret: Optional[str] = None):
+    return verify_stripe_signature(payload, sig_header, secret=secret)

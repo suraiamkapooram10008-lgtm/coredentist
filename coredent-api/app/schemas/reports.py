@@ -1,6 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Dict, Any
-from datetime import date, datetime
+from typing import List
 
 class AppointmentTypeCount(BaseModel):
     type: str

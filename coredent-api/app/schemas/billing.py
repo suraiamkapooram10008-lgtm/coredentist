@@ -4,7 +4,7 @@ Pydantic models for billing data validation
 """
 
 from datetime import datetime, date
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from pydantic import BaseModel, Field, validator
 from uuid import UUID
 from decimal import Decimal
@@ -20,7 +20,7 @@ class LineItemBase(BaseModel):
     quantity: int = Field(..., gt=0)
     unit_price: Decimal = Field(..., ge=0)
     total: Decimal = Field(..., ge=0)
-    
+
     @validator('total')
     def validate_total(cls, v, values):
         if 'quantity' in values and 'unit_price' in values:
@@ -73,7 +73,7 @@ class InvoiceResponse(InvoiceBase):
     updated_at: datetime
     amount_paid: Decimal
     balance_due: Decimal
-    
+
     class Config:
         from_attributes = True
 
@@ -106,7 +106,7 @@ class PaymentResponse(PaymentBase):
     """Schema for payment responses"""
     id: UUID
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 

@@ -8,7 +8,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 from app.core.config_simple import settings
-from app.core.base import Base
 
 engine_url = settings.DATABASE_URL or ""
 # CRIT-01 FIX: Railway uses postgres://, SQLAlchemy async requires postgresql+asyncpg://

@@ -5,9 +5,8 @@ Pydantic models for online booking API
 
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, time
-from pydantic import BaseModel, Field, EmailStr, validator
+from pydantic import BaseModel, Field, EmailStr
 import uuid as uuid_lib
-from enum import Enum
 
 from app.models.booking import (
     BookingPageStatus,
@@ -112,7 +111,7 @@ class BookingPageResponse(BookingPageBase):
     conversion_rate: int
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -205,7 +204,7 @@ class OnlineBookingResponse(OnlineBookingBase):
     cancelled_by: Optional[str]
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -219,7 +218,7 @@ class OnlineBookingPublicResponse(BaseModel):
     requested_date: date
     requested_time: time
     message: str = "Booking request submitted successfully"
-    
+
     class Config:
         from_attributes = True
 
@@ -270,7 +269,7 @@ class WaitlistEntryResponse(WaitlistEntryBase):
     booking_id: Optional[uuid_lib.UUID]
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 

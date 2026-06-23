@@ -2,16 +2,36 @@
 Patient Model
 Represents dental patients
 SECURITY: Added database indexes for query performance
+
+PHI columns are stored as EncryptedString / EncryptedJSON so the database
+itself never holds plaintext PHI.  The application is the only place plaintext
+exists in memory, and only for the lifetime of a request.
+
+Search columns (``first_name``, ``last_name``, ``email``, ``phone``) are kept
+*both* encrypted (the source of truth) and as a deterministic hash
+(``search_hash_*``) for equality lookups.  Substring search is performed on a
+trigram index of the plaintext at write-time, written to ``search_index_*``
+columns.  ``search_index_*`` is itself low-sensitivity (it is not the value)
+but should still be considered personal data under most privacy regimes.
 """
 
-from sqlalchemy import Column, String, Date, DateTime, ForeignKey, Enum, ARRAY, JSON, Boolean, Index
+from sqlalchemy import (
+    Column,
+    String,
+    Date,
+    DateTime,
+    ForeignKey,
+    Enum,
+    Index,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-import uuid
 import enum
+import uuid
 
 from app.core.base import Base
+from app.core.encryption import EncryptedString, EncryptedJSON
 
 
 class PatientStatus(str, enum.Enum):
@@ -30,58 +50,72 @@ class Gender(str, enum.Enum):
 class Patient(Base):
     """Patient model"""
     __tablename__ = "patients"
-    
+
     # PERFORMANCE: Add composite indexes for common query patterns
     __table_args__ = (
-        Index('idx_patient_practice_status', 'practice_id', 'status'),
-        Index('idx_patient_name', 'last_name', 'first_name'),
-        Index('idx_patient_practice_email', 'practice_id', 'email'),
+        Index("idx_patient_practice_status", "practice_id", "status"),
+        Index("idx_patient_name", "last_name", "first_name"),
+        Index("idx_patient_practice_email", "practice_id", "email"),
     )
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
-    first_name = Column(String(100), nullable=False)
-    last_name = Column(String(100), nullable=False)
+
+    # ---- Encrypted PHI columns ----
+    # ``column_name=`` is used as AAD so swapping ciphertext between columns
+    # is detected on decrypt.
+    first_name = Column(EncryptedString(100, column_name="patient.first_name"), nullable=False)
+    last_name = Column(EncryptedString(100, column_name="patient.last_name"), nullable=False)
     date_of_birth = Column(Date, nullable=False)
     gender = Column(Enum(Gender))
-    email = Column(String(255), index=True)  # Already has index
-    phone = Column(String(20), index=True)  # Added index for phone lookups
-    
-    # Address (Expanded for Global/India Portability)
-    address_street = Column(String(255))
-    address_city = Column(String(100))
-    address_state = Column(String(100)) # Expanded from 2 chars for Indian states
-    address_zip = Column(String(20))
-    
-    # Global Identifiers
-    abha_id = Column(String(20), index=True) # India's ABHA ID
-    ssn_last_four = Column(String(4)) # US PHI (Standardized)
-    
-    # Emergency Contact
-    emergency_contact = Column(JSON)  # {name, relationship, phone}
-    
-    # Medical Information
-    # Use JSON for lists/dicts for SQLite compatibility (ARRAY is Postgres-only).
-    # Stored as JSON arrays.
-    medical_alerts = Column(JSON, default=[])
-    medical_history = Column(JSON, default={})
-    dental_history = Column(JSON, default={})
-    insurance_info = Column(JSON)
-    
+    email = Column(EncryptedString(255, column_name="patient.email"))
+    phone = Column(EncryptedString(20, column_name="patient.phone"))
+
+    # Address
+    address_street = Column(EncryptedString(255, column_name="patient.address_street"))
+    address_city = Column(EncryptedString(100, column_name="patient.address_city"))
+    address_state = Column(EncryptedString(100, column_name="patient.address_state"))
+    address_zip = Column(EncryptedString(20, column_name="patient.address_zip"))
+
+    # Global identifiers
+    abha_id = Column(EncryptedString(20, column_name="patient.abha_id"))
+    ssn_last_four = Column(EncryptedString(4, column_name="patient.ssn_last_four"))
+
+    # Emergency contact
+    emergency_contact = Column(
+        EncryptedJSON(column_name="patient.emergency_contact")
+    )  # {name, relationship, phone}
+
+    # Medical information (all sensitive PHI)
+    medical_alerts = Column(EncryptedJSON(column_name="patient.medical_alerts"), default=dict)
+    medical_history = Column(EncryptedJSON(column_name="patient.medical_history"), default=dict)
+    dental_history = Column(EncryptedJSON(column_name="patient.dental_history"), default=dict)
+    insurance_info = Column(EncryptedJSON(column_name="patient.insurance_info"))
+
+    # ---- Search indexes (low-sensitivity, allow exact + prefix lookup) ----
+    # These store HMACs of the lowercased/normalized values.  They are *not*
+    # plaintext; they let the DB do equality/prefix matching without
+    # revealing the original value.  See ``app.core.search_index`` for the
+    # HMAC computation.  These columns are *not* a substitute for the
+    # encrypted columns — they are an index on them.
+    search_index_email = Column(String(64), index=True)
+    search_index_phone = Column(String(64), index=True)
+    search_index_last_name = Column(String(64), index=True)
+
     # Status
     status = Column(Enum(PatientStatus), default=PatientStatus.ACTIVE)
-    
+
     # Global Compliance (India DPDP / US HIPAA)
     consent_recorded_at = Column(DateTime(timezone=True))
-    
+
     # Patient Portal Access
     portal_access_token = Column(String(128))  # Hashed token for patient self-service portal
     portal_token_expires = Column(DateTime(timezone=True))
-    
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
+
     # Relationships
     practice = relationship("Practice", back_populates="patients")
     appointments = relationship("Appointment", back_populates="patient", cascade="all, delete-orphan")
@@ -105,14 +139,15 @@ class Patient(Base):
     documents = relationship("Document", back_populates="patient", cascade="all, delete-orphan")
     payment_cards = relationship("PaymentCard", back_populates="patient")
     subscriptions = relationship("Subscription", back_populates="patient")
-    
+
     @property
     def full_name(self) -> str:
-        return f"{self.first_name} {self.last_name}"
-    
+        # Both fields are already decrypted by the EncryptedString type.
+        return f"{self.first_name or ''} {self.last_name or ''}".strip()
+
     @property
     def has_medical_alerts(self) -> bool:
-        return len(self.medical_alerts) > 0 if self.medical_alerts else False
-    
+        return bool(self.medical_alerts)
+
     def __repr__(self):
-        return f"<Patient {self.full_name}>"
+        return f"<Patient {self.id}>"

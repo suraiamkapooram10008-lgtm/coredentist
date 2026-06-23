@@ -11,9 +11,9 @@ from datetime import datetime, timedelta
 
 from pydantic import BaseModel
 from app.core.database import get_db
-from app.api.deps import get_current_user, require_role
+from app.api.deps import require_role
 from app.models.user import User, UserRole
-from app.models.practice import PracticeGroup, Practice
+from app.models.practice import Practice
 from app.models.billing import Invoice
 from app.models.patient import Patient
 from app.models.appointment import Appointment
@@ -61,31 +61,31 @@ async def get_group_analytics(
         select(Practice).where(Practice.id == current_user.practice_id)
     )
     user_practice = result.scalar_one_or_none()
-    
+
     if not user_practice or not user_practice.group_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User is not associated with an enterprise practice group"
         )
-    
+
     group_id = user_practice.group_id
-    
+
     # Defaults
     if not start_date:
         start_date = datetime.now() - timedelta(days=30)
     if not end_date:
         end_date = datetime.now()
-        
+
     # 2. Get all practices in group
     result = await db.execute(
         select(Practice).where(Practice.group_id == group_id)
     )
     practices = result.scalars().all()
     practice_ids = [p.id for p in practices]
-    
+
     # 3. Aggregated Metrics
     analytics = []
-    
+
     for practice in practices:
         # Production (Total Invoiced)
         prod_result = await db.execute(
@@ -98,7 +98,7 @@ async def get_group_analytics(
             )
         )
         total_production = prod_result.scalar() or 0
-        
+
         # Collections (Total Paid)
         coll_result = await db.execute(
             select(func.sum(Invoice.amount_paid)).where(
@@ -110,7 +110,7 @@ async def get_group_analytics(
             )
         )
         total_collections = coll_result.scalar() or 0
-        
+
         # New Patients
         pat_result = await db.execute(
             select(func.count(Patient.id)).where(
@@ -122,7 +122,7 @@ async def get_group_analytics(
             )
         )
         new_patients = pat_result.scalar() or 0
-        
+
         # Appointment Utilization
         # Simplified: Ratio of completed vs scheduled
         app_result = await db.execute(
@@ -139,7 +139,7 @@ async def get_group_analytics(
         )
         total_apps, completed_apps = app_result.one()
         util_rate = (completed_apps / total_apps * 100) if total_apps > 0 else 0
-        
+
         analytics.append({
             "practice_id": str(practice.id),
             "practice_name": practice.name,
@@ -148,7 +148,7 @@ async def get_group_analytics(
             "new_patients": new_patients,
             "utilization": round(util_rate, 2)
         })
-        
+
     return {
         "group_id": str(group_id),
         "period": {
@@ -176,10 +176,10 @@ async def list_group_practices(
         select(Practice).where(Practice.id == current_user.practice_id)
     )
     user_practice = result.scalar_one_or_none()
-    
+
     if not user_practice or not user_practice.group_id:
         raise HTTPException(status_code=403, detail="Enterprise access required")
-        
+
     result = await db.execute(
         select(Practice).where(Practice.group_id == user_practice.group_id)
     )

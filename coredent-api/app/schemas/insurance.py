@@ -4,8 +4,8 @@ Pydantic models for insurance data validation
 """
 
 from datetime import datetime, date
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, validator
+from typing import Optional, List
+from pydantic import BaseModel, Field
 from uuid import UUID
 from decimal import Decimal
 
@@ -64,7 +64,7 @@ class InsuranceCarrierResponse(InsuranceCarrierBase):
     id: UUID
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -136,7 +136,7 @@ class PatientInsuranceResponse(PatientInsuranceBase):
     patient_id: UUID
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -203,10 +203,13 @@ class InsuranceClaimResponse(InsuranceClaimBase):
     paid_amount: Decimal
     patient_responsibility: Decimal
     denial_reason: Optional[str]
+    edi_transaction_id: Optional[str] = None
+    edi_batch_id: Optional[str] = None
+    confirmation_number: Optional[str] = None
     outstanding_balance: Decimal
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -253,7 +256,7 @@ class PreAuthorizationResponse(PreAuthorizationBase):
     approved_amount: Optional[Decimal]
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 

@@ -3,7 +3,7 @@ Booking Availability Service
 Manages time slot availability for bookings
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select

@@ -5,10 +5,10 @@ CRUD operations for inventory management
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
+from sqlalchemy import select
 from datetime import datetime, timezone
-from typing import List, Optional, Any
-import json
+from typing import Optional
+from uuid import UUID
 
 from app.core.database import get_db
 from app.api.deps import get_current_user, require_role
@@ -19,15 +19,41 @@ from app.models.inventory import (
     InventoryTransaction,
     InventoryAlert,
     Supplier,
-    PurchaseOrder,
-    PurchaseOrderItem,
     InventoryCategory,
-    InventoryUnit,
     InventoryAlertType,
 )
 from app.api.deps import verify_csrf
 
 router = APIRouter()
+
+
+def _item_to_dict(item: InventoryItem) -> dict:
+    """Serialize an InventoryItem to a dict for JSON response."""
+    return {
+        "id": str(item.id),
+        "name": item.name,
+        "description": item.description,
+        "sku": item.sku,
+        "barcode": item.barcode,
+        "category": item.category.value if item.category else None,
+        "unit": item.unit.value if item.unit else None,
+        "units_per_package": item.units_per_package,
+        "current_quantity": item.current_quantity,
+        "minimum_quantity": item.minimum_quantity,
+        "reorder_quantity": item.reorder_quantity,
+        "maximum_quantity": item.maximum_quantity,
+        "unit_cost": str(item.unit_cost) if item.unit_cost is not None else None,
+        "unit_price": str(item.unit_price) if item.unit_price is not None else None,
+        "storage_location": item.storage_location,
+        "track_expiration": item.track_expiration,
+        "expiration_warning_days": item.expiration_warning_days,
+        "supplier_name": item.supplier_name,
+        "supplier_item_code": item.supplier_item_code,
+        "is_active": item.is_active,
+        "is_trackable": item.is_trackable,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
 
 
 # Inventory Item Endpoints
@@ -45,10 +71,10 @@ async def list_inventory_items(
     List inventory items for the practice
     """
     query = select(InventoryItem).where(InventoryItem.practice_id == current_user.practice_id)
-    
+
     if category:
         query = query.where(InventoryItem.category == category)
-    
+
     if search:
         # Use parameterized query to prevent SQL injection
         search_pattern = f"%{search}%"
@@ -56,28 +82,28 @@ async def list_inventory_items(
             (InventoryItem.name.ilike(search_pattern)) | 
             (InventoryItem.sku.ilike(search_pattern))
         )
-    
+
     query = query.order_by(InventoryItem.name)
-    
+
     result = await db.execute(query)
     items = result.scalars().all()
-    
+
     # Filter low stock if requested
     if low_stock:
         items = [item for item in items if item.is_low_stock]
-    
+
     # Audit Logging (Practice Management)
     await log_audit_event(
         db, current_user, "list_inventory", "inventory", None, request
     )
     await db.commit()
-    
-    return {"items": items, "count": len(items)}
+
+    return {"items": [_item_to_dict(i) for i in items], "count": len(items)}
 
 
 @router.get("/items/{item_id}")
 async def get_inventory_item(
-    item_id: str,
+    item_id: UUID,
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -92,20 +118,20 @@ async def get_inventory_item(
         )
     )
     item = result.scalar_one_or_none()
-    
+
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Inventory item not found",
         )
-    
+
     # Audit Logging
     await log_audit_event(
         db, current_user, "view_inventory_item", "inventory_item", item.id, request
     )
     await db.commit()
-    
-    return item
+
+    return _item_to_dict(item)
 
 
 @router.post("/items/")
@@ -125,13 +151,13 @@ async def create_inventory_item(
     db.add(item)
     await db.commit()
     await db.refresh(item)
-    
-    return item
+
+    return _item_to_dict(item)
 
 
 @router.put("/items/{item_id}")
 async def update_inventory_item(
-    item_id: str,
+    item_id: UUID,
     item_data: dict,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
@@ -147,25 +173,25 @@ async def update_inventory_item(
         )
     )
     item = result.scalar_one_or_none()
-    
+
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Inventory item not found",
         )
-    
+
     for field, value in item_data.items():
         setattr(item, field, value)
-    
+
     await db.commit()
     await db.refresh(item)
-    
-    return item
+
+    return _item_to_dict(item)
 
 
 @router.delete("/items/{item_id}")
 async def delete_inventory_item(
-    item_id: str,
+    item_id: UUID,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
@@ -180,16 +206,16 @@ async def delete_inventory_item(
         )
     )
     item = result.scalar_one_or_none()
-    
+
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Inventory item not found",
         )
-    
+
     await db.delete(item)
     await db.commit()
-    
+
     return {"message": "Inventory item deleted successfully"}
 
 
@@ -210,24 +236,24 @@ async def list_inventory_transactions(
     query = select(InventoryTransaction).where(
         InventoryTransaction.practice_id == current_user.practice_id
     )
-    
+
     if item_id:
         query = query.where(InventoryTransaction.item_id == item_id)
-    
+
     if transaction_type:
         query = query.where(InventoryTransaction.transaction_type == transaction_type)
-    
+
     if start_date:
         query = query.where(InventoryTransaction.created_at >= start_date)
-    
+
     if end_date:
         query = query.where(InventoryTransaction.created_at <= end_date)
-    
+
     query = query.order_by(InventoryTransaction.created_at.desc())
-    
+
     result = await db.execute(query)
     transactions = result.scalars().all()
-    
+
     return {"transactions": transactions, "count": len(transactions)}
 
 
@@ -250,18 +276,18 @@ async def create_inventory_transaction(
         )
     )
     item = result.scalar_one_or_none()
-    
+
     if not item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Inventory item not found",
         )
-    
+
     # Calculate new quantity
     quantity = transaction_data.get("quantity", 0)
     transaction_type = transaction_data.get("transaction_type")
     previous_quantity = item.current_quantity
-    
+
     if transaction_type == "IN":
         new_quantity = previous_quantity + quantity
     elif transaction_type == "OUT":
@@ -273,10 +299,10 @@ async def create_inventory_transaction(
             )
     else:
         new_quantity = quantity  # ADJUST
-    
+
     # Update item quantity
     item.current_quantity = new_quantity
-    
+
     # Create transaction record
     transaction = InventoryTransaction(
         practice_id=current_user.practice_id,
@@ -286,7 +312,7 @@ async def create_inventory_transaction(
         **transaction_data
     )
     db.add(transaction)
-    
+
     # Check for low stock alert
     if item.needs_reorder:
         # Create alert
@@ -297,16 +323,16 @@ async def create_inventory_transaction(
             message=f"Item {item.name} is at or below reorder point"
         )
         db.add(alert)
-    
+
     # Audit Logging (Critical Stock Transaction)
     await log_audit_event(
         db, current_user, "inventory_adjustment", "inventory_transaction", transaction.item_id, request,
         {"type": transaction_type, "qty": quantity}
     )
-    
+
     await db.commit()
     await db.refresh(transaction)
-    
+
     return transaction
 
 
@@ -314,6 +340,7 @@ async def create_inventory_transaction(
 
 @router.get("/suppliers/")
 async def list_suppliers(
+    request: Request,
     search: Optional[str] = Query(None, description="Search by name"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     current_user: User = Depends(get_current_user),
@@ -323,26 +350,26 @@ async def list_suppliers(
     List suppliers
     """
     query = select(Supplier).where(Supplier.practice_id == current_user.practice_id)
-    
+
     if is_active is not None:
         query = query.where(Supplier.is_active == is_active)
-    
+
     if search:
         # Use parameterized query to prevent SQL injection
         search_pattern = f"%{search}%"
         query = query.where(Supplier.name.ilike(search_pattern))
-    
+
     query = query.order_by(Supplier.name)
-    
+
     result = await db.execute(query)
     suppliers = result.scalars().all()
-    
+
     # HIPAA: Log supplier list access
     await log_audit_event(
         db, current_user, "list_suppliers", "inventory", None, request
     )
     await db.commit()
-    
+
     return {"suppliers": suppliers, "count": len(suppliers)}
 
 
@@ -363,7 +390,7 @@ async def create_supplier(
     db.add(supplier)
     await db.commit()
     await db.refresh(supplier)
-    
+
     return supplier
 
 
@@ -383,27 +410,27 @@ async def list_inventory_alerts(
     query = select(InventoryAlert).where(
         InventoryAlert.practice_id == current_user.practice_id
     )
-    
+
     if item_id:
         query = query.where(InventoryAlert.item_id == item_id)
-    
+
     if alert_type:
         query = query.where(InventoryAlert.alert_type == alert_type)
-    
+
     if is_resolved is not None:
         query = query.where(InventoryAlert.is_resolved == is_resolved)
-    
+
     query = query.order_by(InventoryAlert.created_at.desc())
-    
+
     result = await db.execute(query)
     alerts = result.scalars().all()
-    
+
     return {"alerts": alerts, "count": len(alerts)}
 
 
 @router.post("/alerts/{alert_id}/resolve")
 async def resolve_inventory_alert(
-    alert_id: str,
+    alert_id: UUID,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
@@ -418,18 +445,18 @@ async def resolve_inventory_alert(
         )
     )
     alert = result.scalar_one_or_none()
-    
+
     if not alert:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Alert not found",
         )
-    
+
     alert.is_resolved = True
     alert.resolved_at = datetime.now(timezone.utc)
     alert.resolved_by = current_user.id
-    
+
     await db.commit()
     await db.refresh(alert)
-    
+
     return alert

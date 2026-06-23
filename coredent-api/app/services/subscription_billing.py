@@ -5,7 +5,7 @@ Handles billing, dunning, and payment retry logic
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from uuid import UUID
 import stripe as stripe_lib
 import logging
@@ -18,10 +18,8 @@ from app.models.subscription import (
     SubscriptionStatus,
     DunningEvent,
     DunningAction,
-    SubscriptionPlan,
     SubscriptionInterval,
 )
-from app.models.billing import Invoice, InvoiceStatus
 from app.core.config_simple import settings
 from app.core.email import email_service
 
@@ -30,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 class SubscriptionBillingService:
     """Service for subscription billing and dunning operations"""
-    
+
     @staticmethod
     async def send_dunning_email(
         user_email: str,
@@ -68,7 +66,7 @@ class SubscriptionBillingService:
         except Exception as e:
             logger.error(f"Failed to send dunning email: {e}")
             return False
-    
+
     @staticmethod
     async def send_trial_expiring_email(
         user_email: str,
@@ -96,7 +94,7 @@ class SubscriptionBillingService:
         except Exception as e:
             logger.error(f"Failed to send trial expiry email: {e}")
             return False
-    
+
     @staticmethod
     async def send_payment_receipt(
         user_email: str,
@@ -136,7 +134,7 @@ class SubscriptionBillingService:
         except Exception as e:
             logger.error(f"Failed to send receipt email: {e}")
             return False
-    
+
     @staticmethod
     async def process_dunning(
         db: AsyncSession,
@@ -147,7 +145,7 @@ class SubscriptionBillingService:
         Automated retry system: Day 0, 3, 7, 14 with email notifications.
         """
         now = datetime.now(timezone.utc)
-        
+
         # Find subscriptions that need dunning
         result = await db.execute(
             select(Subscription).where(
@@ -157,10 +155,10 @@ class SubscriptionBillingService:
             )
         )
         subs = result.scalars().all()
-        
+
         processed_count = 0
         failed_count = 0
-        
+
         for sub in subs:
             try:
                 # Create dunning event
@@ -171,7 +169,7 @@ class SubscriptionBillingService:
                     scheduled_at=now,
                 )
                 db.add(dunning_event)
-                
+
                 # Attempt payment retry via Stripe
                 if settings.STRIPE_API_KEY and sub.stripe_subscription_id:
                     try:
@@ -180,7 +178,7 @@ class SubscriptionBillingService:
                             status="open",
                             limit=1
                         )
-                        
+
                         if invoices and invoices.data:
                             invoice = invoices.data[0]
                             stripe_lib.Invoice.finalize_invoice(invoice.id)
@@ -192,7 +190,7 @@ class SubscriptionBillingService:
                             processed_count += 1
                             await db.commit()
                             continue
-                    
+
                     except stripe_lib.error.StripeError as e:
                         error_msg = str(e)
                         dunning_event.result = "failed"
@@ -200,15 +198,15 @@ class SubscriptionBillingService:
                         dunning_event.executed_at = now
                         sub.dunning_retry_count = (sub.dunning_retry_count or 0) + 1
                         sub.last_payment_error = error_msg
-                        
+
                         # Schedule next retry
                         retry_days = [0, 3, 7, 14]
                         retry_idx = sub.dunning_retry_count - 1
-                        
+
                         if retry_idx < len(retry_days):
                             sub.next_retry_at = now + timedelta(days=retry_days[retry_idx])
                             dunning_event.action = DunningAction.SEND_EMAIL
-                            
+
                             # Send dunning email in background
                             if sub.user:
                                 background_tasks.add_task(
@@ -222,22 +220,22 @@ class SubscriptionBillingService:
                             sub.status = SubscriptionStatus.UNPAID
                             dunning_event.action = DunningAction.CANCEL_SUBSCRIPTION
                             dunning_event.result = "cancelled"
-                        
+
                         failed_count += 1
-                
+
                 await db.commit()
-            
+
             except Exception as e:
                 logger.error(f"Dunning process error for {sub.id}: {e}")
                 await db.rollback()
                 failed_count += 1
-        
+
         return {
             "processed": processed_count,
             "failed": failed_count,
             "total": len(subs)
         }
-    
+
     @staticmethod
     async def calculate_mrr(
         db: AsyncSession,
@@ -251,7 +249,7 @@ class SubscriptionBillingService:
             )
         )
         active_subs = result.scalars().all()
-        
+
         mrr = Decimal(0)
         for sub in active_subs:
             if sub.plan:
@@ -265,9 +263,9 @@ class SubscriptionBillingService:
                     mrr += sub.plan.amount / 6
                 elif sub.plan.interval == SubscriptionInterval.WEEKLY:
                     mrr += sub.plan.amount * Decimal("4.33")
-        
+
         return mrr
-    
+
     @staticmethod
     async def calculate_churn_rate(
         db: AsyncSession,
@@ -276,7 +274,7 @@ class SubscriptionBillingService:
         """Calculate monthly churn rate"""
         now = datetime.now(timezone.utc)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
+
         # Count active subscriptions
         active_result = await db.execute(
             select(func.count(Subscription.id)).where(
@@ -285,7 +283,7 @@ class SubscriptionBillingService:
             )
         )
         total_active = active_result.scalar() or 0
-        
+
         # Count canceled this month
         canceled_result = await db.execute(
             select(func.count(Subscription.id)).where(
@@ -295,12 +293,12 @@ class SubscriptionBillingService:
             )
         )
         total_canceled = canceled_result.scalar() or 0
-        
+
         if total_active + total_canceled == 0:
             return 0.0
-        
+
         return (total_canceled / (total_active + total_canceled)) * 100
-    
+
     @staticmethod
     async def calculate_average_lifetime(
         db: AsyncSession,
@@ -308,7 +306,7 @@ class SubscriptionBillingService:
     ) -> float:
         """Calculate average subscription lifetime in days"""
         now = datetime.now(timezone.utc)
-        
+
         result = await db.execute(
             select(Subscription.created_at).where(
                 Subscription.practice_id == practice_id,
@@ -316,13 +314,13 @@ class SubscriptionBillingService:
             )
         )
         created_dates = result.scalars().all()
-        
+
         if not created_dates:
             return 0.0
-        
+
         total_days = sum((now - cd).total_seconds() / 86400 for cd in created_dates)
         return total_days / len(created_dates)
-    
+
     @staticmethod
     async def get_subscription_stats(
         db: AsyncSession,
@@ -331,7 +329,7 @@ class SubscriptionBillingService:
         """Get comprehensive subscription statistics"""
         now = datetime.now(timezone.utc)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
+
         # Count by status
         status_counts = {}
         for status_val in SubscriptionStatus:
@@ -342,18 +340,21 @@ class SubscriptionBillingService:
                 )
             )
             status_counts[status_val.name.lower()] = result.scalar() or 0
-        
+
         # Calculate metrics
         mrr = await SubscriptionBillingService.calculate_mrr(db, practice_id)
         churn_rate = await SubscriptionBillingService.calculate_churn_rate(db, practice_id)
         avg_lifetime = await SubscriptionBillingService.calculate_average_lifetime(db, practice_id)
-        
+
+        from decimal import Decimal
         return {
             "total_active": status_counts.get("active", 0),
             "total_trials": status_counts.get("trialing", 0),
             "total_past_due": status_counts.get("past_due", 0),
             "total_canceled_this_month": status_counts.get("canceled", 0),
-            "mrr": float(mrr),
+            "mrr": Decimal(str(mrr)) if mrr is not None else Decimal("0.00"),
+            "mrr_growth_percent": 0.0,
             "churn_rate": round(churn_rate, 2),
+            "trial_conversion_rate": 0.0,
             "average_lifetime_days": round(avg_lifetime, 1),
         }

@@ -6,7 +6,8 @@ Operations for Perio Charting and clinical records
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Optional, Any
+from sqlalchemy.orm import selectinload
+from typing import Optional
 import uuid
 
 from app.core.database import get_db
@@ -25,7 +26,7 @@ router = APIRouter()
 
 @router.get("/perio/", response_model=PerioChartListResponse)
 async def list_perio_charts(
-    patient_id: Optional[str] = Query(None, description="Filter by patient ID"),
+    patient_id: Optional[uuid.UUID] = Query(None, description="Filter by patient ID"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
@@ -33,13 +34,13 @@ async def list_perio_charts(
     """
     List periodontal charts for the practice or a specific patient
     """
-    query = select(PerioChart)
+    query = select(PerioChart).options(selectinload(PerioChart.entries))
     if patient_id:
         query = query.where(PerioChart.patient_id == patient_id)
-        
+
     result = await db.execute(query)
     charts = result.scalars().all()
-    
+
     # Filter by practice access
     filtered_charts = []
     for chart in charts:
@@ -54,7 +55,7 @@ async def list_perio_charts(
         db, current_user, "list_perio_charts", "perio_chart", None, request
     )
     await db.commit()
-    
+
     return PerioChartListResponse(
         perio_charts=filtered_charts,
         count=len(filtered_charts)
@@ -81,7 +82,7 @@ async def create_perio_chart(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Patient not found or access denied",
         )
-        
+
     chart = PerioChart(
         patient_id=chart_data.patient_id,
         provider_id=current_user.id,
@@ -93,14 +94,18 @@ async def create_perio_chart(
     )
     db.add(chart)
     await db.flush()  # To get chart.id
-    
+
     for entry_data in chart_data.entries:
         entry = PerioChartEntry(
             perio_chart_id=chart.id,
-            **entry_data.dict()
+            **entry_data.model_dump()
         )
         db.add(entry)
-        
+
     await db.commit()
-    await db.refresh(chart)
-    return chart
+    result = await db.execute(
+        select(PerioChart)
+        .where(PerioChart.id == chart.id)
+        .options(selectinload(PerioChart.entries))
+    )
+    return result.scalar_one()

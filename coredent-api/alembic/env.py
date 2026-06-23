@@ -24,7 +24,17 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Set sqlalchemy.url from settings (sync URL for Alembic)
-sync_db_url = settings.DATABASE_URL.replace("+aiosqlite", "")
+# SECURITY: Strip async driver suffixes (+asyncpg, +aiosqlite) so the
+# sync create_engine below can connect.  Without this, Alembic crashes
+# with NoSuchModuleError on any PostgreSQL deployment URL.
+sync_db_url = settings.DATABASE_URL
+for _async_suffix in ("+asyncpg", "+aiosqlite", "+aiomysql"):
+    if _async_suffix in sync_db_url:
+        sync_db_url = sync_db_url.replace(_async_suffix, "")
+        break
+# Railway uses postgres://; SQLAlchemy needs postgresql://
+if sync_db_url.startswith("postgres://"):
+    sync_db_url = sync_db_url.replace("postgres://", "postgresql://", 1)
 config.set_main_option("sqlalchemy.url", sync_db_url)
 
 # add your model's MetaData object here for 'autogenerate' support

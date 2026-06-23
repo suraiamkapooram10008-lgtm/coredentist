@@ -4,8 +4,8 @@ Pydantic models for imaging data validation
 """
 
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, validator
+from typing import Optional, List
+from pydantic import BaseModel, Field
 from uuid import UUID
 
 from app.models.imaging import ImageType, ImageCategory
@@ -80,7 +80,7 @@ class PatientImageResponse(PatientImageBase):
     is_deleted: bool
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -159,7 +159,7 @@ class ImageSeriesResponse(ImageSeriesBase):
     image_count: int
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -206,7 +206,7 @@ class ImageTemplateResponse(ImageTemplateBase):
     practice_id: UUID
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 

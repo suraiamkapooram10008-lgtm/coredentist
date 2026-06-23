@@ -8,7 +8,6 @@ import boto3
 import logging
 from botocore.exceptions import ClientError
 from pathlib import Path
-from typing import Optional, BinaryIO
 from app.core.config_simple import settings
 
 logger = logging.getLogger(__name__)

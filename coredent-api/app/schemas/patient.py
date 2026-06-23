@@ -2,7 +2,7 @@
 Patient Schemas
 """
 
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Dict, Any
 from datetime import date, datetime
 from uuid import UUID
@@ -60,7 +60,7 @@ class PatientUpdate(BaseModel):
     dental_history: Optional[Dict[str, Any]] = None
     insurance_info: Optional[Dict[str, Any]] = None
     status: Optional[PatientStatus] = None
-    
+
     class Config:
         extra = "forbid"
 
@@ -79,7 +79,7 @@ class PatientInDB(PatientBase):
     status: PatientStatus
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -88,7 +88,7 @@ class PatientResponse(PatientInDB):
     """Schema for patient response"""
     full_name: str
     has_medical_alerts: bool
-    
+
     class Config:
         from_attributes = True
 
@@ -107,7 +107,7 @@ class PatientListItem(BaseModel):
     medical_alerts: List[str]
     last_visit: Optional[date] = None
     next_appointment: Optional[date] = None
-    
+
     class Config:
         from_attributes = True
 

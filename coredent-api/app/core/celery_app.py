@@ -4,7 +4,7 @@ Handles automated tasks like sending reminders
 """
 
 from celery import Celery
-from datetime import datetime, timedelta
+from datetime import timedelta
 import logging
 
 from app.core.config_simple import settings
@@ -19,6 +19,7 @@ celery_app = Celery(
     include=[
         'app.core.tasks',
         'app.core.reminder_tasks',
+        'app.core.email_tasks',
     ]
 )
 

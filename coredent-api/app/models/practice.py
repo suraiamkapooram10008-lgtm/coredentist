@@ -15,7 +15,7 @@ from app.core.base import Base
 class PracticeGroup(Base):
     """Enterprise-level practice group/DSO model"""
     __tablename__ = "practice_groups"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     address_street = Column(String(255))
@@ -27,7 +27,7 @@ class PracticeGroup(Base):
     settings = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
+
     # Relationships
     practices = relationship("Practice", back_populates="group")
 
@@ -35,7 +35,7 @@ class PracticeGroup(Base):
 class Practice(Base):
     """Practice/Clinic model"""
     __tablename__ = "practices"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     group_id = Column(UUID(as_uuid=True), ForeignKey("practice_groups.id"), nullable=True)
@@ -55,7 +55,7 @@ class Practice(Base):
     website = Column(String(255))
     logo_url = Column(String)
     settings = Column(JSON, default={})
-    
+
     # Billing preferences
     tax_rate = Column(JSON, default=0.0)  # Can be float or dict for multiple tax rates
     invoice_prefix = Column(String(10), default="INV")
@@ -65,16 +65,16 @@ class Practice(Base):
     auto_send_invoices = Column(Boolean, default=False)
     auto_send_reminders = Column(Boolean, default=False)
     reminder_days_before = Column(JSON, default=3)
-    
+
     # Working hours and appointment configuration
     working_hours = Column(JSON, default={})
     appointment_types = Column(JSON, default=[])  # Stored as JSON for flexibility
     chairs = Column(JSON, default=[])  # Stored as JSON for flexibility
-    
+
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
+
     # Relationships
     group = relationship("PracticeGroup", back_populates="practices")
     users = relationship("User", back_populates="practice")

@@ -5,9 +5,8 @@ Pydantic models for treatment planning API
 
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 import uuid as uuid_lib
-from enum import Enum
 
 from app.models.treatment import (
     TreatmentPlanStatus,
@@ -65,7 +64,7 @@ class TreatmentPlanResponse(TreatmentPlanBase):
     accepted_date: Optional[date] = None
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -116,7 +115,7 @@ class TreatmentPhaseResponse(TreatmentPhaseBase):
     actual_completion_date: Optional[date] = None
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -196,15 +195,15 @@ class TreatmentProcedureResponse(TreatmentProcedureBase):
     pre_auth_id: Optional[uuid_lib.UUID] = None
     created_at: datetime
     updated_at: datetime
-    
+
     @property
     def insurance_coverage_amount(self) -> float:
         return self.fee * (self.coverage_percentage / 100)
-    
+
     @property
     def patient_amount(self) -> float:
         return self.fee - self.insurance_coverage_amount
-    
+
     class Config:
         from_attributes = True
 
@@ -260,7 +259,7 @@ class ProcedureLibraryResponse(ProcedureLibraryBase):
     is_archived: bool
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -316,7 +315,7 @@ class TreatmentPlanTemplateResponse(TreatmentPlanTemplateBase):
     last_used: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -356,7 +355,7 @@ class TreatmentPlanNoteResponse(TreatmentPlanNoteBase):
     author_id: uuid_lib.UUID
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 

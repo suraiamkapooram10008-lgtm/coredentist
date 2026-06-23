@@ -8,7 +8,8 @@ import hashlib
 import uuid
 import re
 import logging
-from typing import Tuple, Optional, Dict, Any
+import os
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ ALLOWED_MIME_TYPES = {
     'image/png': [b'\x89\x50\x4E\x47\x0D\x0A\x1A\x0A'],
     'image/gif': [b'GIF87a', b'GIF89a'],
     'image/webp': [b'RIFF', b'WEBP'],
-    
+
     # Documents
     'application/pdf': [b'%PDF-'],
     'application/msword': [b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'],  # DOC
@@ -28,7 +29,7 @@ ALLOWED_MIME_TYPES = {
         b'PK\x03\x04'  # DOCX (ZIP-based)
     ],
     'text/plain': [],  # Text files don't have magic numbers
-    
+
     # Archives (for batch uploads)
     'application/zip': [b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'],
 }
@@ -71,16 +72,16 @@ def validate_file_extension(filename: str, allowed_extensions: list = None) -> b
     """
     if allowed_extensions is None:
         allowed_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf', 'doc', 'docx', 'txt']
-    
+
     # Extract extension
     ext = Path(filename).suffix.lower().lstrip('.')
-    
+
     if not ext:
         raise FileSecurityError("File has no extension")
-    
+
     if ext not in allowed_extensions:
         raise FileSecurityError(f"File extension '{ext}' is not allowed")
-    
+
     return True
 
 
@@ -102,19 +103,19 @@ def validate_magic_number(file_content: bytes, expected_mime_type: str) -> bool:
     """
     if expected_mime_type not in ALLOWED_MIME_TYPES:
         raise FileSecurityError(f"MIME type '{expected_mime_type}' is not allowed")
-    
+
     # Get expected magic numbers
     magic_numbers = ALLOWED_MIME_TYPES[expected_mime_type]
-    
+
     # Text files don't have magic numbers
     if not magic_numbers:
         return True
-    
+
     # Check if file starts with any of the expected magic numbers
     for magic_num in magic_numbers:
         if file_content.startswith(magic_num):
             return True
-    
+
     raise FileSecurityError(
         f"File content does not match expected type '{expected_mime_type}'. "
         "Possible file type mismatch or malicious upload attempt."
@@ -137,16 +138,16 @@ def validate_file_size(file_content: bytes, mime_type: str) -> bool:
     """
     file_size = len(file_content)
     max_size = FILE_SIZE_LIMITS.get(mime_type, DEFAULT_MAX_SIZE)
-    
+
     if file_size > max_size:
         max_size_mb = max_size / (1024 * 1024)
         raise FileSecurityError(
             f"File size ({file_size / (1024 * 1024):.2f}MB) exceeds maximum allowed size ({max_size_mb}MB)"
         )
-    
+
     if file_size == 0:
         raise FileSecurityError("File is empty")
-    
+
     return True
 
 
@@ -162,22 +163,22 @@ def sanitize_filename(filename: str) -> str:
     """
     # Remove path components (prevent directory traversal)
     filename = Path(filename).name
-    
+
     # Remove or replace dangerous characters
     # Allow only alphanumeric, dash, underscore, dot
     filename = re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
-    
+
     # Prevent multiple dots (can bypass extension checks)
     filename = re.sub(r'\.+', '.', filename)
-    
+
     # Prevent leading/trailing dots or dashes
     filename = filename.strip('.-')
-    
+
     # Limit filename length
     if len(filename) > 255:
         name, ext = filename.rsplit('.', 1) if '.' in filename else (filename, '')
         filename = name[:250] + ('.' + ext if ext else '')
-    
+
     return filename
 
 
@@ -193,10 +194,10 @@ def generate_secure_filename(original_filename: str) -> str:
     """
     # Extract extension
     ext = Path(original_filename).suffix.lower()
-    
+
     # Generate UUID-based filename
     secure_name = f"{uuid.uuid4().hex}{ext}"
-    
+
     return secure_name
 
 
@@ -238,7 +239,7 @@ def detect_mime_type(file_content: bytes, filename: str) -> str:
         return detected_type
     except Exception as e:
         logger.warning(f"Failed to detect MIME type with magic: {e}")
-        
+
         # Fallback to extension-based detection
         ext = Path(filename).suffix.lower()
         extension_map = {
@@ -288,29 +289,29 @@ def validate_file_upload(
     try:
         # 1. Validate extension
         validate_file_extension(filename, allowed_extensions)
-        
+
         # 2. Detect MIME type
         detected_mime = detect_mime_type(file_content, filename)
-        
+
         # 3. Validate magic number
         validate_magic_number(file_content, detected_mime)
-        
+
         # 4. Validate file size
         if max_size:
             if len(file_content) > max_size:
                 raise FileSecurityError(f"File size exceeds maximum allowed size ({max_size} bytes)")
         else:
             validate_file_size(file_content, detected_mime)
-        
+
         # 5. Sanitize filename
         safe_filename = sanitize_filename(filename)
-        
+
         # 6. Generate secure filename
         secure_filename = generate_secure_filename(filename)
-        
+
         # 7. Calculate file hash
         file_hash = calculate_file_hash(file_content)
-        
+
         logger.info(
             f"File validation successful: {filename} -> {secure_filename}",
             extra={
@@ -321,7 +322,7 @@ def validate_file_upload(
                 "hash": file_hash[:16] + "..."
             }
         )
-        
+
         return {
             "valid": True,
             "original_filename": filename,
@@ -331,7 +332,7 @@ def validate_file_upload(
             "size": len(file_content),
             "hash": file_hash,
         }
-        
+
     except FileSecurityError as e:
         logger.warning(
             f"File validation failed: {filename}",
@@ -361,7 +362,7 @@ class VirusScanResult:
         self.threats_found = threats_found or []
         self.scan_id = scan_id
         self.error = error
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "is_clean": self.is_clean,
@@ -380,12 +381,12 @@ class VirusScanner:
     - ClamAV (local, fast, preferred)
     - VirusTotal API (cloud, comprehensive)
     """
-    
+
     def __init__(self):
         self._clamav_available = False
         self._clamd = None
         self._init_clamav()
-    
+
     def _init_clamav(self) -> None:
         """Initialize ClamAV connection if available"""
         try:
@@ -398,7 +399,7 @@ class VirusScanner:
             logger.warning("python-clamd not installed. Install with: pip install python-clamd")
         except Exception as e:
             logger.warning(f"ClamAV not available: {e}")
-    
+
     async def scan_file(
         self,
         file_content: bytes,
@@ -417,18 +418,18 @@ class VirusScanner:
             VirusScanResult with scan status and details
         """
         scan_results: List[Dict[str, Any]] = []
-        
+
         if self._clamav_available and self._clamd:
             result = await self._scan_with_clamav(file_content, filename)
             scan_results.append(result.to_dict())
             if result.is_clean:
                 return result
-        
+
         if enable_virustotal:
             result = await self._scan_with_virustotal(file_content, filename)
             scan_results.append(result.to_dict())
             return result
-        
+
         logger.warning(
             f"No virus scanners available, assuming clean: {filename}",
             extra={"filename": filename, "results": scan_results}
@@ -438,7 +439,7 @@ class VirusScanner:
             scanner="none",
             error="No scanners available"
         )
-    
+
     async def _scan_with_clamav(
         self,
         file_content: bytes,
@@ -446,10 +447,9 @@ class VirusScanner:
     ) -> VirusScanResult:
         """Scan file using ClamAV via clamd socket"""
         try:
-            import clamd
-            
+
             result = self._clamd.scan_stream(file_content)
-            
+
             if result:
                 for threat_name, threat_status in result.items():
                     if threat_status == "FOUND":
@@ -462,9 +462,9 @@ class VirusScanner:
                             scanner="clamav",
                             threats_found=[f"{threat_name}: {threat_status}"]
                         )
-            
+
             return VirusScanResult(is_clean=True, scanner="clamav")
-            
+
         except Exception as e:
             logger.error(f"ClamAV scan failed: {e}")
             return VirusScanResult(
@@ -472,7 +472,7 @@ class VirusScanner:
                 scanner="clamav",
                 error=str(e)
             )
-    
+
     async def _scan_with_virustotal(
         self,
         file_content: bytes,
@@ -480,26 +480,26 @@ class VirusScanner:
     ) -> VirusScanResult:
         """Scan file using VirusTotal API"""
         from app.core.config_simple import settings
-        
+
         api_key = getattr(settings, 'VIRUSTOTAL_API_KEY', None) or os.getenv('VIRUSTOTAL_API_KEY')
-        
+
         if not api_key:
             return VirusScanResult(
                 is_clean=True,
                 scanner="virustotal",
                 error="VirusTotal API key not configured"
             )
-        
+
         try:
             import requests
             from requests_toolbelt import MultipartEncoder
-            
+
             encoder = MultipartEncoder(
                 fields={
                     'file': (filename, file_content, 'application/octet-stream')
                 }
             )
-            
+
             response = requests.post(
                 'https://www.virustotal.com/api/v3/files',
                 headers={
@@ -509,40 +509,40 @@ class VirusScanner:
                 data=encoder,
                 timeout=60
             )
-            
+
             if response.status_code == 200:
                 data = response.json()
                 scan_id = data.get('data', {}).get('id')
-                
+
                 stats = data.get('data', {}).get('attributes', {}).get('last_analysis_stats', {})
                 malicious_count = stats.get('malicious', 0)
                 suspicious_count = stats.get('suspicious', 0)
-                
+
                 if malicious_count > 0 or suspicious_count > 0:
                     threats = []
                     results = data.get('data', {}).get('attributes', {}).get('last_analysis_results', {})
                     for engine, result in results.items():
                         if result.get('category') in ['malicious', 'suspicious']:
                             threats.append(f"{engine}: {result.get('result')}")
-                    
+
                     logger.warning(
                         f"Threats detected by VirusTotal: {malicious_count + suspicious_count}",
                         extra={"filename": filename, "threats": threats[:10]}
                     )
-                    
+
                     return VirusScanResult(
                         is_clean=False,
                         scanner="virustotal",
                         threats_found=threats,
                         scan_id=scan_id
                     )
-                
+
                 return VirusScanResult(
                     is_clean=True,
                     scanner="virustotal",
                     scan_id=scan_id
                 )
-            
+
             elif response.status_code == 429:
                 logger.warning("VirusTotal rate limit exceeded")
                 return VirusScanResult(
@@ -556,7 +556,7 @@ class VirusScanner:
                     scanner="virustotal",
                     error=f"API returned {response.status_code}"
                 )
-                
+
         except ImportError:
             logger.warning("requests or requests_toolbelt not installed")
             return VirusScanResult(
@@ -637,11 +637,11 @@ async def scan_and_validate_file(
     validation_result = validate_file_upload(
         file_content, filename, allowed_extensions, max_size
     )
-    
+
     try:
         scan_result = await scan_file_for_viruses(file_content, filename)
         validation_result["virus_scan"] = scan_result.to_dict()
-        
+
         if not scan_result.is_clean:
             raise FileSecurityError(
                 f"File rejected: virus detected - {scan_result.threats_found}"
@@ -655,5 +655,5 @@ async def scan_and_validate_file(
             "scanner": "unknown",
             "error": str(e)
         }
-    
+
     return validation_result

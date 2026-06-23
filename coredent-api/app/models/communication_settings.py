@@ -1,6 +1,6 @@
 """Communication settings model."""
 
-from sqlalchemy import Column, String, Boolean, Integer, JSON
+from sqlalchemy import Column, Boolean, Integer, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from app.core.base import Base
 import uuid

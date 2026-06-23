@@ -24,11 +24,11 @@ async def log_audit_event(
     """
     ip_address = None
     user_agent = None
-    
+
     if request:
         ip_address = request.client.host if request.client else None
         user_agent = request.headers.get("user-agent")
-    
+
     # For SQLite compatibility: convert entity_id to UUID when present
     if entity_id is None:
         pass
@@ -40,7 +40,7 @@ async def log_audit_event(
             # Not a valid UUID, create one from the string
             from uuid import uuid5, NAMESPACE_DNS
             entity_id = uuid5(NAMESPACE_DNS, entity_id)
-        
+
     audit_entry = AuditLog(
         user_id=user.id if user else None,  # Keep as UUID object
         action=action,
@@ -50,7 +50,7 @@ async def log_audit_event(
         ip_address=ip_address,
         user_agent=user_agent,
     )
-    
+
     db.add(audit_entry)
     # We use await db.flush() instead of commit() to allow the caller to handle the transaction
     await db.flush()

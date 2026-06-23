@@ -42,7 +42,7 @@ class UserInDB(UserBase):
     last_login: Optional[datetime]
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -50,10 +50,10 @@ class UserInDB(UserBase):
 class UserResponse(UserInDB):
     """Schema for user response"""
     full_name: str
-    
+
     class Config:
         from_attributes = True
-    
+
     @validator('role', pre=False)
     def lowercase_role(cls, v):
         """Convert role enum to lowercase string for frontend compatibility"""
@@ -66,7 +66,7 @@ class PasswordChange(BaseModel):
     """Schema for password change"""
     current_password: str
     new_password: str = Field(..., min_length=8)
-    
+
     @validator('new_password')
     def passwords_must_differ(cls, v, values):
         if 'current_password' in values and v == values['current_password']:
