@@ -6,6 +6,22 @@ import { renderHook, act } from '@testing-library/react';
 import { useTreatmentPlanForm } from '../useTreatmentPlanForm';
 import type { TreatmentPlan } from '@/types/treatmentPlan';
 
+/** Builds a fully-typed TreatmentPlan fixture so tests stay in sync with the type. */
+function makePlan(overrides: Partial<TreatmentPlan> = {}): TreatmentPlan {
+  return {
+    id: '1',
+    title: 'Root Canal',
+    description: 'Complex root canal treatment',
+    patientId: 'p1',
+    patientName: 'John Doe',
+    status: 'proposed',
+    procedures: [],
+    createdBy: 'dentist-1',
+    notes: 'Follow up after 2 weeks',
+    ...overrides,
+  };
+}
+
 describe('useTreatmentPlanForm', () => {
   it('should initialize with empty form data', () => {
     const { result } = renderHook(() => useTreatmentPlanForm());
@@ -18,14 +34,7 @@ describe('useTreatmentPlanForm', () => {
   });
 
   it('should initialize with plan data', () => {
-    const plan: TreatmentPlan = {
-      id: '1',
-      title: 'Root Canal',
-      description: 'Complex root canal treatment',
-      patientId: 'p1',
-      patientName: 'John Doe',
-      notes: 'Follow up after 2 weeks',
-    };
+    const plan = makePlan();
 
     const { result } = renderHook(() => useTreatmentPlanForm(plan));
 
@@ -143,14 +152,11 @@ describe('useTreatmentPlanForm', () => {
   });
 
   it('should handle plan updates', () => {
-    const initialPlan: TreatmentPlan = {
-      id: '1',
+    const initialPlan = makePlan({
       title: 'Initial Title',
       description: 'Initial description',
-      patientId: 'p1',
-      patientName: 'John Doe',
       notes: 'Initial notes',
-    };
+    });
 
     const { result, rerender } = renderHook(
       ({ plan }) => useTreatmentPlanForm(plan),

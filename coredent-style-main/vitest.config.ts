@@ -12,13 +12,25 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
-    testTimeout: 10000, // 10 second timeout
-    hookTimeout: 10000, // 10 second hook timeout
+    testTimeout: 30000, // Coverage instrumentation can make UI renders significantly slower in CI.
+    hookTimeout: 30000,
     // Test coverage thresholds
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html", "lcov"],
-      exclude: ["node_modules/", "src/test/", "**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "src/types/"],
+      excludeAfterRemap: true,
+      exclude: [
+        "**/node_modules/**",
+        "**/coverage/**",
+        "**/dist/**",
+        "**/dev-dist/**",
+        "**/public/**",
+        "**/*.config.{js,ts}",
+        "src/test/**",
+        "src/types/**",
+        "**/*.{test,spec}.{ts,tsx}",
+        "**/*.d.ts",
+      ],
       thresholds: {
         statements: 80,
         branches: 80,

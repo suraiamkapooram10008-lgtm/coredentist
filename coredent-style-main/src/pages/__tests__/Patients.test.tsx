@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BrowserRouter } from "react-router-dom";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
-import Patients from "../Patients";
+import Patients from "../patients/PatientList";
 
 const queryClient = new QueryClient({
   defaultOptions: {

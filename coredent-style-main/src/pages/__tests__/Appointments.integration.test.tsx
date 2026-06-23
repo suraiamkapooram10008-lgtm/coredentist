@@ -2,22 +2,26 @@
  * Appointments Page Integration Tests
  */
 
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { vi } from 'vitest';
-import Appointments from '../Appointments_Refactored';
+import Appointments from '../Appointments';
 import type { Appointment } from '@/services/appointmentsApi';
 import { useAppointments, useAppointmentTypes } from '@/hooks/useAppointments';
 
 // Mock the hooks
 vi.mock('@/hooks/useAppointments', () => ({
   useAppointments: vi.fn(),
+  useAppointmentStats: vi.fn().mockReturnValue({
+    data: { data: { todayAppointments: 2, confirmed: 1, pending: 1, cancelled: 0 } },
+    isLoading: false,
+  }),
   useAppointmentTypes: vi.fn(),
-  useCreateAppointment: vi.fn(),
-  useUpdateAppointment: vi.fn(),
-  useDeleteAppointment: vi.fn(),
-  useSendAppointmentReminder: vi.fn(),
+  useCreateAppointment: vi.fn().mockReturnValue({ mutate: vi.fn(), isPending: false }),
+  useUpdateAppointment: vi.fn().mockReturnValue({ mutate: vi.fn(), isPending: false }),
+  useDeleteAppointment: vi.fn().mockReturnValue({ mutate: vi.fn(), isPending: false }),
+  useSendAppointmentReminder: vi.fn().mockReturnValue({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock('@/hooks/use-toast', () => ({
@@ -58,6 +62,7 @@ describe('Appointments Page Integration', () => {
   let queryClient: QueryClient;
 
   beforeEach(() => {
+    (window as any).__INTEGRATION_TEST__ = true;
     queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -105,9 +110,10 @@ describe('Appointments Page Integration', () => {
     renderWithProviders(<Appointments />);
 
     await waitFor(() => {
-      expect(screen.getByText("Today's Appointments")).toBeInTheDocument();
-      expect(screen.getByText('Confirmed')).toBeInTheDocument();
-      expect(screen.getByText('Pending')).toBeInTheDocument();
+      // Use getAllByText since 'Confirmed'/'Pending' appear in both stat cards and appointment badges
+      expect(screen.getAllByText(/Today.*Appointments/i).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/Confirmed/i).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/Pending/i).length).toBeGreaterThan(0);
     });
   });
 

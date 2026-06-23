@@ -8,6 +8,22 @@ import { vi } from 'vitest';
 import { TreatmentPlanForm } from '../treatment/TreatmentPlanForm';
 import type { TreatmentPlan } from '@/types/treatmentPlan';
 
+/** Builds a fully-typed TreatmentPlan fixture so tests stay in sync with the type. */
+function makePlan(overrides: Partial<TreatmentPlan> = {}): TreatmentPlan {
+  return {
+    id: '1',
+    title: 'Root Canal Treatment',
+    description: 'Complex root canal',
+    patientId: 'p1',
+    patientName: 'John Doe',
+    status: 'proposed',
+    procedures: [],
+    createdBy: 'dentist-1',
+    notes: 'Follow up required',
+    ...overrides,
+  };
+}
+
 describe('TreatmentPlanForm', () => {
   it('should render form with empty fields for new plan', () => {
     render(
@@ -22,14 +38,12 @@ describe('TreatmentPlanForm', () => {
   });
 
   it('should populate form with plan data for editing', () => {
-    const plan: TreatmentPlan = {
-      id: '1',
+    const plan = makePlan({
       title: 'Root Canal Treatment',
       description: 'Complex root canal',
-      patientId: 'p1',
       patientName: 'John Doe',
       notes: 'Follow up required',
-    };
+    });
 
     render(
       <TreatmentPlanForm
@@ -80,14 +94,11 @@ describe('TreatmentPlanForm', () => {
   });
 
   it('should show Save Changes button for existing plan', () => {
-    const plan: TreatmentPlan = {
-      id: '1',
+    const plan = makePlan({
       title: 'Root Canal',
       description: 'Treatment',
-      patientId: 'p1',
-      patientName: 'John Doe',
       notes: 'Notes',
-    };
+    });
 
     render(
       <TreatmentPlanForm
@@ -162,23 +173,22 @@ describe('TreatmentPlanForm', () => {
   });
 
   it('should reset form when plan prop changes', () => {
-    const plan1: TreatmentPlan = {
+    const plan1 = makePlan({
       id: '1',
       title: 'Plan 1',
       description: 'Description 1',
-      patientId: 'p1',
       patientName: 'John Doe',
       notes: 'Notes 1',
-    };
+    });
 
-    const plan2: TreatmentPlan = {
+    const plan2 = makePlan({
       id: '2',
       title: 'Plan 2',
       description: 'Description 2',
       patientId: 'p2',
       patientName: 'Jane Doe',
       notes: 'Notes 2',
-    };
+    });
 
     const { rerender } = render(
       <TreatmentPlanForm

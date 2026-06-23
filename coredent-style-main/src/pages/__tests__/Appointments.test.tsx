@@ -46,21 +46,12 @@ vi.mock('@/hooks/use-toast', () => ({
   }),
 }));
 
+const { mockUseAppointments } = vi.hoisted(() => ({
+  mockUseAppointments: vi.fn(),
+}));
+
 vi.mock('@/hooks/useAppointments', () => ({
-  useAppointments: () => ({
-    data: {
-      data: {
-        appointments: [
-          { id: '1', patientName: 'John Doe', time: '10:00 AM', status: 'scheduled', type: 'checkup', dentist: 'Dr. Smith', duration: '60' },
-          { id: '2', patientName: 'Jane Smith', time: '2:00 PM', status: 'scheduled', type: 'cleaning', dentist: 'Dr. Smith', duration: '60' },
-        ],
-      },
-    },
-    isLoading: false,
-    isPending: false,
-    refetch: vi.fn(),
-    error: null,
-  }),
+  useAppointments: mockUseAppointments,
   useAppointmentStats: () => ({
     data: { data: { todayAppointments: 2, confirmed: 1, pending: 1, cancelled: 0 } },
     isLoading: false,
@@ -97,6 +88,21 @@ const TestWrapper = ({ children }: { children: React.ReactNode }) => {
 describe('Appointments Page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseAppointments.mockReturnValue({
+      data: {
+        data: {
+          appointments: [
+            { id: '1', patientName: 'John Doe', time: '10:00 AM', status: 'scheduled', type: 'checkup', dentist: 'Dr. Smith', duration: '60' },
+            { id: '2', patientName: 'Jane Smith', time: '2:00 PM', status: 'scheduled', type: 'cleaning', dentist: 'Dr. Smith', duration: '60' },
+          ],
+        },
+      },
+      isLoading: false,
+      isError: false,
+      isPending: false,
+      refetch: vi.fn(),
+      error: null,
+    });
     vi.stubEnv('MODE', 'test');
     vi.stubEnv('VITE_DEV_BYPASS_AUTH', 'true'); // Enable dev bypass for easier testing
   });
@@ -262,14 +268,14 @@ describe('Appointments Page', () => {
   });
 
   it('should handle API errors gracefully', async () => {
-    server.use(
-      http.get('/api/v1/appointments', () => {
-        return HttpResponse.json(
-          { message: 'Failed to fetch appointments' },
-          { status: 500 }
-        );
-      })
-    );
+    mockUseAppointments.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      isPending: false,
+      refetch: vi.fn(),
+      error: new Error('Failed to fetch appointments'),
+    });
 
     render(
       <TestWrapper>
@@ -277,14 +283,12 @@ describe('Appointments Page', () => {
       </TestWrapper>
     );
 
-    // Should show error message
-    await waitFor(() => {
-      expect(screen.getByText(/error|failed/i)).toBeInTheDocument();
-    });
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Appointment data is currently unavailable',
+    );
   });
 
   it('should filter appointments by date range', async () => {
-    const user = userEvent.setup();
 
     render(
       <TestWrapper>

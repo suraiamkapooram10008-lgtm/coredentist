@@ -24,10 +24,15 @@ vi.mock('@/lib/analytics', () => ({
 }));
 
 // Mock CSRF
-vi.mock('@/lib/csrf', () => ({
-  refreshCsrfToken: vi.fn(),
-  clearCsrfToken: vi.fn(),
-}));
+vi.mock('@/lib/csrf', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/csrf')>();
+  return {
+    ...actual,
+    refreshCsrfToken: vi.fn(),
+    clearCsrfToken: vi.fn(),
+    getCsrfHeader: vi.fn(() => ({})),
+  };
+});
 
 // Simple login form component for testing
 const LoginForm = () => {
@@ -130,7 +135,6 @@ describe('Authentication Flow Integration', () => {
   it('should complete full login flow successfully', async () => {
     // Note: Full login flow requires complex async mocking
     // This test verifies the login form is present and auth functions are available
-    const user = userEvent.setup();
 
     render(
       <TestWrapper>

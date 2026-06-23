@@ -56,24 +56,55 @@ export const handlers = [
           email: 'john.doe@example.com',
           phone: '555-0100',
           dateOfBirth: '1985-05-15',
-          status: 'active' as const,
+          gender: 'male',
+          address: {
+            street: '123 Main St',
+            city: 'Springfield',
+            state: 'IL',
+            zipCode: '62701',
+          },
+          emergencyContact: {
+            name: 'Jane Doe',
+            relationship: 'spouse',
+            phone: '555-0101',
+          },
+          medicalAlerts: [],
+          status: 'active',
+          createdAt: '2024-01-01T00:00:00Z',
+          updatedAt: '2024-01-01T00:00:00Z',
         } satisfies Patient,
       ],
       total: 1,
       page: 1,
-      pageSize: 10,
+      limit: 10,
+      totalPages: 1,
     });
   }),
 
   http.get(`${API_BASE_URL}/patients/:id`, ({ params }) => {
     return HttpResponse.json({
-      id: params.id,
+      id: String(params.id),
       firstName: 'John',
       lastName: 'Doe',
       email: 'john.doe@example.com',
       phone: '555-0100',
       dateOfBirth: '1985-05-15',
-      status: 'active' as const,
+      gender: 'male',
+      address: {
+        street: '123 Main St',
+        city: 'Springfield',
+        state: 'IL',
+        zipCode: '62701',
+      },
+      emergencyContact: {
+        name: 'Jane Doe',
+        relationship: 'spouse',
+        phone: '555-0101',
+      },
+      medicalAlerts: [],
+      status: 'active',
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
     } satisfies Patient);
   }),
 
@@ -86,11 +117,14 @@ export const handlers = [
         patientName: 'John Doe',
         providerId: 'provider-1',
         providerName: 'Dr. Smith',
-        type: 'cleaning' as const,
-        status: 'scheduled' as const,
+        operatoryId: 'chair-1',
+        operatoryName: 'Chair 1',
+        type: 'cleaning',
+        status: 'scheduled',
         startTime: new Date().toISOString(),
         endTime: new Date(Date.now() + 3600000).toISOString(),
-        duration: 60,
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
       } satisfies Appointment,
     ]);
   }),
@@ -185,5 +219,144 @@ export const handlers = [
   http.put(`${API_BASE_URL}/settings/billing`, async ({ request }) => {
     const body = await request.json();
     return HttpResponse.json(body);
+  }),
+
+  // Billing summary & invoices
+  http.get(`${API_BASE_URL}/billing/summary`, () => {
+    return HttpResponse.json({
+      totalRevenue: 45000,
+      totalCollected: 40000,
+      totalOutstanding: 5000,
+      overdueAmount: 1200,
+      invoicesCount: 120,
+      paidCount: 100,
+      pendingCount: 15,
+      overdueCount: 5,
+    });
+  }),
+
+  http.get(`${API_BASE_URL}/billing/invoices`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  http.get(`${API_BASE_URL}/invoices`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  // Reports dashboard
+  http.get(`${API_BASE_URL}/reports/dashboard`, () => {
+    return HttpResponse.json({
+      appointments: {
+        total: 60, completed: 45, cancelled: 10, noShow: 5,
+        completionRate: 75, noShowRate: 8.3,
+        byType: [{ type: 'checkup', count: 30 }],
+        byDay: [{ date: '2026-06-01', appointments: 12 }],
+      },
+      revenue: {
+        totalRevenue: 45000, totalCollected: 40000,
+        totalOutstanding: 5000, averagePerVisit: 220,
+        byMonth: [{ month: 'June', revenue: 45000, collected: 40000 }],
+        byProcedure: [{ procedure: 'checkup', revenue: 15000 }],
+      },
+      treatmentAcceptance: {
+        proposedPlans: 50, acceptedPlans: 40, completedPlans: 35,
+        acceptanceRate: 80, completionRate: 87.5,
+      },
+      chairUtilization: {
+        averageUtilization: 72, totalChairs: 4,
+        peakHours: [{ hour: '10:00', utilization: 95 }],
+        byChair: [{ chair: 'Chair 1', utilization: 80, appointments: 20 }],
+        byDayOfWeek: [{ day: 'Monday', utilization: 85 }],
+      },
+    });
+  }),
+
+  // Communications endpoints
+  http.get(`${API_BASE_URL}/communications/templates`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  http.get(`${API_BASE_URL}/communications/reminders`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  http.get(`${API_BASE_URL}/communications/conversations`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  http.get(`${API_BASE_URL}/communications/settings`, () => {
+    return HttpResponse.json({
+      unreadMessages: 0,
+      messages: { totalSent: 0, deliveryRate: 0 },
+      reminders: { pending: 0 },
+    });
+  }),
+
+  // Insurance endpoints
+  http.get(`${API_BASE_URL}/insurance/claims`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  http.get(`${API_BASE_URL}/insurance/carriers`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  // Treatment plans
+  http.get(`${API_BASE_URL}/treatment-plans`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  // Subscriptions
+  http.get(`${API_BASE_URL}/subscriptions/current`, () => {
+    return HttpResponse.json(null);
+  }),
+
+  http.get(`${API_BASE_URL}/subscriptions/plans`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  http.get(`${API_BASE_URL}/subscriptions`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  http.get(`${API_BASE_URL}/subscriptions/stats`, () => {
+    return HttpResponse.json(null);
+  }),
+
+  // Staff
+  http.get(`${API_BASE_URL}/staff`, () => {
+    return HttpResponse.json({ data: [], total: 0, page: 1, limit: 10, totalPages: 0 });
+  }),
+
+  http.get(`${API_BASE_URL}/staff/invitations`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  // Dental chart
+  http.get(`${API_BASE_URL}/dental-chart/:patientId`, () => {
+    return HttpResponse.json({ teeth: [], procedures: [] });
+  }),
+
+  // Imaging
+  http.get(`${API_BASE_URL}/imaging/studies`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  // Automations
+  http.get(`${API_BASE_URL}/automations`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  // Scheduling extras
+  http.get(`${API_BASE_URL}/providers`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  http.get(`${API_BASE_URL}/chairs`, () => {
+    return HttpResponse.json([]);
+  }),
+
+  http.get(`${API_BASE_URL}/appointment-types`, () => {
+    return HttpResponse.json([]);
   }),
 ];

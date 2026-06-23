@@ -33,7 +33,7 @@ describe("Tabs", () => {
   });
 
   it("switches tabs on click", async () => {
-    const { user } = render(
+    render(
       <Tabs defaultValue="tab1">
         <TabsList>
           <TabsTrigger value="tab1">Tab 1</TabsTrigger>

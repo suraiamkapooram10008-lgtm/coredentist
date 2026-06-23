@@ -5,6 +5,7 @@
 
 import '@testing-library/jest-dom';
 import { vi, beforeAll, afterEach, afterAll } from 'vitest';
+import { cleanup } from '@testing-library/react';
 import { server } from './mocks/server';
 
 // Ensure API requests use relative paths so MSW handlers match
@@ -22,6 +23,13 @@ afterEach(() => server.resetHandlers());
 
 // Clean up after all tests
 afterAll(() => server.close());
+
+// ============================================
+// DOM Cleanup (React Testing Library)
+// ============================================
+
+// Unmount any rendered components after each test to avoid DOM/state leaks
+afterEach(() => cleanup());
 
 // ============================================
 // Global Mocks
@@ -59,8 +67,11 @@ global.IntersectionObserver = vi.fn().mockImplementation(() => ({
 // Mock scrollTo
 window.scrollTo = vi.fn();
 
-// Mock fetch globally
-global.fetch = vi.fn();
+// jsdom does not implement these Element methods; Radix UI relies on them.
+window.HTMLElement.prototype.scrollIntoView = vi.fn();
+window.HTMLElement.prototype.hasPointerCapture = vi.fn(() => false);
+window.HTMLElement.prototype.releasePointerCapture = vi.fn();
+window.HTMLElement.prototype.setPointerCapture = vi.fn();
 
 // Mock sessionStorage
 const mockSessionStorage = (() => {

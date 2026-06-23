@@ -2,20 +2,37 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { patientsApi } from '../api';
 import { server } from '@/test/mocks/server';
 import { http, HttpResponse } from 'msw';
+import type { Patient, Address, EmergencyContact } from '@/types/api';
 
 describe('patientsApi', () => {
   beforeEach(() => {
     server.resetHandlers();
   });
 
-  const mockPatient = {
+  const baseAddress: Address = {
+    street: '123 Main St',
+    city: 'City',
+    state: 'CA',
+    zipCode: '12345',
+  };
+  const baseEmergency: EmergencyContact = {
+    name: 'Jane Doe',
+    relationship: 'spouse',
+    phone: '+15555555555',
+  };
+
+  const mockPatient: Patient = {
     id: 'patient-1',
     firstName: 'John',
     lastName: 'Doe',
     email: 'john.doe@example.com',
     phone: '+1234567890',
     dateOfBirth: '1990-01-01',
-    address: '123 Main St, City, State 12345',
+    gender: 'male',
+    address: baseAddress,
+    emergencyContact: baseEmergency,
+    medicalAlerts: [],
+    status: 'active',
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
   };
@@ -26,7 +43,7 @@ describe('patientsApi', () => {
         data: [mockPatient],
         total: 1,
         page: 1,
-        pageSize: 10,
+        limit: 10,
         totalPages: 1,
       };
 
@@ -47,7 +64,7 @@ describe('patientsApi', () => {
         data: [mockPatient],
         total: 1,
         page: 1,
-        pageSize: 10,
+        limit: 10,
         totalPages: 1,
       };
 
@@ -63,7 +80,7 @@ describe('patientsApi', () => {
       const result = await patientsApi.list({
         search: 'John',
         page: 1,
-        pageSize: 10,
+        limit: 10,
       });
 
       expect(result.success).toBe(true);
@@ -103,16 +120,20 @@ describe('patientsApi', () => {
 
   describe('create', () => {
     it('should create patient successfully', async () => {
-      const newPatient = {
+      const newPatient: Omit<Patient, 'createdAt' | 'id' | 'updatedAt'> = {
         firstName: 'Jane',
         lastName: 'Smith',
         email: 'jane.smith@example.com',
         phone: '+1987654321',
         dateOfBirth: '1985-05-15',
-        address: '456 Oak Ave, City, State 54321',
+        gender: 'female',
+        address: { ...baseAddress, zipCode: '54321' },
+        emergencyContact: baseEmergency,
+        medicalAlerts: [],
+        status: 'active',
       };
 
-      const createdPatient = {
+      const createdPatient: Patient = {
         ...newPatient,
         id: 'patient-2',
         createdAt: '2024-01-01T00:00:00Z',
@@ -137,9 +158,9 @@ describe('patientsApi', () => {
       server.use(
         http.post('/api/v1/patients', () => {
           return HttpResponse.json(
-            { 
+            {
               message: 'Validation error',
-              details: ['Email is required', 'Phone is invalid']
+              details: ['Email is required', 'Phone is invalid'],
             },
             { status: 422 }
           );
@@ -149,7 +170,7 @@ describe('patientsApi', () => {
       const result = await patientsApi.create({
         firstName: 'Test',
         lastName: 'User',
-      } as any);
+      } as unknown as Omit<Patient, 'createdAt' | 'id' | 'updatedAt'>);
 
       expect(result.success).toBe(false);
       expect(result.error?.message).toBe('Validation error');
@@ -158,12 +179,12 @@ describe('patientsApi', () => {
 
   describe('update', () => {
     it('should update patient successfully', async () => {
-      const updates = {
+      const updates: Partial<Patient> = {
         phone: '+1111111111',
-        address: '789 Pine St, City, State 67890',
+        address: { ...baseAddress, zipCode: '67890' },
       };
 
-      const updatedPatient = {
+      const updatedPatient: Patient = {
         ...mockPatient,
         ...updates,
         updatedAt: '2024-01-02T00:00:00Z',

@@ -11,7 +11,6 @@ import {
   getInitials,
   capitalizeWords,
   slugify,
-  parseJwt,
   isValidUUID,
   getErrorMessage,
   sleep,
@@ -25,7 +24,8 @@ describe("Utils", () => {
     });
 
     it("should handle conditional classes", () => {
-      expect(cn("px-2", false && "py-1")).toBe("px-2");
+      const conditionalClass: string | false = false;
+      expect(cn("px-2", conditionalClass)).toBe("px-2");
     });
 
     it("should handle undefined and null", () => {

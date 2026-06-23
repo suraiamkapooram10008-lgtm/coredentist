@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render } from "@testing-library/react";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { Sidebar } from "../layout/Sidebar";
@@ -32,7 +31,6 @@ describe("Sidebar Component", () => {
   });
 
   it("should handle navigation", async () => {
-    const user = userEvent.setup();
     renderWithProviders(<Sidebar collapsed={false} mobileOpen={false} onToggle={vi.fn()} onMobileClose={vi.fn()} />);
     expect(document.body).toBeInTheDocument();
   });
