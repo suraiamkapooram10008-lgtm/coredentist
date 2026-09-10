@@ -5,6 +5,29 @@ import { z } from 'zod';
 import { logger } from './logger';
 
 /**
+ * Describe the *shape* of a payload without its values. Validation failures
+ * used to log the full response body, which can contain patient, billing, or
+ * clinical PHI; only the structural fingerprint is safe for client logs.
+ */
+function describeShape(value: unknown, depth = 0): string {
+  if (value === null || value === undefined) return String(value);
+  if (Array.isArray(value)) {
+    if (depth > 3) return 'array(…)';
+    const first = value.length > 0 ? describeShape(value[0], depth + 1) : 'empty';
+    return `array(${value.length})<${first}>`;
+  }
+  if (typeof value === 'object') {
+    if (depth > 3) return 'object(…)';
+    const keys = Object.keys(value as Record<string, unknown>)
+      .slice(0, 25)
+      .sort()
+      .join(',');
+    return `{${keys}}`;
+  }
+  return typeof value;
+}
+
+/**
  * Validates API response data against a Zod schema
  * @param data - The data to validate
  * @param schema - Zod schema to validate against
@@ -19,9 +42,10 @@ export function validateApiResponse<T>(
   try {
     return schema.parse(data);
   } catch (error) {
+    // M-16 FIX: log a shape fingerprint, never the response body (PHI).
     logger.error(`API response validation failed for ${endpoint}`, error as Error, {
       endpoint,
-      receivedData: data,
+      receivedShape: describeShape(data),
     });
     return null;
   }
@@ -45,7 +69,7 @@ export function validateApiResponseStrict<T>(
   } catch (error) {
     logger.error(`API response validation failed for ${endpoint}`, error as Error, {
       endpoint,
-      receivedData: data,
+      receivedShape: describeShape(data),
     });
     throw new Error(`Invalid API response from ${endpoint}`);
   }

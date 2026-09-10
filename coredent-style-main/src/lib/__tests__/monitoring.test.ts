@@ -185,4 +185,82 @@ describe("monitoring", () => {
       expect(metric.metadata).toMatchObject({ success: false });
     });
   });
+
+  describe("production and analytics integration", () => {
+    const mockGtag = vi.fn();
+    const mockMixpanel = {
+      track: vi.fn(),
+    };
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      vi.stubEnv("DEV", false as any);
+      vi.stubEnv("PROD", true as any);
+
+      (window as any).gtag = mockGtag;
+      (window as any).mixpanel = mockMixpanel;
+      vi.stubGlobal("fetch", mockFetch);
+    });
+
+    afterEach(() => {
+      delete (window as any).gtag;
+      delete (window as any).mixpanel;
+      vi.restoreAllMocks();
+    });
+
+    it("sends metrics and actions to gtag, mixpanel, and custom endpoint in production", async () => {
+      vi.stubEnv("VITE_ANALYTICS_ENDPOINT", "https://analytics.example.com/events");
+      vi.resetModules();
+      const { monitoring: prodMonitoring } = await import("../monitoring");
+
+      // Track metric in production
+      prodMonitoring.trackMetric("api_latency", 120, { path: "/users" });
+
+      expect(mockGtag).toHaveBeenCalledWith("event", "api_latency", {
+        value: 120,
+        path: "/users",
+      });
+      expect(mockMixpanel.track).toHaveBeenCalledWith("api_latency", {
+        value: 120,
+        path: "/users",
+      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://analytics.example.com/events",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining("api_latency"),
+        }),
+      );
+
+      // Track action in production
+      prodMonitoring.trackAction("button_click", "Navbar", { buttonId: "login" });
+
+      expect(mockGtag).toHaveBeenCalledWith("event", "button_click", {
+        component: "Navbar",
+        buttonId: "login",
+      });
+      expect(mockMixpanel.track).toHaveBeenCalledWith("button_click", {
+        component: "Navbar",
+        buttonId: "login",
+      });
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        "https://analytics.example.com/events",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining("button_click"),
+        }),
+      );
+    });
+
+    it("gracefully handles fetch failures for custom endpoint", async () => {
+      vi.stubEnv("VITE_ANALYTICS_ENDPOINT", "https://analytics.example.com/events");
+      mockFetch.mockRejectedValueOnce(new Error("Network fail"));
+      vi.resetModules();
+      const { monitoring: prodMonitoring } = await import("../monitoring");
+
+      // Should not throw or crash the application
+      expect(() => prodMonitoring.trackMetric("test_metric", 5)).not.toThrow();
+    });
+  });
 });

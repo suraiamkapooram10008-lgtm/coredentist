@@ -6,12 +6,11 @@ This script migrates existing password reset tokens to the new PasswordResetToke
 import asyncio
 import sys
 from datetime import datetime
-import uuid
 
 # Add parent directory to path for imports
 sys.path.insert(0, '.')
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from app.core.database import AsyncSessionLocal, engine
 from app.models.user import User
 from app.models.password_reset import PasswordResetToken
@@ -113,7 +112,7 @@ async def rollback_migration():
         try:
             # Get all password reset tokens
             result = await db.execute(
-                select(PasswordResetToken).where(PasswordResetToken.is_used == False)
+                select(PasswordResetToken).where(PasswordResetToken.is_used.is_(False))
             )
             tokens = result.scalars().all()
             

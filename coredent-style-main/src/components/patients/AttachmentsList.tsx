@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { patientApi } from '@/services/patientApi';
+import { sanitizeUrl } from '@/lib/sanitize';
 import { 
   FileText, 
   Image as ImageIcon, 
@@ -115,6 +116,19 @@ export function AttachmentsList({
     } finally {
       setIsDeleting(null);
     }
+  };
+
+  const handleDownload = (url: string) => {
+    const safeUrl = sanitizeUrl(url);
+    if (!safeUrl) {
+      toast({
+        title: 'Invalid Document URL',
+        description: 'The download link is malformed and cannot be opened.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -224,7 +238,7 @@ export function AttachmentsList({
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                          onClick={() => window.open(file.url, '_blank')}
+                          onClick={() => handleDownload(file.url)}
                         >
                           <Download className="h-4 w-4" />
                         </Button>

@@ -24,9 +24,16 @@ function createWrapper() {
 }
 
 const mockSummary: BillingSummary = {
-  totalOutstanding: 12000,
-  totalPaidToday: 0,
-  totalPaidThisMonth: 3400,
+  totalInvoices: 5,
+  totalRevenue: 15400,
+  totalTax: 400,
+  totalPayments: 2,
+  totalCollected: 3400,
+  outstandingBalance: 12000,
+  statusBreakdown: [
+    { status: 'pending', count: 3, amount: 3400 },
+    { status: 'overdue', count: 1, amount: 1000 },
+  ],
   overdueCount: 1,
   pendingCount: 3,
   pendingAmount: 3400,

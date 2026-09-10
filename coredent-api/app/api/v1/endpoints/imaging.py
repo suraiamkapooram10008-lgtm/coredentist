@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 from typing import Optional
+import html as html_module
 import logging
 
 from app.core.database import get_db
@@ -33,6 +34,7 @@ from app.schemas.imaging import (
     ImageShareResponse,
 )
 from app.services.imaging_service import ImagingService
+from app.services.tenant_refs import require_provider
 from app.services.imaging_processing import (
     ImageFileProcessor,
     ImageSharingProcessor,
@@ -44,6 +46,9 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# M-12: roles that may be recorded as the acquiring/interpreting provider.
+IMAGING_PROVIDER_ROLES = (UserRole.DENTIST, UserRole.HYGIENIST, UserRole.OWNER)
 
 
 # ============================================
@@ -274,7 +279,9 @@ async def update_image(
 
         # Update image
         update_data = image_data.dict(exclude_unset=True)
-        image = await ImagingService.update_image(db, image_id, **update_data)
+        image = await ImagingService.update_image(
+            db, image_id, current_user.practice_id, **update_data
+        )
 
         return image
 
@@ -301,7 +308,7 @@ async def delete_image(
     Delete image (soft delete)
     """
     try:
-        success = await ImagingService.delete_image(db, image_id)
+        success = await ImagingService.delete_image(db, image_id, practice_id=current_user.practice_id)
 
         if not success:
             raise HTTPException(
@@ -345,7 +352,9 @@ async def add_annotations(
 
         # Add annotations
         annotations_list = [ann.dict() for ann in annotation_data.annotations]
-        image = await ImagingService.add_annotations(db, image_id, annotations_list)
+        image = await ImagingService.add_annotations(
+            db, image_id, annotations_list, current_user.practice_id
+        )
 
         return ImageAnnotationResponse(
             image_id=image.id,
@@ -403,34 +412,50 @@ async def share_image(
 
         message = "Image sharing settings updated"
 
-        # Send email to referral if provided
         if share_data.share_with_referral and share_data.referral_email:
             try:
+                # L-9 FIX: scope display-name lookup to this practice — the
+                # image itself is scoped, but an orphaned/mis-linked patient_id
+                # must not disclose another tenant's name in the referral email.
                 result = await db.execute(
-                    select(Patient).where(Patient.id == image.patient_id)
+                    select(Patient).where(
+                        Patient.id == image.patient_id,
+                        Patient.practice_id == current_user.practice_id,
+                    )
                 )
                 patient = result.scalar_one_or_none()
 
+                safe_first = html_module.escape(patient.first_name if patient else '')
+                safe_last = html_module.escape(patient.last_name if patient else '')
+                safe_image_type = html_module.escape(
+                    image.image_type.value if hasattr(image.image_type, 'value') else str(image.image_type)
+                )
+                safe_date = html_module.escape(
+                    image.acquisition_date.strftime('%Y-%m-%d') if image.acquisition_date else 'N/A'
+                )
+                # share_link is a generated token URL — escape it anyway for safety
+                safe_link = html_module.escape(share_link) if share_link else None
+
                 await email_service.send_email(
                     to=share_data.referral_email,
-                    subject=f"Dental Image Referral - {patient.first_name if patient else 'Patient'}",
+                    subject=f"Dental Image Referral - {safe_first} {safe_last}",
                     html_content=f"""
-                    <html>
-                        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                            <h1>New Dental Image Referral</h1>
-                            <p>You have received a dental image for review.</p>
-                            <p><strong>Patient:</strong> {patient.first_name if patient else ''} {patient.last_name if patient else ''}</p>
-                            <p><strong>Image Type:</strong> {image.image_type.value if hasattr(image.image_type, 'value') else image.image_type}</p>
-                            <p><strong>Date:</strong> {image.acquisition_date.strftime('%Y-%m-%d') if image.acquisition_date else 'N/A'}</p>
-                            {f'<p><strong>View Here:</strong> <a href="{share_link}">{share_link}</a></p>' if share_link else ''}
-                            <p><em>This link expires in 30 days.</em></p>
-                            <hr>
-                            <p style="color: #666; font-size: 12px;">
-                                CoreDent Dental Practice Management
-                            </p>
-                        </body>
-                    </html>
-                    """,
+            <html>
+                <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <h1>New Dental Image Referral</h1>
+                    <p>You have received a dental image for review.</p>
+                    <p><strong>Patient:</strong> {safe_first} {safe_last}</p>
+                    <p><strong>Image Type:</strong> {safe_image_type}</p>
+                    <p><strong>Date:</strong> {safe_date}</p>
+                    {f'<p><strong>View Here:</strong> <a href="{safe_link}">{safe_link}</a></p>' if safe_link else ''}
+                    <p><em>This link expires in 30 days.</em></p>
+                    <hr>
+                    <p style="color: #666; font-size: 12px;">
+                        CoreDent Dental Practice Management
+                    </p>
+                </body>
+            </html>
+            """,
                 )
                 message = "Image shared and notification sent to referral"
             except Exception as e:
@@ -578,6 +603,18 @@ async def create_image_series(
                 detail="Patient not found",
             )
 
+        # M-12 FIX: the supplied provider was written unvalidated, so a series
+        # could be attributed to another practice's clinician (and that name
+        # then surfaced on every read of the series).
+        if series_data.provider_id:
+            await require_provider(
+                db,
+                series_data.provider_id,
+                current_user.practice_id,
+                field="Provider",
+                roles=IMAGING_PROVIDER_ROLES,
+            )
+
         # Create series
         series = await ImagingService.create_series(
             db=db,
@@ -653,9 +690,11 @@ async def update_image_series(
                 detail="Image series not found",
             )
 
-        # Update series
+        # Update series (pass practice_id: the primitive requires it).
         update_data = series_data.dict(exclude_unset=True)
-        series = await ImagingService.update_series(db, series_id, **update_data)
+        series = await ImagingService.update_series(
+            db, series_id, current_user.practice_id, **update_data
+        )
 
         return series
 
@@ -756,7 +795,9 @@ async def update_template(
         if 'configuration' in update_data and update_data['configuration']:
             update_data['configuration'] = [conf.dict() for conf in update_data['configuration']]
 
-        template = await ImagingService.update_template(db, template_id, **update_data)
+        template = await ImagingService.update_template(
+            db, template_id, current_user.practice_id, **update_data
+        )
 
         return template
 

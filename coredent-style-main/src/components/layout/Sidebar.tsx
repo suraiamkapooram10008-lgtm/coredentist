@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { LocationSwitcher } from './LocationSwitcher';
 import {
   LayoutDashboard,
   Users,
@@ -25,13 +26,15 @@ import {
   X,
   Shield,
   Image,
-  Package,
   Beaker,
   UserPlus,
   MessageSquare,
-  Mail,
-  FileSignature,
   DollarSign,
+  Database,
+  ShieldCheck,
+  Boxes,
+  Building2,
+  Megaphone,
 } from 'lucide-react';
 import type { UserRole } from '@/types/api';
 
@@ -99,9 +102,57 @@ const navItems: NavItem[] = [
     roles: ['owner', 'admin'],
   },
   {
+    label: 'Revenue',
+    icon: BarChart3,
+    href: '/revenue',
+    roles: ['owner', 'admin'],
+  },
+  {
+    label: 'Online Booking',
+    icon: Calendar,
+    href: '/online-booking',
+    roles: ['owner', 'admin', 'dentist'],
+  },
+  {
+    label: 'Inventory',
+    icon: Boxes,
+    href: '/inventory',
+    roles: ['owner', 'admin', 'dentist', 'hygienist', 'front_desk'],
+  },
+  {
+    label: 'Documents',
+    icon: FileText,
+    href: '/documents',
+    roles: ['owner', 'admin', 'dentist', 'hygienist', 'front_desk'],
+  },
+  {
+    label: 'Marketing',
+    icon: Megaphone,
+    href: '/marketing',
+    roles: ['owner', 'admin', 'dentist', 'hygienist', 'front_desk'],
+  },
+  {
+    label: 'Enterprise HQ',
+    icon: Building2,
+    href: '/enterprise/hq',
+    roles: ['group_owner', 'group_admin'],
+  },
+  {
     label: 'Settings',
     icon: Settings,
     href: '/settings',
+    roles: ['owner', 'admin'],
+  },
+  {
+    label: 'Data Migration',
+    icon: Database,
+    href: '/admin/migration',
+    roles: ['owner', 'admin'],
+  },
+  {
+    label: 'Security & Compliance',
+    icon: ShieldCheck,
+    href: '/admin/security',
     roles: ['owner', 'admin'],
   },
   {
@@ -114,13 +165,7 @@ const navItems: NavItem[] = [
     label: 'Imaging',
     icon: Image,
     href: '/imaging',
-    roles: ['owner', 'admin', 'dentist'],
-  },
-  {
-    label: 'Inventory',
-    icon: Package,
-    href: '/inventory',
-    roles: ['owner', 'admin'],
+    roles: ['owner', 'admin', 'dentist', 'hygienist'],
   },
   {
     label: 'Lab Work',
@@ -138,18 +183,6 @@ const navItems: NavItem[] = [
     label: 'Communications',
     icon: MessageSquare,
     href: '/communications',
-    roles: ['owner', 'admin', 'front_desk'],
-  },
-  {
-    label: 'Marketing',
-    icon: Mail,
-    href: '/marketing',
-    roles: ['owner', 'admin'],
-  },
-  {
-    label: 'Documents',
-    icon: FileSignature,
-    href: '/documents',
     roles: ['owner', 'admin', 'front_desk'],
   },
   {
@@ -198,6 +231,8 @@ export function Sidebar({ collapsed, mobileOpen, onToggle, onMobileClose }: Side
           </Button>
         )}
       </div>
+
+      {(!collapsed || isMobile) && <LocationSwitcher />}
 
       {/* Navigation */}
       <ScrollArea className="h-[calc(100vh-8rem)]">

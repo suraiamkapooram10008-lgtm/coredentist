@@ -27,19 +27,14 @@ Content-Type: application/json
 }
 ```
 
-**Response:**
+**Response (audited snake_case auth contract):**
 ```json
 {
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user": {
-    "id": "user-123",
-    "email": "user@example.com",
-    "firstName": "John",
-    "lastName": "Doe",
-    "role": "dentist",
-    "practiceId": "practice-456",
-    "practiceName": "Bright Smile Dental"
-  }
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "...",
+  "token_type": "bearer",
+  "expires_in": 900,
+  "csrf_token": "..."
 }
 ```
 
@@ -501,4 +496,53 @@ Subscribe to events:
 
 ---
 
-Last updated: February 2026
+## Current endpoint contract notes (audited 2026-08-09)
+
+The frontend mount point is `/api/v1`. Request bodies and query params are
+sent camelCase and normalised to snake_case at the api boundary for the
+normalised domains; responses are normalised back to camelCase. See
+`docs/PAYLOAD_CONTRACT_AUDIT.md` for the full per-domain matrix.
+
+### Appointments
+
+- `GET /appointments?start_date&end_date&status&provider_id&patient_id` →
+  `{ "appointments": [...], "count": N }`.
+- Each appointment now also carries read-model aliases after case
+  normalisation: `type` (= `appointment_type`), `patientName`,
+  `providerName`, `operatoryId`/`operatoryName` (from the chair).
+- `PUT /appointments/{id}/status` — body `{ "status": "<status>" }`.
+- `POST /appointments/{id}/cancel` — body `{ "reason": "<optional>" }`.
+- `PUT /appointments/{id}/reschedule` — body `{ "chair_id?", "start_time?" }`.
+- Statuses: `scheduled | confirmed | checked_in | in_progress | completed |
+  cancelled | no_show`.
+- Create/update accept human-readable type names (`"Checkup"`, `"Root Canal"`,
+  `"Follow-up"`) alongside the enum values.
+
+### Clinical notes
+
+- `GET|POST /notes`, `GET|PUT|DELETE /notes/{id}`, `GET /patients/{id}/notes`.
+- Create body: `{ patient_id, type, provider_id?, appointment_id?, content?,
+  subjective?, objective?, assessment?, plan?, attachments? }`.
+- `type` ∈ `soap | procedure | treatment | consultation | progress |
+  follow_up | general`.
+
+### Reference / scheduling lookups
+
+- `GET /providers` → `[{ id, name, role }]`
+- `GET /chairs` → `[{ id, name, color, description, is_active }]`
+- `GET /appointment-types` → configured types, falling back to the standard
+  dental set `[{ id, name, code, duration, color, is_active,
+  allow_online_booking, description }]`
+- `GET /patients/search?query=` → `[{ id, name, phone, email? }]`
+
+### Patient export (GDPR/HIPAA portability)
+
+- `GET /patients/{id}/export` (OWNER/ADMIN only) → `PatientExportResponse`
+  envelope: `exported_at`, `exported_by { id, name, role }`, plus portable
+  per-section rows for `patient_demographics`, `appointments`, `clinical_notes`,
+  `treatment_plans`, `invoices`, `payments`, `insurances`, `insurance_claims`,
+  `patient_images`, `documents`.
+
+---
+
+Last updated: August 2026

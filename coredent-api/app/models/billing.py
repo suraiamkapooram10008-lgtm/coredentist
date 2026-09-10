@@ -3,10 +3,11 @@ Billing Models
 Invoices and payments
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Numeric, Date, JSON, Text
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Numeric, Date, JSON, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from decimal import Decimal
 import uuid
 import enum
 
@@ -52,17 +53,23 @@ class PaymentPlanStatus(str, enum.Enum):
 class Invoice(Base):
     """Invoice model"""
     __tablename__ = "invoices"
+    __table_args__ = (
+        UniqueConstraint('practice_id', 'invoice_number', name='uq_practice_invoice_number'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
     patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
 
-    invoice_number = Column(String(50), unique=True, nullable=False, index=True)
+    invoice_number = Column(String(50), nullable=False, index=True)
     status = Column(Enum(InvoiceStatus), default=InvoiceStatus.PENDING)
 
     subtotal = Column(Numeric(10, 2), nullable=False)
     tax = Column(Numeric(10, 2), default=0)
     total = Column(Numeric(10, 2), nullable=False)
+    # Fractional tax rate used to compute `tax` (e.g. 0.055), persisted so
+    # later line-item edits can recompute the tax instead of zeroing it.
+    tax_rate = Column(Numeric(8, 6), default=0)
 
     # GST fields (Indian compliance)
     gstin = Column(String(15))  # GST Identification Number
@@ -89,14 +96,36 @@ class Invoice(Base):
     subscription = relationship("Subscription", back_populates="invoices", overlaps="latest_invoice")
 
     @property
-    def amount_paid(self) -> float:
-        """Calculate total amount paid"""
-        return sum(float(p.amount) for p in self.payments if p.status == PaymentStatus.COMPLETED)
+    def amount_paid(self) -> Decimal:
+        """Effective collected amount (Decimal; refunds subtract)."""
+        paid = Decimal("0")
+        for p in self.payments:
+            if p.status in (PaymentStatus.COMPLETED, PaymentStatus.REFUNDED):
+                refunded = p.refunded_amount if p.refunded_amount is not None else Decimal("0")
+                paid += Decimal(str(p.amount)) - Decimal(str(refunded))
+        return paid
 
     @property
-    def balance_due(self) -> float:
+    def balance_due(self) -> Decimal:
         """Calculate remaining balance"""
-        return float(self.total) - self.amount_paid
+        return Decimal(str(self.total)) - self.amount_paid
+
+    @property
+    def patient_name(self) -> str:
+        """Tenant-authorized patient display name exposed by billing responses."""
+        if self.patient is None:
+            return ""
+        return " ".join(
+            part for part in (self.patient.first_name, self.patient.last_name) if part
+        )
+
+    @property
+    def patient_email(self) -> str | None:
+        return self.patient.email if self.patient is not None else None
+
+    @property
+    def patient_phone(self) -> str | None:
+        return self.patient.phone if self.patient is not None else None
 
     def __repr__(self):
         return f"<Invoice {self.invoice_number} - {self.status}>"
@@ -105,14 +134,32 @@ class Invoice(Base):
 class Payment(Base):
     """Payment model"""
     __tablename__ = "payments"
+    __table_args__ = (
+        # L-1 FIX: scope transaction_id per practice. The previous global
+        # unique let one tenant probe another's reference (409 vs 200 oracle)
+        # and coupled tenants. Replay lookups filter by practice_id.
+        UniqueConstraint(
+            "practice_id",
+            "transaction_id",
+            name="uq_payment_practice_transaction",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     invoice_id = Column(UUID(as_uuid=True), ForeignKey("invoices.id"), nullable=False)
     patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
+    # Tenant scoping (added with the payment_transactions FK migration): every
+    # payment belongs to exactly one practice, backfilled from its invoice.
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
 
     amount = Column(Numeric(10, 2), nullable=False)
+    refunded_amount = Column(Numeric(10, 2), default=0)
     payment_method = Column(Enum(PaymentMethod), nullable=False)
-    transaction_id = Column(String(255))
+    # One row per gateway transaction per practice: the composite unique
+    # constraint is the race guard for concurrent webhook deliveries
+    # (check-then-insert alone let duplicates through and double-counted
+    # invoice.amount_paid).
+    transaction_id = Column(String(255), index=True)
     status = Column(Enum(PaymentStatus), default=PaymentStatus.COMPLETED)
     notes = Column(Text)
 
@@ -156,6 +203,13 @@ class PaymentPlan(Base):
         return f"<PaymentPlan {self.id} - {self.status}>"
 
 
+class InstallmentStatus(str, enum.Enum):
+    """Installment status"""
+    SCHEDULED = "scheduled"
+    PAID = "paid"
+    OVERDUE = "overdue"
+
+
 class PaymentPlanInstallment(Base):
     """Individual installment in a payment plan"""
     __tablename__ = "payment_plan_installments"
@@ -166,7 +220,7 @@ class PaymentPlanInstallment(Base):
     amount = Column(Numeric(10, 2), nullable=False)
     due_date = Column(Date, nullable=False)
     paid_at = Column(DateTime(timezone=True))
-    status = Column(String(50), default="scheduled")  # scheduled, paid, overdue
+    status = Column(Enum(InstallmentStatus), default=InstallmentStatus.SCHEDULED)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

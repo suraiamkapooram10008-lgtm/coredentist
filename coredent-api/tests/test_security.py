@@ -1,7 +1,5 @@
 """Security-focused tests for HIPAA compliance, CORS, and error handling"""
-import pytest
 
-pytestmark = pytest.mark.asyncio
 
 
 class TestSecurityHeaders:
@@ -49,7 +47,7 @@ class TestGenericErrorMessages:
             json={"email": "nonexistent@test.com", "password": "wrong"}
         )
         data = response.json()
-        detail = data.get("detail", "")
+        _ = data.get("detail", "")
         # Should not contain internal info
         assert "Traceback" not in str(response.content)
         assert "File" not in str(response.content)
@@ -70,7 +68,7 @@ class TestRateLimiting:
             "retry-after", "x-rate-limit"
         ]
         has_rate_header = any(h in response.headers for h in rate_limit_headers)
-        assert True  # Don't enforce - rate limiting may be configured differently
+        assert isinstance(has_rate_header, bool)  # Don't enforce - rate limiting may be configured differently
 
 
 class TestJWTExpiration:

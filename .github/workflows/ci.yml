@@ -10,13 +10,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# ─────────────────────────────────────────────────────────────
-# Backend (FastAPI / Python)
-# ─────────────────────────────────────────────────────────────
+permissions:
+  contents: read
+
 jobs:
   backend:
-    name: Backend — lint & test
+    name: Backend — migrate, audit, lint & test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: coredent-api
@@ -28,7 +29,8 @@ jobs:
           POSTGRES_DB: coredent_ci
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci
-        ports: ["5432:5432"]
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -36,6 +38,7 @@ jobs:
           --health-retries 5
 
     env:
+      DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/coredent_ci
       TEST_DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/coredent_ci
       SECRET_KEY: ci-secret-key-not-for-production-use-32chars
       ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItY2ktb25seQ==' }}
@@ -57,24 +60,45 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx ruff aiosqlite
+          python -m pip install -r requirements.txt
+          python -m pip install ruff
+
+      - name: Audit Python dependencies
+        run: python -m pip_audit --strict --requirement requirements.txt
 
       - name: Fatal Python lint checks
-        run: ruff check app/ --output-format=github --select E9,F63,F7,F82
+        run: python -m ruff check app tests --output-format=github --select E9,F63,F7,F82
+
+      # L-2 FIX: mypy ratchet gate. The baseline count lives in
+      # scripts/mypy_baseline.txt; the gate fails on ANY increase so new
+      # code cannot add type errors. Shrink the baseline with
+      # `python scripts/check_mypy_ratchet.py --update` after fixing errors.
+      - name: mypy ratchet gate
+        run: python scripts/check_mypy_ratchet.py
 
       - name: Compile backend
         run: python -m compileall -q app
 
-      - name: Run tests
-        run: pytest tests/ -x -q --tb=short
+      - name: Apply all migrations to a fresh PostgreSQL database
+        run: python -m alembic upgrade head
 
-  # ─────────────────────────────────────────────────────────────
-  # Frontend (React / TypeScript / Vite)
-  # ─────────────────────────────────────────────────────────────
+      - name: Run backend test and coverage gate
+        run: python -m pytest tests --tb=short
+
+      - name: Upload backend coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: |
+            coredent-api/coverage.xml
+            coredent-api/htmlcov
+          if-no-files-found: ignore
+
   frontend:
-    name: Frontend — typecheck, lint & test
+    name: Frontend — audit, typecheck, lint, coverage & build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: coredent-style-main
@@ -92,16 +116,19 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit
 
+      - name: Audit npm dependencies
+        run: npm run audit:prod
+
       - name: TypeScript type check
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       - name: ESLint errors
         run: npm run lint:ci
 
-      - name: Vitest tests
-        run: npx vitest run --reporter=basic
+      - name: Run frontend tests
+        run: npm test
 
-      - name: Build
-        run: npm run build
+      - name: Build production bundle
+        run: npm run build:prod
         env:
-          VITE_API_URL: http://localhost:8000
+          VITE_API_BASE_URL: https://api.example.invalid/api/v1

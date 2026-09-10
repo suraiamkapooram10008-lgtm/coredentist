@@ -1,4 +1,4 @@
-"""
+﻿"""
 Database Models
 SQLAlchemy ORM models for all entities
 """
@@ -6,6 +6,7 @@ SQLAlchemy ORM models for all entities
 from app.core.base import Base
 from app.models.user import User
 from app.models.password_reset import PasswordResetToken
+from app.models.staff_invitation import StaffInvitation
 from app.models.practice import Practice
 from app.models.patient import Patient
 from app.models.appointment import Appointment, AppointmentType, Chair
@@ -59,6 +60,7 @@ from app.models.lab import (
     Lab,
     LabCase,
     LabInvoice,
+    LabInvoicePayment,
     LabCommunication,
     LabCaseStatus,
     LabCaseType,
@@ -72,6 +74,7 @@ from app.models.referral import (
     ReferralType,
     ReferralSource,
 )
+from app.models.reminder import Reminder, ReminderStatus
 from app.models.communication import (
     MessageTemplate,
     PatientMessage,
@@ -114,11 +117,19 @@ from app.models.payment import (
     RecurringBillingStatus,
 )
 
+from app.models.processor_event import (
+    ProcessorWebhookEvent,
+    ProcessorEventStatus,
+)
+from app.models.revoked_token import RevokedToken
+from app.models.portal_lockout import PortalIdentityLockout
+
 __all__ = [
     # Core
     "Base",
     "User",
     "PasswordResetToken",
+    "StaffInvitation",
     "Practice",
     "Patient",
     # Appointments
@@ -182,6 +193,7 @@ __all__ = [
     "Lab",
     "LabCase",
     "LabInvoice",
+    "LabInvoicePayment",
     "LabCommunication",
     "LabCaseStatus",
     "LabCaseType",
@@ -194,6 +206,8 @@ __all__ = [
     "ReferralType",
     "ReferralSource",
     # Communication
+    "Reminder",
+    "ReminderStatus",
     "MessageTemplate",
     "PatientMessage",
     "ReminderSchedule",
@@ -230,4 +244,13 @@ __all__ = [
     "PaymentStatus",
     "CardType",
     "RecurringBillingStatus",
+    # Processor webhook ledger
+    "ProcessorWebhookEvent",
+    "ProcessorEventStatus",
+    # Token revocation
+    "RevokedToken",
+    "DailySummaryOutbox",
+    "DailySummaryStatus",
 ]
+
+from app.models.daily_summary import DailySummaryOutbox, DailySummaryStatus  # noqa: E402

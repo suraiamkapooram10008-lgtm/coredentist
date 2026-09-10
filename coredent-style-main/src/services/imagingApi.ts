@@ -14,6 +14,39 @@ import type {
 } from '@/types/imaging';
 import { apiClient } from './api';
 import { requireApiData, requireApiSuccess } from './apiResponse';
+type BackendImage = Record<string, unknown>;
+
+function normalizeImage(raw: BackendImage): PatientImage {
+  const annotations = raw.annotations;
+  let normalizedAnnotations: ImageAnnotation[] = [];
+  if (Array.isArray(annotations)) normalizedAnnotations = annotations as ImageAnnotation[];
+  if (typeof annotations === 'string') {
+    try { normalizedAnnotations = JSON.parse(annotations) as ImageAnnotation[]; } catch { normalizedAnnotations = []; }
+  }
+  return {
+    id: String(raw.id ?? ''),
+    patientId: String(raw.patientId ?? raw.patient_id ?? ''),
+    seriesId: raw.seriesId ? String(raw.seriesId) : raw.series_id ? String(raw.series_id) : undefined,
+    imageType: (raw.imageType ?? raw.image_type ?? 'other') as ImageType,
+    category: (raw.category ?? 'other') as ImageCategory,
+    title: String(raw.title ?? raw.file_name ?? 'Image'),
+    description: raw.description ? String(raw.description) : undefined,
+    toothNumber: raw.toothNumber ? String(raw.toothNumber) : raw.tooth_number ? String(raw.tooth_number) : undefined,
+    captureDate: String(raw.captureDate ?? raw.acquisition_date ?? raw.created_at ?? ''),
+    fileUrl: String(raw.fileUrl ?? raw.url ?? raw.file_path ?? ''),
+    thumbnailUrl: raw.thumbnailUrl ? String(raw.thumbnailUrl) : undefined,
+    fileSize: Number(raw.fileSize ?? raw.file_size ?? 0),
+    mimeType: String(raw.mimeType ?? raw.mime_type ?? 'application/octet-stream'),
+    width: raw.width ? Number(raw.width) : undefined,
+    height: raw.height ? Number(raw.height) : undefined,
+    annotations: normalizedAnnotations,
+    tags: Array.isArray(raw.tags) ? raw.tags as string[] : [],
+    isArchived: Boolean(raw.isArchived ?? raw.is_deleted ?? false),
+    createdBy: String(raw.createdBy ?? raw.provider_id ?? ''),
+    createdAt: String(raw.createdAt ?? raw.created_at ?? ''),
+    updatedAt: String(raw.updatedAt ?? raw.updated_at ?? ''),
+  };
+}
 
 export const imagingApi = {
   // ============================================
@@ -22,18 +55,23 @@ export const imagingApi = {
 
   async getImages(filters?: {
     patientId?: string;
-    seriesId?: string;
     imageType?: ImageType;
     category?: ImageCategory;
+    toothNumber?: string;
     startDate?: string;
     endDate?: string;
   }): Promise<PatientImage[]> {
-    return requireApiData(
-      await apiClient.get<PatientImage[]>('/imaging/images', filters as Record<string, unknown>),
-      'Failed to load images',
-    );
+    const { patientId, imageType, category, toothNumber, startDate, endDate } = filters ?? {};
+    const response = patientId
+      ? await apiClient.get<PatientImage[] | { images: PatientImage[] }>(
+          `/imaging/patients/${encodeURIComponent(patientId)}/images`,
+          { image_type: imageType, category, tooth_number: toothNumber, start_date: startDate, end_date: endDate },
+        )
+      : await apiClient.get<PatientImage[]>('/imaging/images');
+    const payload = requireApiData(response, 'Failed to load images');
+    const images = Array.isArray(payload) ? payload : payload.images;
+    return images.map((image) => normalizeImage(image as unknown as BackendImage));
   },
-
   async getImage(imageId: string): Promise<PatientImage | null> {
     return requireApiData(
       await apiClient.get<PatientImage>(`/imaging/images/${imageId}`),
@@ -43,32 +81,38 @@ export const imagingApi = {
 
   async uploadImage(data: {
     patientId: string;
-    seriesId?: string;
-    imageType: ImageType;
-    category: ImageCategory;
-    title: string;
-    description?: string;
-    toothNumber?: string;
-    captureDate: string;
     file: File;
-    tags?: string[];
+    imageType: ImageType;
+    category?: ImageCategory;
+    title?: string;
+    description?: string;
+    notes?: string;
+    toothNumber?: string;
+    deviceName?: string;
+    deviceSerial?: string;
   }): Promise<PatientImage> {
+    // Backend contract (endpoints/imaging.py upload_image): multipart `file`
+    // plus snake_case QUERY parameters — metadata sent as form fields 404s.
+    const params = new URLSearchParams();
+    params.set('image_type', data.imageType);
+    if (data.category) params.set('category', data.category);
+    if (data.title) params.set('title', data.title);
+    if (data.description) params.set('description', data.description);
+    if (data.notes) params.set('notes', data.notes);
+    if (data.toothNumber) params.set('tooth_number', data.toothNumber);
+    if (data.deviceName) params.set('device_name', data.deviceName);
+    if (data.deviceSerial) params.set('device_serial', data.deviceSerial);
+
     const formData = new FormData();
     formData.append('file', data.file);
-    formData.append('patientId', data.patientId);
-    if (data.seriesId) formData.append('seriesId', data.seriesId);
-    formData.append('imageType', data.imageType);
-    formData.append('category', data.category);
-    formData.append('title', data.title);
-    if (data.description) formData.append('description', data.description);
-    if (data.toothNumber) formData.append('toothNumber', data.toothNumber);
-    formData.append('captureDate', data.captureDate);
-    if (data.tags) formData.append('tags', JSON.stringify(data.tags));
 
-    const response = await apiClient.post<PatientImage>('/imaging/images/upload', formData);
-    
+    const response = await apiClient.post<PatientImage>(
+      `/imaging/patients/${encodeURIComponent(data.patientId)}/images?${params.toString()}`,
+      formData,
+    );
+
     if (response.success && response.data) {
-      return response.data;
+      return normalizeImage(response.data as unknown as BackendImage);
     }
     throw new Error(response.error?.message || 'Failed to upload image');
   },
@@ -109,12 +153,14 @@ export const imagingApi = {
   // ============================================
 
   async getSeries(filters?: { patientId?: string }): Promise<ImageSeries[]> {
-    return requireApiData(
-      await apiClient.get<ImageSeries[]>('/imaging/series', filters as Record<string, unknown>),
-      'Failed to load image series',
-    );
+    const response = filters?.patientId
+      ? await apiClient.get<ImageSeries[] | { series: ImageSeries[] }>(
+          `/imaging/patients/${encodeURIComponent(filters.patientId)}/series`,
+        )
+      : await apiClient.get<ImageSeries[]>('/imaging/series');
+    const payload = requireApiData(response, 'Failed to load image series');
+    return Array.isArray(payload) ? payload : payload.series;
   },
-
   async getSeriesById(seriesId: string): Promise<ImageSeries | null> {
     return requireApiData(
       await apiClient.get<ImageSeries>(`/imaging/series/${seriesId}`),

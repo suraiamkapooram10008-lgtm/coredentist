@@ -14,10 +14,11 @@ export interface LoginCredentials {
 
 export interface LoginResponse {
   access_token: string;
-  refresh_token: string;
+  refresh_token?: string;
   token_type: string;
   expires_in: number;
   csrf_token: string;
+  must_change_password?: boolean;
 }
 
 export interface InvitationDetails {
@@ -39,10 +40,20 @@ export interface User {
   practiceId: string;
   practiceName: string;
   practiceCountry: string; // The UI Switch: 'US' or 'IN'
+  /** ISO 4217 currency configured on the practice (e.g. 'INR'); undefined = derive from country. */
+  practiceCurrency?: string;
+  mustChangePassword: boolean;
   avatarUrl?: string;
 }
 
-export type UserRole = 'owner' | 'admin' | 'dentist' | 'hygienist' | 'front_desk';
+export type UserRole =
+  | 'owner'
+  | 'admin'
+  | 'dentist'
+  | 'hygienist'
+  | 'front_desk'
+  | 'group_owner'
+  | 'group_admin';
 
 export interface NotificationSummary {
   unreadCount: number;
@@ -138,6 +149,7 @@ export type AppointmentType =
   | 'crown'
   | 'root_canal'
   | 'extraction'
+  | 'whitening'
   | 'emergency'
   | 'consultation'
   | 'other';
@@ -229,86 +241,14 @@ export interface ClinicalNote {
   updatedAt: string;
 }
 
-// ============================================
-// Treatment Plan Types
-// ============================================
-
-export interface TreatmentPlan {
-  id: string;
-  patientId: string;
-  name: string;
-  status: 'draft' | 'presented' | 'accepted' | 'in_progress' | 'completed' | 'declined';
-  phases: TreatmentPhase[];
-  totalEstimate: number;
-  insuranceEstimate: number;
-  patientEstimate: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface TreatmentPhase {
-  id: string;
-  name: string;
-  sequence: number;
-  procedures: PlannedProcedure[];
-  status: 'pending' | 'in_progress' | 'completed';
-}
-
-export interface PlannedProcedure {
-  id: string;
-  code: string;
-  name: string;
-  toothNumber?: number;
-  surface?: ToothSurface[];
-  fee: number;
-  insuranceCoverage: number;
-  patientCost: number;
-  priority: 'urgent' | 'high' | 'medium' | 'low';
-  status: 'planned' | 'scheduled' | 'completed';
-}
+// Treatment-plan domain types live in types/treatmentPlan.ts so their names,
+// statuses, dates, procedure fields, and totals match the backend adapter.
 
 // ============================================
 // Billing Types
 // ============================================
 
-export interface Invoice {
-  id: string;
-  patientId: string;
-  patientName: string;
-  invoiceNumber: string;
-  status: 'draft' | 'sent' | 'partial' | 'paid' | 'overdue' | 'void';
-  lineItems: InvoiceLineItem[];
-  subtotal: number;
-  tax: number;
-  total: number;
-  amountPaid: number;
-  amountDue: number;
-  dueDate: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface InvoiceLineItem {
-  id: string;
-  procedureCode: string;
-  description: string;
-  toothNumber?: number;
-  quantity: number;
-  unitPrice: number;
-  total: number;
-}
-
-export interface Payment {
-  id: string;
-  invoiceId: string;
-  patientId: string;
-  amount: number;
-  method: 'cash' | 'card' | 'check' | 'insurance' | 'other';
-  reference?: string;
-  notes?: string;
-  processedAt: string;
-  processedBy: string;
-}
+export type { Invoice, InvoiceLineItem, InvoicePayment as Payment } from './billing';
 
 // ============================================
 // Reports Types

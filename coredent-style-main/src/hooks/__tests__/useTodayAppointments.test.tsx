@@ -86,6 +86,7 @@ describe("useTodayAppointments", () => {
   it("returns empty arrays on API failure and reports the error", async () => {
     mockedList.mockResolvedValue({
       success: false,
+      data: [],
       error: { code: 'UNAVAILABLE', message: 'Backend offline' },
     });
 

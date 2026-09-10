@@ -3,8 +3,7 @@ Async tests for Subscription API endpoints.
 """
 
 import pytest
-from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from app.models.subscription import SubscriptionPlan, SubscriptionInterval
 
@@ -110,6 +109,42 @@ class TestSubscriptionPlans:
         assert response.status_code == 200
         data = response.json()
         assert data["is_active"] is False
+
+
+class TestSubscriptionOwnership:
+    async def test_cannot_read_other_practice_plan(self, client, auth_headers, db_session, other_practice):
+        plan = SubscriptionPlan(
+            practice_id=other_practice.id,
+            name="Other Practice Plan",
+            amount=29.00,
+            currency="USD",
+            interval=SubscriptionInterval.MONTHLY,
+            is_active=True,
+        )
+        db_session.add(plan)
+        await db_session.commit()
+
+        response = await client.get(f"/api/v1/subscriptions/plans/{plan.id}", headers=auth_headers)
+        assert response.status_code == 404
+
+    async def test_cannot_update_other_practice_plan(self, client, auth_headers, db_session, other_practice):
+        plan = SubscriptionPlan(
+            practice_id=other_practice.id,
+            name="Other Practice Plan",
+            amount=29.00,
+            currency="USD",
+            interval=SubscriptionInterval.MONTHLY,
+            is_active=True,
+        )
+        db_session.add(plan)
+        await db_session.commit()
+
+        response = await client.put(
+            f"/api/v1/subscriptions/plans/{plan.id}",
+            headers=auth_headers,
+            json={"name": "Tampered"},
+        )
+        assert response.status_code == 404
 
 
 class TestSubscriptionStats:

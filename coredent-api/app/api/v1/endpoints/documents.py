@@ -3,13 +3,14 @@ Documents and Digital Intake Forms API
 Manages document templates, patient forms, and e-signatures
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update, func
 from uuid import UUID
 
 from app.core.database import get_db
 from app.api.deps import get_current_user, get_current_practice_id, verify_csrf
+from app.core.audit import log_audit_event
 from app.models.user import User
 from app.models.patient import Patient
 from app.models.document import (
@@ -89,6 +90,7 @@ async def list_documents(
 async def create_document(
     patient_id: UUID,
     template_id: UUID,
+    request: Request = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     practice_id: UUID = Depends(get_current_practice_id),
@@ -130,8 +132,27 @@ async def create_document(
     )
     db.add(doc)
 
-    # Increment usage
-    template.times_used = (template.times_used or 0) + 1
+    # H-02 FIX: Atomic increment to avoid read-modify-write lost updates
+    await db.execute(
+        update(DocumentTemplate)
+        .where(DocumentTemplate.id == template_id)
+        .values(times_used=func.coalesce(DocumentTemplate.times_used, 0) + 1)
+    )
+
+    # H-03 FIX: Audit Logging for patient document assignment
+    await log_audit_event(
+        db,
+        current_user,
+        "document_assigned",
+        "document",
+        doc.id,
+        request,
+        changes={
+            "patient_id": str(patient_id),
+            "template_id": str(template_id),
+            "name": template.name,
+        },
+    )
 
     await db.commit()
     await db.refresh(doc)

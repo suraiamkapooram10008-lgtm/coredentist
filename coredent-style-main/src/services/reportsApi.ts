@@ -15,9 +15,14 @@ import { apiClient } from './api';
 export const reportsApi = {
   // Get full dashboard metrics
   async getDashboardMetrics(dateRange: DateRange): Promise<ApiResponse<DashboardMetrics>> {
-    // Backend expects date strings in YYYY-MM-DD format, not ISO timestamps
-    const fromDate = dateRange.from.toISOString().split('T')[0];
-    const toDate = dateRange.to.toISOString().split('T')[0];
+    // Backend expects date strings in YYYY-MM-DD format, not ISO timestamps.
+    // Use LOCAL date components — toISOString() is UTC, which shifts the
+    // date back a day for positive UTC offsets (e.g. IST) on local-midnight
+    // dates.
+    const toLocalDate = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const fromDate = toLocalDate(dateRange.from);
+    const toDate = toLocalDate(dateRange.to);
     
     const response = await apiClient.get<DashboardMetrics>('/reports/dashboard', {
       from: fromDate,
@@ -30,6 +35,19 @@ export const reportsApi = {
 
   // Export report as CSV
   exportToCSV(reportType: ReportType, data: DashboardMetrics, dateRange: DateRange): string {
+    // CSV FORMULA-INJECTION FIX: user-controlled cells (type/month/chair)
+    // are sanitized so Excel does not interpret `=cmd`, `+`, `-`, `@` as
+    // formulas. Numeric server aggregates stay unquoted.
+    const csvCell = (v: unknown): string => {
+      const s = String(v ?? '');
+      // Quote when needed for CSV structure.
+      const needsQuote = /[",\n\r]/.test(s);
+      // Prefix formula triggers (after optional whitespace/quotes).
+      const triggersFormula = /^[ \t"']*[=+\-@]/.test(s);
+      const safe = triggersFormula ? `'${s}` : s;
+      if (needsQuote || triggersFormula) return `"${safe.replace(/"/g, '""')}"`;
+      return safe;
+    };
     let csv = '';
 
     switch (reportType) {
@@ -45,7 +63,7 @@ export const reportsApi = {
         csv += `No-Show Rate,${data.appointments.noShowRate}%\n\n`;
         csv += 'By Type\nType,Count\n';
         data.appointments.byType.forEach(t => {
-          csv += `${t.type},${t.count}\n`;
+          csv += `${csvCell(t.type)},${t.count}\n`;
         });
         break;
 
@@ -59,7 +77,7 @@ export const reportsApi = {
         csv += `Avg Per Visit,$${data.revenue.averagePerVisit}\n\n`;
         csv += 'By Month\nMonth,Revenue,Collected\n';
         data.revenue.byMonth.forEach(m => {
-          csv += `${m.month},$${m.revenue},$${m.collected}\n`;
+          csv += `${csvCell(m.month)},$${m.revenue},$${m.collected}\n`;
         });
         break;
 
@@ -82,7 +100,7 @@ export const reportsApi = {
         csv += `Average Utilization,${data.chairUtilization.averageUtilization}%\n\n`;
         csv += 'By Chair\nChair,Utilization,Appointments\n';
         data.chairUtilization.byChair.forEach(c => {
-          csv += `${c.chair},${c.utilization}%,${c.appointments}\n`;
+          csv += `${csvCell(c.chair)},${c.utilization}%,${c.appointments}\n`;
         });
         break;
     }

@@ -97,7 +97,6 @@ class Logger {
     this.addLog(entry);
     
     if (this.isDevelopment) {
-      // eslint-disable-next-line no-console
       console.debug(`[DEBUG] ${message}`, context);
     }
   }
@@ -114,8 +113,7 @@ class Logger {
   warn(message: string, context?: Record<string, unknown>) {
     const entry = this.createEntry('warn', message, context);
     this.addLog(entry);
-    
-    // eslint-disable-next-line no-console
+
     console.warn(`[WARN] ${message}`, context);
     this.sendToMonitoring(entry);
   }

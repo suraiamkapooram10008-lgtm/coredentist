@@ -164,6 +164,13 @@ class PaymentTransaction(Base):
     invoice_id = Column(UUID(as_uuid=True), ForeignKey("invoices.id"))
     payment_card_id = Column(UUID(as_uuid=True), ForeignKey("payment_cards.id"))
     recurring_billing_id = Column(UUID(as_uuid=True), ForeignKey("recurring_billing.id"))
+    # M5 FIX: link to the invoice-ledger Payment this processor transaction
+    # corresponds to. Nullable: manual ledger entries (cash/check/UPI) have no
+    # processor transaction, and legacy rows predate the link. The link is
+    # resolved from Payment.transaction_id == processor_transaction_id.
+    payment_id = Column(
+        UUID(as_uuid=True), ForeignKey("payments.id", name="fk_payment_transactions_payment_id"), nullable=True
+    )
 
     # Transaction Details
     transaction_type = Column(String(20), nullable=False)  # charge, refund, void, capture
@@ -179,7 +186,11 @@ class PaymentTransaction(Base):
     status = Column(Enum(PaymentStatus), default=PaymentStatus.PENDING)
 
     # Processor Info
-    processor_transaction_id = Column(String(255))
+    # C-01 FIX: unique. This column is the idempotency key for processor
+    # callbacks; without uniqueness a webhook lookup could match — and then
+    # mutate — the wrong ledger row, and concurrent deliveries could each
+    # insert their own row for one real payment.
+    processor_transaction_id = Column(String(255), unique=True, index=True)
     processor_response_code = Column(String(20))
     processor_response_message = Column(Text)
     authorization_code = Column(String(50))
@@ -219,6 +230,7 @@ class PaymentTransaction(Base):
     invoice = relationship("Invoice")
     payment_card = relationship("PaymentCard")
     recurring_billing = relationship("RecurringBilling", back_populates="payments")
+    payment = relationship("Payment")
 
     def __repr__(self):
         return f"<PaymentTransaction {self.id} - {self.status}>"

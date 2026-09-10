@@ -5,13 +5,14 @@ Handles billing, dunning, and payment retry logic
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from uuid import UUID
 import stripe as stripe_lib
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
+from sqlalchemy.orm import selectinload
 
 from app.models.subscription import (
     Subscription,
@@ -139,96 +140,132 @@ class SubscriptionBillingService:
     async def process_dunning(
         db: AsyncSession,
         background_tasks: Any,
+        practice_id: Optional[UUID] = None,
     ) -> Dict[str, int]:
         """
-        Run dunning process for all past-due subscriptions.
+        Run dunning process for past-due subscriptions.
         Automated retry system: Day 0, 3, 7, 14 with email notifications.
         """
         now = datetime.now(timezone.utc)
 
-        # Find subscriptions that need dunning
-        result = await db.execute(
-            select(Subscription).where(
-                Subscription.status == SubscriptionStatus.PAST_DUE,
-                Subscription.dunning_retry_count < Subscription.dunning_max_retries,
+        # Find subscriptions that need dunning. A NULL next_retry_at means
+        # "due now": the stripe.py status-sync path marks subscriptions
+        # PAST_DUE without scheduling a retry instant, and `NULL <= now`
+        # would silently exclude those rows from the sweep forever.
+        query = select(Subscription).where(
+            Subscription.status == SubscriptionStatus.PAST_DUE,
+            Subscription.dunning_retry_count < Subscription.dunning_max_retries,
+            or_(
+                Subscription.next_retry_at.is_(None),
                 Subscription.next_retry_at <= now,
-            )
+            ),
         )
+        if practice_id:
+            query = query.where(Subscription.practice_id == practice_id)
+
+        from app.core.database import row_locks_supported
+        if row_locks_supported():
+            query = query.with_for_update(skip_locked=True)
+
+        result = await db.execute(query)
         subs = result.scalars().all()
 
         processed_count = 0
         failed_count = 0
 
+        # M20 FIX: the transaction (and with it every ``FOR UPDATE`` row lock
+        # taken above) is held open across the WHOLE read-check-write
+        # sequence. The previous per-row ``db.commit()`` released all locks at
+        # the first commit, so a stripe status-sync webhook could flip a later
+        # row's status mid-batch and the stale ORM state (expire_on_commit is
+        # False) would overwrite it. Each row now runs inside a savepoint:
+        # a failure rolls back only that row's changes, and the single final
+        # commit makes the whole sweep atomic against concurrent writers.
         for sub in subs:
             try:
-                # Create dunning event
-                dunning_event = DunningEvent(
-                    subscription_id=sub.id,
-                    attempt_number=(sub.dunning_retry_count or 0) + 1,
-                    action=DunningAction.RETRY_PAYMENT,
-                    scheduled_at=now,
-                )
-                db.add(dunning_event)
+                async with db.begin_nested():
+                    # Create dunning event
+                    dunning_event = DunningEvent(
+                        subscription_id=sub.id,
+                        attempt_number=(sub.dunning_retry_count or 0) + 1,
+                        action=DunningAction.RETRY_PAYMENT,
+                        scheduled_at=now,
+                    )
+                    db.add(dunning_event)
 
-                # Attempt payment retry via Stripe
-                if settings.STRIPE_API_KEY and sub.stripe_subscription_id:
-                    try:
-                        invoices = stripe_lib.Invoice.list(
-                            subscription=sub.stripe_subscription_id,
-                            status="open",
-                            limit=1
-                        )
+                    # Attempt payment retry via Stripe (sync SDK — offload)
+                    if settings.STRIPE_API_KEY and sub.stripe_subscription_id:
+                        try:
+                            import asyncio
+                            invoices = await asyncio.to_thread(
+                                stripe_lib.Invoice.list,
+                                subscription=sub.stripe_subscription_id,
+                                status="open",
+                                limit=1
+                            )
 
-                        if invoices and invoices.data:
-                            invoice = invoices.data[0]
-                            stripe_lib.Invoice.finalize_invoice(invoice.id)
-                            dunning_event.result = "success"
+                            if invoices and invoices.data:
+                                invoice = invoices.data[0]
+                                await asyncio.to_thread(stripe_lib.Invoice.finalize_invoice, invoice.id)
+                                dunning_event.result = "success"
+                                dunning_event.executed_at = now
+                                sub.status = SubscriptionStatus.ACTIVE
+                                sub.dunning_retry_count = 0
+                                sub.last_payment_error = None
+                                processed_count += 1
+                                continue
+
+                        except stripe_lib.error.StripeError as e:
+                            error_msg = str(e)
+                            dunning_event.result = "failed"
+                            dunning_event.error_message = error_msg
                             dunning_event.executed_at = now
-                            sub.status = SubscriptionStatus.ACTIVE
-                            sub.dunning_retry_count = 0
-                            sub.last_payment_error = None
-                            processed_count += 1
-                            await db.commit()
-                            continue
+                            sub.dunning_retry_count = (sub.dunning_retry_count or 0) + 1
+                            sub.last_payment_error = error_msg
 
-                    except stripe_lib.error.StripeError as e:
-                        error_msg = str(e)
-                        dunning_event.result = "failed"
-                        dunning_event.error_message = error_msg
-                        dunning_event.executed_at = now
-                        sub.dunning_retry_count = (sub.dunning_retry_count or 0) + 1
-                        sub.last_payment_error = error_msg
+                            # Schedule next retry. dunning_retry_count was just
+                            # incremented (1-based attempt that failed), so the
+                            # next delay is retry_days[count] — the previous
+                            # `count - 1` was off-by-one (retry #1 rescheduled
+                            # for 0 days instead of 3).
+                            retry_days = [0, 3, 7, 14]
+                            retry_idx = sub.dunning_retry_count
 
-                        # Schedule next retry
-                        retry_days = [0, 3, 7, 14]
-                        retry_idx = sub.dunning_retry_count - 1
+                            if retry_idx < len(retry_days):
+                                sub.next_retry_at = now + timedelta(days=retry_days[retry_idx])
+                                dunning_event.action = DunningAction.SEND_EMAIL
 
-                        if retry_idx < len(retry_days):
-                            sub.next_retry_at = now + timedelta(days=retry_days[retry_idx])
-                            dunning_event.action = DunningAction.SEND_EMAIL
-
-                            # Send dunning email in background
-                            if sub.user:
-                                background_tasks.add_task(
-                                    SubscriptionBillingService.send_dunning_email,
-                                    sub.user.email,
-                                    str(sub.id),
-                                    sub.dunning_retry_count,
-                                    error_msg
+                                # Send dunning email in background.
+                                # NOTE: Subscription has no `user` relationship —
+                                # resolve a practice owner/admin email instead.
+                                owner_email = await SubscriptionBillingService._get_practice_billing_email(
+                                    db, sub.practice_id
                                 )
-                        else:
-                            sub.status = SubscriptionStatus.UNPAID
-                            dunning_event.action = DunningAction.CANCEL_SUBSCRIPTION
-                            dunning_event.result = "cancelled"
+                                if owner_email:
+                                    background_tasks.add_task(
+                                        SubscriptionBillingService.send_dunning_email,
+                                        owner_email,
+                                        str(sub.id),
+                                        sub.dunning_retry_count,
+                                        error_msg
+                                    )
+                            else:
+                                sub.status = SubscriptionStatus.UNPAID
+                                dunning_event.action = DunningAction.CANCEL_SUBSCRIPTION
+                                dunning_event.result = "cancelled"
 
-                        failed_count += 1
-
-                await db.commit()
+                            failed_count += 1
 
             except Exception as e:
+                # The savepoint rolls back only this row's changes; the row
+                # locks on the remaining subscriptions stay held.
                 logger.error(f"Dunning process error for {sub.id}: {e}")
-                await db.rollback()
                 failed_count += 1
+
+        # Single commit at the end: the FOR UPDATE locks taken above are held
+        # until here, so no concurrent writer could have observed (or
+        # overwritten) a half-processed batch.
+        await db.commit()
 
         return {
             "processed": processed_count,
@@ -237,34 +274,53 @@ class SubscriptionBillingService:
         }
 
     @staticmethod
+    async def _get_practice_billing_email(db: AsyncSession, practice_id) -> Optional[str]:
+        """Resolve a billing contact email (owner/admin) for a practice."""
+        from app.models.user import User, UserRole
+        result = await db.execute(
+            select(User.email).where(
+                User.practice_id == practice_id,
+                User.is_active.is_(True),
+                User.role.in_([UserRole.OWNER, UserRole.ADMIN]),
+            ).order_by(User.created_at).limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def calculate_mrr(
         db: AsyncSession,
         practice_id: UUID,
     ) -> Decimal:
         """Calculate Monthly Recurring Revenue"""
         result = await db.execute(
-            select(Subscription).where(
+            select(Subscription)
+            .options(selectinload(Subscription.plan))
+            .where(
                 Subscription.practice_id == practice_id,
                 Subscription.status.in_([SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIALING]),
             )
         )
         active_subs = result.scalars().all()
 
+        from decimal import ROUND_HALF_UP as _HALF_UP
+
+        # MRR is display-only but keep it cent-exact (was unquantized /12 etc).
         mrr = Decimal(0)
         for sub in active_subs:
             if sub.plan:
+                _amt = Decimal(str(sub.plan.amount))
                 if sub.plan.interval == SubscriptionInterval.MONTHLY:
-                    mrr += sub.plan.amount
+                    mrr += _amt
                 elif sub.plan.interval == SubscriptionInterval.ANNUAL:
-                    mrr += sub.plan.amount / 12
+                    mrr += (_amt / 12).quantize(Decimal("0.01"), rounding=_HALF_UP)
                 elif sub.plan.interval == SubscriptionInterval.QUARTERLY:
-                    mrr += sub.plan.amount / 3
+                    mrr += (_amt / 3).quantize(Decimal("0.01"), rounding=_HALF_UP)
                 elif sub.plan.interval == SubscriptionInterval.SEMI_ANNUAL:
-                    mrr += sub.plan.amount / 6
+                    mrr += (_amt / 6).quantize(Decimal("0.01"), rounding=_HALF_UP)
                 elif sub.plan.interval == SubscriptionInterval.WEEKLY:
-                    mrr += sub.plan.amount * Decimal("4.33")
+                    mrr += (_amt * Decimal("4.33")).quantize(Decimal("0.01"), rounding=_HALF_UP)
 
-        return mrr
+        return mrr.quantize(Decimal("0.01"), rounding=_HALF_UP)
 
     @staticmethod
     async def calculate_churn_rate(
@@ -327,9 +383,6 @@ class SubscriptionBillingService:
         practice_id: UUID,
     ) -> Dict[str, Any]:
         """Get comprehensive subscription statistics"""
-        now = datetime.now(timezone.utc)
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
         # Count by status
         status_counts = {}
         for status_val in SubscriptionStatus:

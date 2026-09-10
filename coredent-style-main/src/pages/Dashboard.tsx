@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { reportsApi } from '@/services/reportsApi';
 import { appointmentsApi } from '@/services/api';
 import { billingApi } from '@/services/billingApi';
+import { useCurrencyFormatter } from '@/hooks/useCurrencyFormatter';
 
 const quickActions = [
   {
@@ -64,6 +65,7 @@ function getGreeting(): string {
 
 export default function Dashboard() {
   const { user, hasRole } = useAuth();
+  const { formatCurrency } = useCurrencyFormatter({ maximumFractionDigits: 0 });
   const navigate = useNavigate();
 
   // Calculate date ranges
@@ -131,11 +133,14 @@ export default function Dashboard() {
   const upcomingAppointments = useMemo(() => {
     return [...appointments]
       .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+      .filter(apt => new Date(apt.startTime).getTime() > Date.now())
       .slice(0, 5);
   }, [appointments]);
+  // Count against the full day's list: slicing to the 5-row preview first
+  // capped the "X upcoming today" stat at 5.
   const upcomingCount = useMemo(
-    () => upcomingAppointments.filter(apt => new Date(apt.startTime).getTime() > Date.now()).length,
-    [upcomingAppointments]
+    () => appointments.filter(apt => new Date(apt.startTime).getTime() > Date.now()).length,
+    [appointments]
   );
   const recentActivity = useMemo(() => {
     return [...appointments]
@@ -346,14 +351,6 @@ function formatAppointmentType(value: string): string {
     .split('_')
     .map(word => (word?.charAt(0) || '?').toUpperCase() + (word?.slice(1) || ''))
     .join(' ');
-}
-
-function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 0,
-  }).format(amount);
 }
 
 // Activity Item Component

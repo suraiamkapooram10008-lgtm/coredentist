@@ -6,9 +6,29 @@ endpoints with mocked external API calls. Also verifies HIPAA audit
 logging triggers correctly on access attempts.
 """
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 from httpx import AsyncClient
+from datetime import date
 import uuid
+import uuid as uuid_lib
+
+from app.core.security import create_access_token, get_password_hash
+from app.models.user import User, UserRole
+
+
+def _sample_procedure() -> dict:
+    """A minimal valid claim procedure.
+
+    ``ClaimSubmitRequest.procedures`` now requires at least one entry: a claim
+    with no procedures bills nothing and is always rejected downstream.
+    """
+    return {
+        "procedure_code": "D0120",
+        "tooth": None,
+        "surface": None,
+        "fee": 100.0,
+        "date_of_service": "2026-01-15",
+    }
 
 
 class TestEDIEligibilityCheck:
@@ -25,7 +45,7 @@ class TestEDIEligibilityCheck:
             },
         )
         # Should be 401 or 403 (no auth token)
-        assert response.status_code in [401, 403, 422]
+        assert response.status_code == 401
 
     @pytest.mark.asyncio
     async def test_eligibility_check_returns_503_without_api_key(
@@ -105,7 +125,7 @@ class TestEDIClaimSubmission:
                 "service_date": "2026-01-15",
             },
         )
-        assert response.status_code in [401, 403, 422]
+        assert response.status_code == 401
 
     @pytest.mark.asyncio
     async def test_claim_submit_returns_503_without_api_key(
@@ -123,7 +143,7 @@ class TestEDIClaimSubmission:
                 json={
                     "patient_id": str(uuid.uuid4()),
                     "patient_insurance_id": str(uuid.uuid4()),
-                    "procedures": [],
+                    "procedures": [_sample_procedure()],
                     "total_amount": 100.0,
                     "service_date": "2026-01-15",
                 },
@@ -131,6 +151,28 @@ class TestEDIClaimSubmission:
             )
             # 503 (not configured) or 403 (CSRF)
             assert response.status_code in [403, 503]
+
+    @pytest.mark.asyncio
+    async def test_claim_submit_rejects_empty_procedure_list(
+        self, client: AsyncClient, auth_headers
+    ):
+        """A claim with no procedures bills nothing and is now rejected.
+
+        It previously validated, so an empty claim could be reserved and sent
+        to the clearinghouse, where it is guaranteed to be rejected.
+        """
+        response = await client.post(
+            "/api/v1/edi/claims/submit",
+            json={
+                "patient_id": str(uuid.uuid4()),
+                "patient_insurance_id": str(uuid.uuid4()),
+                "procedures": [],
+                "total_amount": 100.0,
+                "service_date": "2026-01-15",
+            },
+            headers=auth_headers,
+        )
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_claim_submit_schema_validation(self):
@@ -141,11 +183,71 @@ class TestEDIClaimSubmission:
         req = ClaimSubmitRequest(
             patient_id=claim_id,
             patient_insurance_id=uuid.uuid4(),
-            procedures=[],
+            procedures=[_sample_procedure()],
             total_amount=100.0,
             service_date="2026-01-15",
         )
         assert req.patient_id == claim_id
+        # H-03: omitting the key is allowed; the endpoint derives one.
+        assert req.idempotency_key is None
+
+    @pytest.mark.asyncio
+    async def test_claim_idempotency_key_is_content_addressed(self):
+        """H-03: identical claims collapse; different claims do not collide."""
+        from app.api.v1.endpoints.edi import _derive_claim_idempotency_key
+
+        patient_id = uuid.uuid4()
+        insurance_id = uuid.uuid4()
+        procedures = [
+            {
+                "procedureCode": "D2740",
+                "tooth": "14",
+                "surface": None,
+                "fee": 1200.0,
+                "dateOfService": "2026-01-15",
+            }
+        ]
+        kwargs = dict(
+            patient_id=patient_id,
+            patient_insurance_id=insurance_id,
+            service_date=date(2026, 1, 15),
+            procedures=procedures,
+            total_amount=1200.0,
+        )
+
+        first = _derive_claim_idempotency_key(**kwargs)
+        second = _derive_claim_idempotency_key(**kwargs)
+        assert first == second, "same claim must produce the same key"
+
+        # A different procedure on the same day for the same patient is a
+        # different claim and must not collide (the old five-minute rule
+        # rejected it outright).
+        other = dict(kwargs)
+        other["procedures"] = [
+            {
+                "procedureCode": "D0120",
+                "tooth": None,
+                "surface": None,
+                "fee": 75.0,
+                "dateOfService": "2026-01-15",
+            }
+        ]
+        other["total_amount"] = 75.0
+        assert _derive_claim_idempotency_key(**other) != first
+
+    @pytest.mark.asyncio
+    async def test_response_fingerprint_does_not_leak_body(self):
+        """M-22: clearinghouse bodies are logged as a digest, never verbatim."""
+        from app.api.v1.endpoints.edi import _response_fingerprint
+
+        body = "Subscriber JANE DOE 1985-04-12 rejected: invalid member id"
+        fingerprint = _response_fingerprint(body)
+
+        assert "JANE" not in fingerprint
+        assert "1985" not in fingerprint
+        assert len(fingerprint) == 32
+        assert _response_fingerprint(body) == fingerprint
+        assert _response_fingerprint("") == "empty"
 
     @pytest.mark.asyncio
     async def test_claim_submit_response_schema(self):
@@ -192,7 +294,7 @@ class TestEDIClaimStatus:
         """Verify that the claim status endpoint requires authentication."""
         fake_id = str(uuid.uuid4())
         response = await client.get(f"/api/v1/edi/claims/{fake_id}/status")
-        assert response.status_code in [401, 403]
+        assert response.status_code == 401
 
     @pytest.mark.asyncio
     async def test_claim_status_returns_503_without_api_key(
@@ -437,3 +539,52 @@ class TestGenericEDIAdapterFailsClosed:
 
         with pytest.raises(RuntimeError, match="not configured"):
             await EDIService().check_claim_status("SIM-123")
+
+
+class TestEDIRoleGuards:
+    """Money/PHI endpoints must reject non-privileged roles."""
+
+    async def _dentist_headers(self, db_session, test_practice):
+        user = User(
+            id=uuid_lib.uuid4(),
+            email=f"dentist_{uuid_lib.uuid4().hex[:8]}@example.com",
+            password_hash=get_password_hash("testpassword123"),
+            first_name="Doc",
+            last_name="Dentist",
+            role=UserRole.DENTIST,
+            practice_id=test_practice.id,
+            is_active=True,
+        )
+        db_session.add(user)
+        await db_session.flush()
+        await db_session.refresh(user)
+        token = create_access_token(
+            {"sub": str(user.id), "type": "access", "role": "DENTIST",
+             "practice_id": str(user.practice_id)}
+        )
+        return {"Authorization": f"Bearer {token}"}
+
+    async def test_eligibility_check_rejects_dentist(self, client: AsyncClient, db_session, test_practice):
+        headers = await self._dentist_headers(db_session, test_practice)
+        response = await client.post(
+            "/api/v1/edi/eligibility/check",
+            json={"patient_insurance_id": str(uuid.uuid4()), "service_date": "2026-01-15"},
+            headers=headers,
+        )
+        assert response.status_code == 403
+
+    async def test_claim_submit_rejects_dentist(self, client: AsyncClient, db_session, test_practice):
+        headers = await self._dentist_headers(db_session, test_practice)
+        response = await client.post(
+            "/api/v1/edi/claims/submit",
+            json={"patient_id": str(uuid.uuid4()), "procedures": [], "total_amount": 0},
+            headers=headers,
+        )
+        assert response.status_code == 403
+
+    async def test_claim_status_rejects_dentist(self, client: AsyncClient, db_session, test_practice):
+        headers = await self._dentist_headers(db_session, test_practice)
+        response = await client.get(
+            f"/api/v1/edi/claims/{uuid.uuid4()}/status", headers=headers
+        )
+        assert response.status_code == 403

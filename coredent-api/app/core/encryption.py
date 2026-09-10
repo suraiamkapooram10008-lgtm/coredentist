@@ -365,10 +365,10 @@ class _LegacyShim:
         return keyring.encrypt(plaintext)
 
     def decrypt(self, ciphertext: str) -> str:
-        try:
-            return keyring.decrypt(ciphertext)
-        except Exception:
-            return ciphertext
+        # Fail closed: returning the ciphertext envelope to callers expecting
+        # plaintext defeats encryption-at-rest guarantees and leaks the
+        # encrypted blob into logs/responses. Raise instead.
+        return keyring.decrypt(ciphertext)
 
 
 encryption = _LegacyShim()

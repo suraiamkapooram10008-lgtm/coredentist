@@ -6,10 +6,15 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  define: {
+    'process.env.NODE_ENV': JSON.stringify('test'),
+  },
   plugins: [react()],
   test: {
     environment: "jsdom",
     globals: true,
+    pool: "threads",
+    maxWorkers: 4,
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     testTimeout: 30000, // Coverage instrumentation can make UI renders significantly slower in CI.

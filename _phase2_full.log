@@ -1,0 +1,232 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.3, pytest-9.1.1, pluggy-1.5.0
+benchmark: 4.0.0 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)
+rootdir: D:\coredentist\coredent-api
+configfile: pytest.ini
+plugins: anyio-4.9.0, Faker-22.2.0, langsmith-0.3.42, asyncio-1.4.0, benchmark-4.0.0, cov-6.3.0, mock-3.12.0, timeout-2.4.0, xdist-3.5.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 863 items
+
+tests\test_api_health.py ...                                             [  0%]
+tests\test_appointments.py ..............                                [  1%]
+tests\test_appointments_contract.py ..                                   [  2%]
+tests\test_audit.py ....                                                 [  2%]
+tests\test_auth.py .................                                     [  4%]
+tests\test_billing.py .....................                              [  7%]
+tests\test_billing_comprehensive.py ....................                 [  9%]
+tests\test_booking.py ..........................                         [ 12%]
+tests\test_booking_comprehensive.py ......                               [ 13%]
+tests\test_booking_service.py ...                                        [ 13%]
+tests\test_clinical.py ...                                               [ 13%]
+tests\test_clinical_comprehensive.py ......                              [ 14%]
+tests\test_communication_tasks.py .............                          [ 15%]
+tests\test_communications.py ...................                         [ 18%]
+tests\test_communications_service.py ..................                  [ 20%]
+tests\test_config.py .......                                             [ 21%]
+tests\test_daily_summary_outbox.py ..                                    [ 21%]
+tests\test_documents.py ......                                           [ 22%]
+tests\test_documents_comprehensive.py .....                              [ 22%]
+tests\test_dr_recovery.py ...                                            [ 22%]
+tests\test_dunning_task.py .....                                         [ 23%]
+tests\test_e2e_funnel.py .                                               [ 23%]
+tests\test_edi.py ...........................                            [ 26%]
+tests\test_encryption.py .......                                         [ 27%]
+tests\test_enterprise.py .....                                           [ 28%]
+tests\test_file_security.py ............................................ [ 33%]
+.                                                                        [ 33%]
+tests\test_imaging_service.py ..........                                 [ 34%]
+tests\test_insurance.py ........                                         [ 35%]
+tests\test_insurance_comprehensive.py ..........                         [ 36%]
+tests\test_inventory.py ......                                           [ 37%]
+tests\test_inventory_comprehensive.py .......                            [ 38%]
+tests\test_kms.py ....................                                   [ 40%]
+tests\test_lab_vendor_referral_source_invoice.py .........               [ 41%]
+tests\test_labs.py .......                                               [ 42%]
+tests\test_labs_comprehensive.py ......                                  [ 42%]
+tests\test_main.py .............                                         [ 44%]
+tests\test_overdue_invoice_sweep.py ...                                  [ 44%]
+tests\test_patient_portal.py ....................                        [ 47%]
+tests\test_patients.py ..............                                    [ 48%]
+tests\test_payment_methods.py ...                                        [ 49%]
+tests\test_payment_processing.py .......                                 [ 49%]
+tests\test_payment_service.py .......                                    [ 50%]
+tests\test_payments.py ..........                                        [ 51%]
+tests\test_phase2_security_money.py ..........................           [ 54%]
+tests\test_phi_encrypted_at_rest.py .                                    [ 55%]
+tests\test_plan_quota.py ........                                        [ 55%]
+tests\test_postgres_concurrency.py ss                                    [ 56%]
+tests\test_rate_limit.py .............................                   [ 59%]
+tests\test_redis_rate_limit.py ......                                    [ 60%]
+tests\test_references_write.py .........                                 [ 61%]
+tests\test_referrals.py ........                                         [ 62%]
+tests\test_reports.py ...                                                [ 62%]
+tests\test_reports_comprehensive.py ...                                  [ 62%]
+tests\test_sanitization.py .....................................         [ 67%]
+tests\test_scheduling_reference.py ....                                  [ 67%]
+tests\test_scheduling_routes_integration.py ........                     [ 68%]
+tests\test_security.py ........                                          [ 69%]
+tests\test_security_headers_metrics.py ......                            [ 70%]
+tests\test_settings_comprehensive.py ...                                 [ 70%]
+tests\test_settings_endpoints.py ...                                     [ 70%]
+tests\test_staff.py .......                                              [ 71%]
+tests\test_staff_comprehensive.py .......                                [ 72%]
+tests\test_staff_endpoints.py ....                                       [ 73%]
+tests\test_staff_onboarding.py ...........                               [ 74%]
+tests\test_stripe.py ................                                    [ 76%]
+tests\test_subscription_billing.py .........                             [ 77%]
+tests\test_subscription_gating.py .............                          [ 78%]
+tests\test_subscription_service.py ...............                       [ 80%]
+tests\test_subscription_webhooks.py ..................                   [ 82%]
+tests\test_subscriptions.py .............                                [ 84%]
+tests\test_tenant_guard.py .....................                         [ 86%]
+tests\test_tenant_isolation.py ...............                           [ 88%]
+tests\test_tenant_refs.py ....................                           [ 90%]
+tests\test_token_blacklist.py ...............                            [ 92%]
+tests\test_treatment.py ............                                     [ 93%]
+tests\test_treatment_comprehensive.py ............                       [ 95%]
+tests\test_treatment_costing.py ......                                   [ 95%]
+tests\test_treatment_planning_service.py ......................          [ 98%]
+tests\test_usage_metering.py ...............C:\Users\ramie\AppData\Local\Programs\Python\Python313\Lib\ast.py:54: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000277DADABE20>
+  return compile(source, filename, mode, flags,
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+                             [100%]
+
+=============================== tests coverage ================================
+_______________ coverage: platform win32, python 3.13.3-final-0 _______________
+
+Name                                     Stmts   Miss  Cover   Missing
+----------------------------------------------------------------------
+app\api\deps.py                            197     96    51%   60, 91, 128-138, 159, 173-261, 265-267, 284, 286, 296, 298, 305-309, 315-331
+app\api\v1\api.py                           29      0   100%
+app\api\v1\endpoints\__init__.py            12      0   100%
+app\api\v1\endpoints\appointments.py       346    253    27%   86, 89, 110, 141-150, 183, 195, 263-307, 323-340, 358-370, 395-409, 431-550, 571-691, 711-732, 751-765, 788-802, 821-900, 923-978, 996-1119
+app\api\v1\endpoints\auth.py               444    308    31%   60, 97, 114, 167-324, 369-438, 466-468, 470, 476-477, 494-559, 570-725, 741-743, 763-834, 845-886, 901-940, 970-1017, 1035-1097, 1119-1125, 1140-1164, 1193-1273
+app\api\v1\endpoints\automations.py        217    131    40%   85-90, 102-110, 120, 126-127, 131-132, 149, 160-161, 178-190, 202-232, 245-280, 292-302, 314-338, 369, 382, 390-391, 395, 405-426, 433-448, 478-493
+app\api\v1\endpoints\billing.py            462    380    18%   83-85, 133-169, 206-240, 261-297, 325-336, 360-413, 415-499, 532-615, 635-668, 690-731, 768, 770-934, 949-1042, 1087-1182, 1209-1249, 1256-1276, 1290-1307, 1340, 1342-1461, 1464-1487
+app\api\v1\endpoints\booking.py            883    743    16%   118, 145, 155-198, 207-223, 239-294, 303, 328-329, 341, 376-378, 383-386, 406, 411-432, 461-525, 544-556, 577-628, 640-656, 670-762, 777-1226, 1242-1287, 1301-1324, 1346-1527, 1558, 1560-1850, 1859-1863, 1878-1980, 1985-1989, 1994-2077, 2092-2115, 2127-2155, 2173-2215, 2229-2359, 2384-2420, 2435-2479, 2492-2570
+app\api\v1\endpoints\clinical.py            41     18    56%   49-57, 78-120
+app\api\v1\endpoints\clinical_notes.py      89     57    36%   53-62, 73-78, 82, 111-117, 123-141, 146-161, 170-175, 187-224, 237-255, 267-273
+app\api\v1\endpoints\communications.py     312    205    34%   51, 71-83, 94-104, 119, 154-189, 202-219, 247, 249, 251, 253, 255, 257, 277-291, 312-326, 335, 338-345, 379-389, 412-434, 452-462, 473-483, 497-520, 534-558, 571-588, 607-622, 634-649, 663-703, 717-738, 753-772, 787-848, 866-868, 877-879, 894-954
+app\api\v1\endpoints\documents.py           37     17    54%   36-38, 67-69, 105-138
+app\api\v1\endpoints\edi.py                150    103    31%   45, 50, 110-122, 161-277, 305-526, 553-616
+app\api\v1\endpoints\enterprise.py          85     38    55%   78-179, 218-247
+app\api\v1\endpoints\imaging.py            273    221    19%   73-115, 142-213, 229-254, 271-294, 310-327, 344-371, 389-472, 492-518, 537-567, 584-629, 644-661, 678-699, 718-728, 744-759, 776-800
+app\api\v1\endpoints\insurance.py          321    241    25%   91, 94-95, 100-102, 127-135, 160-175, 195-210, 233-261, 285-308, 324-339, 356-379, 398-441, 470-531, 565-610, 639-774, 792-821, 841-876, 898-938, 960-988, 1003-1016, 1031-1050, 1062-1073
+app\api\v1\endpoints\inventory.py          206    132    36%   82, 85-86, 94, 118, 137, 201, 213, 218-233, 260-274, 289, 302-304, 324-345, 364-375, 403-436, 462-555, 576-602, 623-637, 658-669, 679-681, 702-723
+app\api\v1\endpoints\labs.py               369    274    26%   64, 70, 75-76, 118-122, 161, 248, 251, 256-257, 262-270, 283-297, 316-326, 345-359, 381-429, 456-470, 487, 498-590, 610-662, 682-695, 713-750, 770-790, 801-828, 855-906, 932, 934-1042, 1056-1095
+app\api\v1\endpoints\patient_portal.py     245     78    68%   59, 142-150, 194, 202, 205-206, 208, 210, 228, 256-259, 273-285, 294-299, 316-322, 340-347, 385-400, 420-423, 437, 453, 462-465, 480-507, 537-594, 626-640, 669-677, 729-743, 784, 789
+app\api\v1\endpoints\patients.py           354    254    28%   59-166, 213-254, 268, 286-308, 339-386, 390-411, 433-468, 502-607, 609, 625-631, 667-695, 711-722, 778-792, 796-808, 826-829, 843-863, 877-909, 924-951, 965-981
+app\api\v1\endpoints\payments.py           110     45    59%   72-74, 98-104, 121-142, 168-169, 190-191, 201-286
+app\api\v1\endpoints\references.py          85     40    53%   71-72, 92-93, 120-134, 169-170, 192-201, 222-226, 254-255, 283-294, 318-324
+app\api\v1\endpoints\referrals.py          301    223    26%   102-112, 122-143, 154, 160, 162, 165-166, 234, 266, 269, 273-274, 279-281, 294-315, 334-348, 366-374, 394-437, 457-482, 487-521, 538-592, 615-667, 680-700, 715-737, 752-786, 800-838, 869-976
+app\api\v1\endpoints\reports.py             96     75    22%   46-291
+app\api\v1\endpoints\settings.py           102     77    25%   20, 48-60, 72-124, 138-187, 202-222, 239-275
+app\api\v1\endpoints\staff.py              218    142    35%   37-40, 46, 51, 111-116, 134-177, 196-302, 313, 325, 337, 344-380, 432-469, 496-547, 560-596, 614-623
+app\api\v1\endpoints\stripe.py             270    143    47%   68, 75, 103-104, 118-167, 183-245, 285-393, 457-461, 477-478, 525-528, 538-599, 632-639, 658-665, 688-690
+app\api\v1\endpoints\subscriptions.py      334    255    24%   75-77, 90-137, 145-147, 172-183, 199-204, 218-236, 253-403, 413, 423-426, 436-446, 467-497, 510-531, 542-562, 575-604, 617-632, 642-649, 665, 679, 690-727, 747-750, 761-792, 803-835, 847-873
+app\api\v1\endpoints\treatment.py          408    321    21%   79, 83, 123-138, 154-196, 216-254, 268-283, 299-322, 337-353, 369-382, 398-415, 427-453, 468-501, 517-559, 574-575, 592-627, 641-642, 656-678, 693-726, 737-770, 782-809, 821-833, 847-915
+app\core\audit.py                           35      1    97%   32
+app\core\base.py                             2      0   100%
+app\core\business_time.py                  124     24    81%   69, 81, 87-89, 113, 128, 149, 156, 158, 161, 164, 185, 202, 207, 209, 223, 237, 243-248
+app\core\celery_app.py                      12      0   100%
+app\core\client_ip.py                       63      8    87%   53, 61, 64-65, 116, 120-121, 128
+app\core\communication_tasks.py            291    109    63%   54-56, 165, 184, 196, 202-217, 247, 277-283, 318, 337, 363, 383-389, 393-396, 424-515, 550-553, 583-586, 592-595, 621, 641-642, 655-658, 682-685, 693-702
+app\core\config_simple.py                  155     19    88%   263, 282, 319, 324-332, 339, 346, 353, 372-373, 376-377, 379, 401, 409, 420, 431
+app\core\database.py                        38     11    71%   18, 20, 28, 53, 76-83, 106
+app\core\edi.py                             85     49    42%   54-57, 61-62, 66, 81-152, 173, 192-200, 205
+app\core\email.py                          175     88    50%   30, 69-71, 124, 126, 128, 131, 140-178, 182-210, 215-223, 227-254, 264, 273, 287-288, 317-321, 392-394, 678-706
+app\core\email_tasks.py                     38     24    37%   48-81, 86-102, 133
+app\core\encryption.py                     163     40    75%   76, 79-80, 84, 88, 117-118, 126, 144, 146-149, 171-186, 192, 194, 201, 213-219, 229-231, 234, 237, 254, 299-304, 336-338, 365, 371
+app\core\file_security.py                  206     92    55%   125, 358-363, 383, 408-424, 446-452, 455-457, 476-499, 511-600, 613-615, 634-635, 668-698
+app\core\ip_rate_limit.py                   48     28    42%   48-50, 65-105, 109-128
+app\core\kms.py                             91      1    99%   198
+app\core\limiter.py                          3      0   100%
+app\core\rate_limit.py                     113      7    94%   80-82, 115-116, 247-248
+app\core\recaptcha.py                       34     26    24%   24-60
+app\core\redis_rate_limit.py                33      1    97%   38
+app\core\sanitization.py                    38      0   100%
+app\core\search_index.py                    46     12    74%   44-45, 50, 65-72, 75, 84, 97, 114, 117-118
+app\core\security.py                        68     11    84%   71-75, 90, 96, 99, 102, 166-167, 182
+app\core\sms.py                             94     65    31%   39-55, 74-87, 96-122, 135-147, 170-175, 186-191, 201-205, 216-221, 232-237, 247-252, 261-265, 269
+app\core\tasks.py                          482    359    26%   58-61, 72-98, 110-120, 129-130, 138, 149, 170-192, 205-234, 239-259, 264-267, 281-293, 304-500, 511, 535-558, 572-590, 596-787, 797-886, 898-927, 933-969, 979, 1001-1002, 1004, 1007, 1016-1019, 1023, 1028-1057, 1059-1061, 1125-1128
+app\core\tenant_guard.py                   117     16    86%   63, 68-69, 101, 104-105, 113, 132, 134, 185-188, 219, 223-224
+app\core\token_blacklist.py                 83     16    81%   64-74, 97, 117-125, 203, 207, 243-250
+app\core\webhook_security.py                58     29    50%   55-57, 97-139, 153
+app\main.py                                275     92    67%   35-48, 55-57, 62-92, 110-139, 166, 172, 176-184, 205-262, 395, 422-434, 462-463, 507, 612, 652-654, 726-728
+app\models\__init__.py                      27      0   100%
+app\models\appointment.py                   76      3    96%   81, 103, 124
+app\models\audit.py                         42      2    95%   38, 70
+app\models\billing.py                      136      5    96%   117, 131, 162, 192, 220
+app\models\booking.py                      195      5    97%   127, 217, 271, 312, 351
+app\models\clinical.py                      95      4    96%   56, 77, 108, 155
+app\models\communication.py                158      5    97%   96, 186, 233, 271, 301
+app\models\communication_settings.py        12     12     0%   3-17
+app\models\daily_summary.py                 33      0   100%
+app\models\document.py                     126      4    97%   92, 143, 189, 221
+app\models\imaging.py                      125      3    98%   140, 172, 199
+app\models\insurance.py                    199      6    97%   131, 181, 268, 303, 329, 347
+app\models\inventory.py                    167      8    95%   103, 107, 110, 147, 175, 216, 257, 283
+app\models\lab.py                          173      5    97%   101, 172, 228, 263, 287
+app\models\marketing.py                     90      0   100%
+app\models\password_reset.py                21      1    95%   39
+app\models\patient.py                       76      1    99%   169
+app\models\payment.py                      201     13    94%   96, 154, 236, 269, 319, 324, 329, 334, 339, 344, 349, 354, 357
+app\models\portal_lockout.py                11      1    91%   31
+app\models\practice.py                      97      1    99%   126
+app\models\processor_event.py               34      1    97%   113
+app\models\referral.py                     139      4    97%   94, 170, 197, 238
+app\models\reminder.py                      28      0   100%
+app\models\revoked_token.py                 16      1    94%   60
+app\models\staff_invitation.py              26      1    96%   56
+app\models\subscription.py                 169      6    96%   123, 212, 232, 260, 283, 315
+app\models\treatment.py                    192     12    94%   107, 147, 207-210, 215-216, 219, 262, 298, 327
+app\models\user.py                          53      0   100%
+app\schemas\__init__.py                      3      0   100%
+app\schemas\appointment.py                  82      3    96%   57, 65, 91
+app\schemas\auth.py                         40      0   100%
+app\schemas\billing.py                     164      5    97%   50, 149-156
+app\schemas\booking.py                     316      1    99%   192
+app\schemas\clinical.py                     96      0   100%
+app\schemas\common.py                       26      0   100%
+app\schemas\communication.py               253      9    96%   20-26, 187, 275
+app\schemas\edi.py                          52      0   100%
+app\schemas\imaging.py                     142      0   100%
+app\schemas\insurance.py                   293     11    96%   215, 274-280, 299-301
+app\schemas\lab.py                          25      1    96%   39
+app\schemas\patient.py                      89      0   100%
+app\schemas\patient_export.py               21      0   100%
+app\schemas\payment.py                      51      0   100%
+app\schemas\reference.py                    48      0   100%
+app\schemas\reports.py                      66      0   100%
+app\schemas\settings.py                     69     11    84%   40-46, 51, 85, 90, 92
+app\schemas\subscription.py                196      8    96%   91-94, 127-130
+app\schemas\treatment.py                   289      2    99%   205, 209
+app\schemas\user.py                         92      6    93%   72, 83, 122, 140-142
+app\services\__init__.py                    13      0   100%
+app\services\booking_service.py             13      0   100%
+app\services\booking_validation.py          16     16     0%   6-34
+app\services\communications_service.py     141     52    63%   110-226, 247-248
+app\services\imaging_analysis.py            80     62    22%   31-123, 140-211, 220-253, 265-301
+app\services\imaging_processing.py         131     86    34%   47-87, 92-95, 103-106, 115-121, 126-132, 137-143, 152-154, 171-176, 181-183, 193-217, 225-230, 243-250, 255-266, 271-282
+app\services\imaging_service.py            163     11    93%   52, 55, 58, 61, 111-112, 204, 229, 308, 312, 392
+app\services\invoice_status.py              46     17    63%   62, 65-67, 73, 76-93, 106, 119, 121, 123, 125, 130
+app\services\payment_processing.py         262    134    49%   69, 79, 86, 112-114, 125-126, 137, 143-148, 154, 156, 161, 182-191, 197-199, 210-211, 222, 229-230, 238-239, 258-260, 271, 282, 284, 290, 302, 318-320, 332, 347-397, 409-504, 514-562, 575, 583, 593-606
+app\services\payment_service.py            190     66    65%   60, 126, 128, 139-140, 143, 145, 149, 153, 166-175, 216, 231, 236, 239-242, 267, 272, 277, 281-284, 321, 326, 339-340, 343, 347, 384, 387, 390, 400, 402, 404, 429-479
+app\services\plan_quota.py                  55     25    55%   60, 70, 79, 107-113, 144-163
+app\services\processor_events.py           113     26    77%   92-93, 159-167, 186-189, 214, 226, 247, 288-307, 333-345
+app\services\subscription_billing.py       148     66    55%   41-69, 78-97, 107-137, 164, 168, 198-263, 279-287, 310-317
+app\services\subscription_service.py       167     91    46%   113-170, 210-266, 286-333, 345, 357-374, 379-391, 396-408
+app\services\subscription_webhooks.py      221     58    74%   47-51, 103, 127-141, 167-172, 181-186, 189-193, 209-213, 217-221, 223-227, 300, 351-352, 385-386, 394-414, 434-448, 465-466, 476, 479, 482, 485, 494
+app\services\tenant_refs.py                 79     13    84%   70, 186, 205, 238, 274-289
+app\services\treatment_costing.py          119     26    78%   24, 112-115, 169-207, 235
+app\services\treatment_planning.py          82      3    96%   102, 151, 190
+app\services\treatment_service.py          112     19    83%   135, 152-153, 195, 198, 201, 227, 229, 233-241, 249, 251, 253, 258-271, 285, 301
+app\services\usage_metering.py             153     15    90%   91, 204, 242, 244, 294, 351-352, 370-371, 400-401, 417-420, 436-437
+app\utils\__init__.py                        0      0   100%
+app\utils\storage.py                        61     34    44%   31-35, 40, 43-49, 53-59, 62-73, 76-86, 89-94, 99
+----------------------------------------------------------------------
+TOTAL                                    17461   6979    60%
+Coverage HTML written to dir htmlcov
+Coverage XML written to file coverage.xml
+Required test coverage of 60% reached. Total coverage: 60.03%
+================= 861 passed, 2 skipped in 1655.18s (0:27:35) =================

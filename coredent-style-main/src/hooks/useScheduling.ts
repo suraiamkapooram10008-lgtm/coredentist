@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { schedulingApi } from '@/services/schedulingApi';
 import type { ScheduleAppointment, ScheduleProvider } from '@/types/scheduling';
 import type { Chair, AppointmentTypeConfig } from '@/types/clinic';
@@ -11,7 +11,13 @@ export function useScheduling() {
   const [providers, setProviders] = useState<ScheduleProvider[]>([]);
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentTypeConfig[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<Error | null>(null);
   const [selectedAppointment, setSelectedAppointment] = useState<ScheduleAppointment | null>(null);
+
+  // Request sequencing: rapid date/view navigation fires overlapping loads;
+  // only the most recent request may commit its results, otherwise a slow
+  // stale week can overwrite the currently displayed one.
+  const loadSequenceRef = useRef(0);
 
   // Formatted date string
   const formattedDate = currentDate.toLocaleDateString('en-US', {
@@ -22,7 +28,9 @@ export function useScheduling() {
   });
 
   const loadData = useCallback(async () => {
+    const requestId = ++loadSequenceRef.current;
     setIsLoading(true);
+    setError(null);
     try {
       // Calculate start and end date of range based on view
       const startDate = new Date(currentDate);
@@ -54,10 +62,13 @@ export function useScheduling() {
         schedulingApi.getAppointments(startDate, endDate),
       ]);
 
+      // A newer request started while this one was in flight — discard it.
+      if (requestId !== loadSequenceRef.current) return;
+
       setChairs(chairsData);
       setProviders(providersData);
       setAppointmentTypes(typesData);
-      
+
       const parsedAppointments = appointmentsData.map((appt) => ({
         ...appt,
         startTime: appt.startTime instanceof Date ? appt.startTime : new Date(appt.startTime),
@@ -65,10 +76,14 @@ export function useScheduling() {
         duration: typeof appt.duration === 'number' ? appt.duration : parseInt(appt.duration as any, 10) || 30
       }));
       setAppointments(parsedAppointments);
-    } catch (error) {
-      console.error('Failed to load scheduling data', error);
+    } catch (cause) {
+      if (requestId !== loadSequenceRef.current) return;
+      const nextError = cause instanceof Error ? cause : new Error('Failed to load scheduling data');
+      setError(nextError);
     } finally {
-      setIsLoading(false);
+      if (requestId === loadSequenceRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [currentDate, view]);
 
@@ -161,6 +176,7 @@ export function useScheduling() {
     providers,
     appointmentTypes,
     isLoading,
+    error,
     selectedAppointment,
     formattedDate,
     setView,

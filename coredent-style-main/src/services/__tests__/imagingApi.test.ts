@@ -45,11 +45,13 @@ describe('imagingApi', () => {
       expect(result).toEqual(mockImage);
     });
 
-    it('uploadImage posts FormData', async () => {
+    it('uploadImage posts multipart file to the patient images route', async () => {
+      let capturedUrl: URL | undefined;
       server.use(
-        http.post('/api/v1/imaging/images/upload', () =>
-          HttpResponse.json({ ...mockImage, id: 'img-2' }, { status: 201 }),
-        ),
+        http.post('/api/v1/imaging/patients/p-1/images', ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({ ...mockImage, id: 'img-2' }, { status: 201 });
+        }),
       );
       const file = new File(['x'], 'xray.png', { type: 'image/png' });
       const result = await imagingApi.uploadImage({
@@ -57,10 +59,59 @@ describe('imagingApi', () => {
         imageType: 'xray',
         category: 'bitewing',
         title: 'New',
-        captureDate: '2026-06-22',
         file,
       });
       expect(result.id).toBe('img-2');
+      expect(capturedUrl?.searchParams.get('image_type')).toBe('xray');
+      expect(capturedUrl?.searchParams.get('category')).toBe('bitewing');
+      expect(capturedUrl?.searchParams.get('title')).toBe('New');
+    });
+
+    it('uploadImage sends all supported optional parameters as query params', async () => {
+      let capturedUrl: URL | undefined;
+      server.use(
+        http.post('/api/v1/imaging/patients/p-1/images', ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({ ...mockImage, id: 'img-3' }, { status: 201 });
+        }),
+      );
+      const file = new File(['x'], 'xray.png', { type: 'image/png' });
+      const result = await imagingApi.uploadImage({
+        patientId: 'p-1',
+        imageType: 'xray',
+        category: 'bitewing',
+        title: 'New',
+        description: 'Detail desc',
+        notes: 'Chairside notes',
+        toothNumber: '12',
+        deviceName: 'Gendex GX-1000',
+        deviceSerial: 'SN-42',
+        file,
+      });
+      expect(result.id).toBe('img-3');
+      expect(capturedUrl?.searchParams.get('description')).toBe('Detail desc');
+      expect(capturedUrl?.searchParams.get('notes')).toBe('Chairside notes');
+      expect(capturedUrl?.searchParams.get('tooth_number')).toBe('12');
+      expect(capturedUrl?.searchParams.get('device_name')).toBe('Gendex GX-1000');
+      expect(capturedUrl?.searchParams.get('device_serial')).toBe('SN-42');
+    });
+
+    it('uploadImage throws error on failure', async () => {
+      server.use(
+        http.post('/api/v1/imaging/patients/p-1/images', () =>
+          HttpResponse.json({ message: 'Upload limit exceeded' }, { status: 400 }),
+        ),
+      );
+      const file = new File(['x'], 'xray.png', { type: 'image/png' });
+      await expect(
+        imagingApi.uploadImage({
+          patientId: 'p-1',
+          imageType: 'xray',
+          category: 'bitewing',
+          title: 'New',
+          file,
+        })
+      ).rejects.toThrow('Upload limit exceeded');
     });
 
     it('updateImage sends a PUT', async () => {
@@ -72,6 +123,17 @@ describe('imagingApi', () => {
       );
       const result = await imagingApi.updateImage('img-1', { title: 'Updated' });
       expect(result.title).toBe('Updated');
+    });
+
+    it('updateImage throws error on failure', async () => {
+      server.use(
+        http.put('/api/v1/imaging/images/img-1', () =>
+          HttpResponse.json({ message: 'Update failed' }, { status: 400 }),
+        ),
+      );
+      await expect(
+        imagingApi.updateImage('img-1', { title: 'Updated' })
+      ).rejects.toThrow('Update failed');
     });
 
     it('deleteImage resolves', async () => {
@@ -105,6 +167,25 @@ describe('imagingApi', () => {
       expect(result.annotations).toHaveLength(1);
     });
 
+    it('addAnnotation throws error on failure', async () => {
+      server.use(
+        http.post('/api/v1/imaging/images/img-1/annotations', () =>
+          HttpResponse.json({ message: 'Cannot add annotation' }, { status: 400 }),
+        ),
+      );
+      await expect(
+        imagingApi.addAnnotation('img-1', {
+          type: 'circle',
+          x: 10,
+          y: 20,
+          width: 30,
+          height: 30,
+          text: 'Cavity',
+          color: '#ff0000',
+        })
+      ).rejects.toThrow('Cannot add annotation');
+    });
+
     it('deleteAnnotation removes an annotation', async () => {
       server.use(
         http.delete('/api/v1/imaging/images/img-1/annotations/ann-1', () =>
@@ -113,6 +194,17 @@ describe('imagingApi', () => {
       );
       const result = await imagingApi.deleteAnnotation('img-1', 'ann-1');
       expect(result.annotations).toEqual([]);
+    });
+
+    it('deleteAnnotation throws error on failure', async () => {
+      server.use(
+        http.delete('/api/v1/imaging/images/img-1/annotations/ann-1', () =>
+          HttpResponse.json({ message: 'Cannot delete annotation' }, { status: 400 }),
+        ),
+      );
+      await expect(
+        imagingApi.deleteAnnotation('img-1', 'ann-1')
+      ).rejects.toThrow('Cannot delete annotation');
     });
   });
 
@@ -150,6 +242,21 @@ describe('imagingApi', () => {
       expect(result.id).toBe('ser-2');
     });
 
+    it('createSeries throws error on failure', async () => {
+      server.use(
+        http.post('/api/v1/imaging/series', () =>
+          HttpResponse.json({ message: 'Creation failed' }, { status: 400 }),
+        ),
+      );
+      await expect(
+        imagingApi.createSeries({
+          patientId: 'p-1',
+          name: 'Panoramic',
+          seriesDate: '2026-06-22',
+        })
+      ).rejects.toThrow('Creation failed');
+    });
+
     it('updateSeries sends a PUT', async () => {
       const series = { id: 'ser-1', patientId: 'p-1', name: 'Full mouth', seriesDate: '2026-06-01' };
       server.use(
@@ -160,6 +267,17 @@ describe('imagingApi', () => {
       );
       const result = await imagingApi.updateSeries('ser-1', { name: 'Renamed' });
       expect(result.name).toBe('Renamed');
+    });
+
+    it('updateSeries throws error on failure', async () => {
+      server.use(
+        http.put('/api/v1/imaging/series/ser-1', () =>
+          HttpResponse.json({ message: 'Update failed' }, { status: 400 }),
+        ),
+      );
+      await expect(
+        imagingApi.updateSeries('ser-1', { name: 'Renamed' })
+      ).rejects.toThrow('Update failed');
     });
 
     it('deleteSeries resolves', async () => {
@@ -196,6 +314,54 @@ describe('imagingApi', () => {
         isActive: true,
       });
       expect(result.id).toBe('tpl-2');
+    });
+
+    it('createTemplate throws error on failure', async () => {
+      server.use(
+        http.post('/api/v1/imaging/templates', () =>
+          HttpResponse.json({ message: 'Creation failed' }, { status: 400 }),
+        ),
+      );
+      await expect(
+        imagingApi.createTemplate({
+          name: 'New',
+          imageType: 'xray',
+          category: 'bitewing',
+          isActive: true,
+        })
+      ).rejects.toThrow('Creation failed');
+    });
+
+    it('getTemplate returns a single template', async () => {
+      const tpl = { id: 'tpl-1', name: 'Default', isActive: true, createdAt: '', updatedAt: '' };
+      server.use(
+        http.get('/api/v1/imaging/templates/tpl-1', () => HttpResponse.json(tpl)),
+      );
+      const result = await imagingApi.getTemplate('tpl-1');
+      expect(result).toEqual(tpl);
+    });
+
+    it('updateTemplate sends a PUT and returns updated template', async () => {
+      const tpl = { id: 'tpl-1', name: 'Default', isActive: true, createdAt: '', updatedAt: '' };
+      server.use(
+        http.put('/api/v1/imaging/templates/tpl-1', async ({ request }) => {
+          const body = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ ...tpl, ...body });
+        }),
+      );
+      const result = await imagingApi.updateTemplate('tpl-1', { name: 'Updated Name' });
+      expect(result.name).toBe('Updated Name');
+    });
+
+    it('updateTemplate throws error on failure', async () => {
+      server.use(
+        http.put('/api/v1/imaging/templates/tpl-1', () =>
+          HttpResponse.json({ message: 'Update failed' }, { status: 400 }),
+        ),
+      );
+      await expect(
+        imagingApi.updateTemplate('tpl-1', { name: 'Updated' })
+      ).rejects.toThrow('Update failed');
     });
 
     it('deleteTemplate resolves', async () => {
@@ -243,6 +409,7 @@ describe('imagingApi', () => {
       expect(imagingApi.formatFileSize(0)).toBe('0 Bytes');
       expect(imagingApi.formatFileSize(1024)).toBe('1 KB');
       expect(imagingApi.formatFileSize(1024 * 1024)).toBe('1 MB');
+      expect(imagingApi.formatFileSize(1024 * 1024 * 1024)).toBe('1 GB');
     });
   });
 });

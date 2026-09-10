@@ -3,7 +3,7 @@
 // Analytics dashboard for clinic owners
 // ============================================
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -38,6 +38,7 @@ import { MetricCard } from '@/components/reports/MetricCard';
 import { reportsApi } from '@/services/reportsApi';
 import { useApiRequest } from '@/hooks/useApiRequest';
 import { useDateRange } from '@/hooks/useDateRange';
+import { useCurrencyFormatter } from '@/hooks/useCurrencyFormatter';
 import { cn } from '@/lib/utils';
 import type { ReportType, DateRange } from '@/types/reports';
 
@@ -71,15 +72,19 @@ export default function Reports() {
   // No error message - we'll handle empty state gracefully
   const apiOptions = useMemo(() => ({}), []);
 
+  // Stable fetcher: an inline arrow here previously gave `execute` a fresh
+  // identity every render, retriggering the load effect endlessly.
+  const fetchMetrics = useCallback(
+    (range: unknown) => reportsApi.getDashboardMetrics(range as DateRange),
+    [],
+  );
+
   const {
     data: metrics,
     isLoading,
     error,
     execute: loadMetrics
-  } = useApiRequest(
-    (dateRange: unknown) => reportsApi.getDashboardMetrics(dateRange as DateRange),
-    apiOptions,
-  );
+  } = useApiRequest(fetchMetrics, apiOptions);
 
   const [activeTab, setActiveTab] = useState('overview');
 
@@ -95,13 +100,7 @@ export default function Reports() {
     reportsApi.downloadCSV(filename, csv);
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      maximumFractionDigits: 0,
-    }).format(amount);
-  };
+  const { formatCurrency } = useCurrencyFormatter({ maximumFractionDigits: 0 });
 
   // Check if we have valid empty data (no error, but all zeros)
   const hasNoData = metrics && 
@@ -139,7 +138,9 @@ export default function Reports() {
               <Calendar
                 mode="range"
                 selected={{ from: dateRange.from, to: dateRange.to }}
-                onSelect={(range) => range?.from && range?.to && setCustomRange({ from: range.from, to: range.to })}
+                onSelect={(range: { from?: Date; to?: Date } | undefined) =>
+                  range?.from && range?.to && setCustomRange({ from: range.from, to: range.to })
+                }
                 numberOfMonths={2}
               />
             </PopoverContent>

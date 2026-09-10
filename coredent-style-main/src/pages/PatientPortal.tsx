@@ -30,6 +30,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
+import { SignaturePad } from '@/components/ui/signature-pad';
 import {
   Dialog,
   DialogContent,
@@ -39,8 +40,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { getCaptchaToken } from '@/lib/recaptcha';
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
 interface PortalSession {
   access_token: string;
@@ -104,6 +106,10 @@ function PortalLogin({ onLogin }: { onLogin: (session: PortalSession) => void })
   const [practiceSlug, setPracticeSlug] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // Option A inbox proof: step 1 sends a magic link, step 2 consumes its code.
+  const [linkSent, setLinkSent] = useState(false);
+  const [code, setCode] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -111,18 +117,98 @@ function PortalLogin({ onLogin }: { onLogin: (session: PortalSession) => void })
     setError('');
 
     try {
+      let captchaToken: string | undefined;
+      if (import.meta.env.VITE_RECAPTCHA_SITE_KEY?.trim()) {
+        captchaToken = await getCaptchaToken('portal_access');
+      }
+
       const res = await fetch(
-        `${API_BASE}/api/v1/portal/access?email=${encodeURIComponent(email)}&date_of_birth=${encodeURIComponent(dob)}&practice_slug=${encodeURIComponent(practiceSlug)}`,
-        { method: 'POST' }
+        `${API_BASE}/portal/access`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            date_of_birth: dob,
+            practice_slug: practiceSlug,
+            captcha_token: captchaToken,
+          }),
+        }
       );
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.detail || 'Verification failed');
       }
+      setLinkSent(true);
+      setResendCooldown(60);
+      const interval = setInterval(() => {
+        setResendCooldown((c) => {
+          if (c <= 1) clearInterval(interval);
+          return c - 1;
+        });
+      }, 1000);
+    } catch (err: any) {
+      setError(err.message || 'Unable to verify. Please contact your dental office.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      let captchaToken: string | undefined;
+      if (import.meta.env.VITE_RECAPTCHA_SITE_KEY?.trim()) {
+        captchaToken = await getCaptchaToken('portal_access');
+      }
+      const res = await fetch(`${API_BASE}/portal/access/resend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          date_of_birth: dob,
+          practice_slug: practiceSlug,
+          captcha_token: captchaToken,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'Unable to resend. Please try again later.');
+      }
+      setResendCooldown(60);
+      const interval = setInterval(() => {
+        setResendCooldown((c) => {
+          if (c <= 1) clearInterval(interval);
+          return c - 1;
+        });
+      }, 1000);
+    } catch (err: any) {
+      setError(err.message || 'Unable to resend. Please try again later.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      const res = await fetch(`${API_BASE}/portal/access/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || 'This sign-in link is invalid or expired.');
+      }
       const session: PortalSession = await res.json();
       onLogin(session);
     } catch (err: any) {
-      setError(err.message || 'Unable to verify. Please contact your dental office.');
+      setError(err.message || 'This sign-in link is invalid or expired.');
     } finally {
       setLoading(false);
     }
@@ -181,9 +267,15 @@ function PortalLogin({ onLogin }: { onLogin: (session: PortalSession) => void })
                 </div>
               )}
 
+              {linkSent && (
+                <div className="p-4 rounded-xl bg-blue-50 border border-blue-100 text-blue-700 text-sm font-bold">
+                  Check your email for a sign-in link. It expires in 15 minutes and can be used once.
+                </div>
+              )}
+
               <Button
                 type="submit"
-                disabled={loading}
+                disabled={loading || linkSent}
                 className="w-full h-14 rounded-2xl font-black text-base bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-xl shadow-blue-200 transition-all hover:scale-[1.02] active:scale-95"
               >
                 {loading ? (
@@ -191,8 +283,45 @@ function PortalLogin({ onLogin }: { onLogin: (session: PortalSession) => void })
                 ) : (
                   <Lock className="w-5 h-5 mr-2" />
                 )}
-                {loading ? 'Verifying...' : 'Access My Portal'}
+                {loading ? 'Verifying...' : 'Email Me a Sign-In Link'}
               </Button>
+
+              {linkSent && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={handleResend}
+                  disabled={loading || resendCooldown > 0}
+                  className="w-full"
+                >
+                  {resendCooldown > 0
+                    ? `Resend available in ${resendCooldown}s`
+                    : loading
+                      ? 'Resending...'
+                      : 'Resend Sign-In Link'}
+                </Button>
+              )}
+
+              {linkSent && (
+                <div className="space-y-2 pt-2">
+                  <Label className="text-xs font-black uppercase tracking-widest text-slate-400">Sign-In Code</Label>
+                  <Input
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    placeholder="Paste the code from your email link"
+                    className="h-12 rounded-xl border-slate-200 font-medium"
+                  />
+                  <Button
+                    type="button"
+                    disabled={loading || !code.trim()}
+                    onClick={(e) => void handleVerifyCode(e as unknown as React.FormEvent)}
+                    className="w-full h-12 rounded-2xl font-black text-base"
+                    variant="outline"
+                  >
+                    {loading ? 'Signing in...' : 'Sign In With Code'}
+                  </Button>
+                </div>
+              )}
 
               <div className="flex items-center gap-3 pt-2 text-slate-400 justify-center">
                 <Shield className="w-4 h-4" />
@@ -226,9 +355,12 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
   const [insurance, setInsurance] = useState<InsurancePolicy[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
 
   const [signingDoc, setSigningDoc] = useState<DocumentItem | null>(null);
-  const [signatureName, setSignatureName] = useState("");
+  const [signatureData, setSignatureData] = useState("");
+  const [signerName, setSignerName] = useState("");
+  const [signatureError, setSignatureError] = useState("");
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [isSubmittingSignature, setIsSubmittingSignature] = useState(false);
 
@@ -236,47 +368,98 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
   const [payingInvoice, setPayingInvoice] = useState<InvoiceItem | null>(null);
   const [paymentAmount, setPaymentAmount] = useState<string>("");
 
+  const useTypedSignature = () => {
+    const normalizedName = signerName.trim();
+    if (!normalizedName) {
+      setSignatureError('Enter your full legal name before using a typed signature.');
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 500;
+    canvas.height = 200;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      setSignatureError('Typed signatures are not supported by this browser.');
+      return;
+    }
+
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#111827';
+    context.font = 'italic 42px serif';
+    context.fillText(normalizedName, 24, 112, 452);
+    setSignatureData(canvas.toDataURL('image/png'));
+    setSignatureError('');
+  };
+
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const headers = { 'Content-Type': 'application/json' };
-    const tokenParam = `token=${encodeURIComponent(session.access_token)}`;
+    setFetchError(false);
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    };
 
     try {
       const [aptRes, billRes, txRes, insRes, docRes] = await Promise.allSettled([
-        fetch(`${API_BASE}/api/v1/portal/appointments?${tokenParam}`, { headers }),
-        fetch(`${API_BASE}/api/v1/portal/billing?${tokenParam}`, { headers }),
-        fetch(`${API_BASE}/api/v1/portal/treatment-plans?${tokenParam}`, { headers }),
-        fetch(`${API_BASE}/api/v1/portal/insurance?${tokenParam}`, { headers }),
-        fetch(`${API_BASE}/api/v1/portal/documents?${tokenParam}`, { headers }),
+        fetch(`${API_BASE}/portal/appointments`, { headers }),
+        fetch(`${API_BASE}/portal/billing`, { headers }),
+        fetch(`${API_BASE}/portal/treatment-plans`, { headers }),
+        fetch(`${API_BASE}/portal/insurance`, { headers }),
+        fetch(`${API_BASE}/portal/documents`, { headers }),
       ]);
 
+      // An expired/invalid portal session must re-authenticate, not render an
+      // empty "$0 outstanding" dashboard.
+      const results = [aptRes, billRes, txRes, insRes, docRes];
+      const unauthorized = results.some(
+        (res) =>
+          res.status === 'fulfilled' &&
+          (res.value.status === 401 || res.value.status === 403),
+      );
+      if (unauthorized) {
+        onLogout();
+        return;
+      }
+
+      let anySucceeded = false;
       if (aptRes.status === 'fulfilled' && aptRes.value.ok) {
         const d = await aptRes.value.json();
         setAppointments(d.appointments || []);
+        anySucceeded = true;
       }
       if (billRes.status === 'fulfilled' && billRes.value.ok) {
         const d = await billRes.value.json();
         setInvoices(d.invoices || []);
         setTotalOutstanding(d.total_outstanding || 0);
+        anySucceeded = true;
       }
       if (txRes.status === 'fulfilled' && txRes.value.ok) {
         const d = await txRes.value.json();
         setTreatmentPlans(d.treatment_plans || []);
+        anySucceeded = true;
       }
       if (insRes.status === 'fulfilled' && insRes.value.ok) {
         const d = await insRes.value.json();
         setInsurance(d.insurance_policies || []);
+        anySucceeded = true;
       }
       if (docRes.status === 'fulfilled' && docRes.value.ok) {
         const d = await docRes.value.json();
         setDocuments(d.documents || []);
+        anySucceeded = true;
       }
+
+      // Distinguish "no data" from "could not load": when every feed failed
+      // show an error state instead of a healthy-looking empty portal.
+      setFetchError(!anySucceeded);
     } catch {
-      // Silently handle - data just won't populate
+      setFetchError(true);
     } finally {
       setLoading(false);
     }
-  }, [session.access_token]);
+  }, [session.access_token, onLogout]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -288,6 +471,17 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
     if (!iso) return '';
     return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   };
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE}/portal/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+    } finally {
+      onLogout();
+    }
+  };
+
 
   const statusColor = (s: string) => {
     const lower = s.toLowerCase();
@@ -304,6 +498,31 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
           <Loader2 className="w-10 h-10 animate-spin text-blue-600 mx-auto" />
           <p className="font-bold text-slate-500">Loading your health data...</p>
         </div>
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 flex items-center justify-center p-4">
+        <Card className="border-none shadow-[0_30px_80px_rgba(0,0,0,0.08)] rounded-[2rem]">
+          <CardContent className="p-8 max-w-md text-center space-y-4">
+            <AlertCircle className="w-12 h-12 mx-auto text-red-400" />
+            <h2 className="text-xl font-black text-slate-800">Could not load your portal</h2>
+            <p className="text-sm text-slate-500 font-medium">
+              We were unable to reach the practice to load your appointments and bills. This is not
+              an empty account — the data simply failed to load.
+            </p>
+            <div className="flex gap-3 justify-center pt-2">
+              <Button onClick={fetchData} className="rounded-xl font-bold bg-blue-600 hover:bg-blue-700 text-white">
+                <Loader2 className="w-4 h-4 mr-2" /> Try Again
+              </Button>
+              <Button variant="outline" onClick={handleLogout} className="rounded-xl font-bold">
+                Sign Out
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -327,7 +546,7 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
               <User className="w-4 h-4 text-slate-500" />
               <span className="font-bold text-sm text-slate-700">{session.patient_name}</span>
             </div>
-            <Button variant="ghost" size="sm" onClick={onLogout} className="rounded-xl text-slate-400 hover:text-red-500">
+            <Button variant="ghost" size="sm" onClick={handleLogout} className="rounded-xl text-slate-400 hover:text-red-500">
               <LogOut className="w-4 h-4 mr-1" /> Sign Out
             </Button>
           </div>
@@ -649,7 +868,9 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
                               className="rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700"
                               onClick={() => {
                                 setSigningDoc(doc);
-                                setSignatureName("");
+                                setSignatureData("");
+                                setSignerName("");
+                                setSignatureError("");
                                 setAgreedToTerms(false);
                               }}
                             >
@@ -684,16 +905,44 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
                 </div>
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="sig-name" className="text-xs font-black uppercase tracking-widest text-slate-400">
-                      Type Full Name to Sign
+                    <Label htmlFor="portal-signer-name" className="text-xs font-black uppercase tracking-widest text-slate-400">
+                      Full Legal Name
                     </Label>
                     <Input
-                      id="sig-name"
-                      value={signatureName}
-                      onChange={(e) => setSignatureName(e.target.value)}
-                      placeholder="e.g. John Doe"
-                      className="h-12 rounded-xl border-slate-200 font-bold text-lg focus:ring-4 focus:ring-blue-100 transition-all"
+                      id="portal-signer-name"
+                      value={signerName}
+                      onChange={(event) => setSignerName(event.target.value)}
+                      autoComplete="name"
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-black uppercase tracking-widest text-slate-400">
+                      Draw Your Signature Below
+                    </Label>
+                    <div className="bg-slate-50 p-2 rounded-xl border border-slate-200">
+                      <SignaturePad
+                        width={500}
+                        height={200}
+                        onSave={(data) => setSignatureData(data)}
+                        onClear={() => setSignatureData("")}
+                      />
+                    </div>
+                    <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-xs text-slate-500">
+                        Cannot draw a signature? Use your legal name as an accessible alternative.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={useTypedSignature}
+                        disabled={!signerName.trim()}
+                      >
+                        Use Typed Name
+                      </Button>
+                    </div>
+                    <p aria-live="polite" className="text-xs font-medium text-emerald-700">
+                      {signatureData ? 'Signature captured.' : ''}
+                    </p>
                   </div>
                   <div className="flex items-start gap-3">
                     <input
@@ -704,9 +953,14 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
                       className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                     />
                     <Label htmlFor="sig-agree" className="text-xs text-slate-500 font-medium leading-relaxed cursor-pointer select-none">
-                      I agree that typing my name here acts as a binding electronic signature for this clinical document.
+                      I agree that my electronic signature above acts as a binding agreement for this clinical document.
                     </Label>
                   </div>
+                  {signatureError && (
+                    <p role="alert" className="text-sm font-medium text-red-600">
+                      {signatureError}
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -719,20 +973,32 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
                 Cancel
               </Button>
               <Button
-                disabled={!signatureName.trim() || !agreedToTerms || isSubmittingSignature}
+                disabled={!signatureData || !signerName.trim() || !agreedToTerms || isSubmittingSignature}
                 onClick={async () => {
                   if (!signingDoc) return;
                   setIsSubmittingSignature(true);
+                  setSignatureError('');
                   try {
-                    const res = await fetch(`${API_BASE}/api/v1/portal/documents/${signingDoc.id}/sign?token=${encodeURIComponent(session.access_token)}&signature_data=${encodeURIComponent(signatureName)}`, {
-                      method: 'POST'
+                    const res = await fetch(`${API_BASE}/portal/documents/${signingDoc.id}/sign`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${session.access_token}`,
+                      },
+                      body: JSON.stringify({
+                        signature_data: signatureData,
+                        signer_name: signerName,
+                        agreement_accepted: agreedToTerms,
+                      }),
                     });
-                    if (res.ok) {
-                      await fetchData();
-                      setSigningDoc(null);
+                    if (!res.ok) {
+                      const errorBody = await res.json().catch(() => null) as { detail?: string } | null;
+                      throw new Error(errorBody?.detail || 'Unable to sign the document. Please try again.');
                     }
+                    await fetchData();
+                    setSigningDoc(null);
                   } catch (err) {
-                    console.error('Failed to sign document:', err);
+                    setSignatureError(err instanceof Error ? err.message : 'Unable to sign the document. Please try again.');
                   } finally {
                     setIsSubmittingSignature(false);
                   }
@@ -786,17 +1052,62 @@ function PortalDashboard({ session, onLogout }: { session: PortalSession; onLogo
 
 export default function PatientPortal() {
   const [session, setSession] = useState<PortalSession | null>(null);
+  const [linkError, setLinkError] = useState('');
 
   const handleLogin = (s: PortalSession) => {
     setSession(s);
+    // Burn the code from the URL so a shared/copied link is not replayable.
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('code')) {
+        url.searchParams.delete('code');
+        window.history.replaceState({}, '', url.toString());
+      }
+    } catch { /* non-browser/test env */ }
   };
 
-  const handleLogout = () => {
+  // Magic-link click-through: /portal/verify?code=... verifies immediately.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let code: string | null = null;
+      try {
+        code = new URL(window.location.href).searchParams.get('code');
+      } catch { code = null; }
+      if (!code || session) return;
+      try {
+        const res = await fetch(`${API_BASE}/portal/access/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+        });
+        if (!res.ok) throw new Error('This sign-in link is invalid or expired.');
+        const s: PortalSession = await res.json();
+        if (!cancelled) handleLogin(s);
+      } catch (err: any) {
+        if (!cancelled) setLinkError(err.message || 'This sign-in link is invalid or expired.');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Stable identity so PortalDashboard.fetchData (dep [access_token, onLogout])
+  // does not loop on parent re-renders.
+  const handleLogout = useCallback(() => {
     setSession(null);
-  };
+  }, []);
 
   if (!session) {
-    return <PortalLogin onLogin={handleLogin} />;
+    return (
+      <>
+        {linkError && (
+          <div className="mx-auto mt-4 max-w-md p-4 rounded-xl bg-red-50 border border-red-100 text-red-600 text-sm font-bold" role="alert">
+            {linkError}
+          </div>
+        )}
+        <PortalLogin onLogin={handleLogin} />
+      </>
+    );
   }
 
   return <PortalDashboard session={session} onLogout={handleLogout} />;

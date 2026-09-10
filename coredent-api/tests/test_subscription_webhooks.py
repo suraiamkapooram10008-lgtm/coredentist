@@ -1,36 +1,38 @@
 """Unit tests for SubscriptionWebhookHandler using mocked async DB."""
 import pytest
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.services.subscription_webhooks import SubscriptionWebhookHandler
+from app.services.subscription_webhooks import (
+    SubscriptionWebhookHandler,
+    WebhookDeduplicationUnavailable,
+)
 from app.models.subscription import SubscriptionStatus
 
 
 @pytest.mark.asyncio
 class TestHandleSubscriptionCreated:
-    async def test_creates_new_subscription(self):
+    async def test_binds_pre_authorized_subscription(self):
+        import uuid
+
+        local_id = uuid.uuid4()
         mock_db = AsyncMock()
         mock_db.add = MagicMock()
 
-        # Existing subscription check -> none
-        existing_result = MagicMock()
-        existing_result.scalar_one_or_none.return_value = None
+        local_sub = MagicMock()
+        local_sub.id = local_id
+        local_sub.practice_id = uuid.uuid4()
+        local_sub.plan_id = uuid.uuid4()
+        local_sub.stripe_subscription_id = None
+        local_sub.stripe_customer_id = None
+        local_result = MagicMock()
+        local_result.scalar_one_or_none.return_value = local_sub
 
-        # Practice lookup
-        practice = MagicMock()
-        practice.id = "practice-1"
-        practice_result = MagicMock()
-        practice_result.scalar_one_or_none.return_value = practice
-
-        # Plan lookup
         plan = MagicMock()
-        plan.id = "plan-1"
-        plan.interval = None
+        plan.id = local_sub.plan_id
+        plan.stripe_price_id = "price_test_001"
         plan_result = MagicMock()
         plan_result.scalar_one_or_none.return_value = plan
-
-        mock_db.execute.side_effect = [existing_result, practice_result, plan_result]
+        mock_db.execute.side_effect = [local_result, plan_result]
 
         sub_data = {
             "id": "sub_test_001",
@@ -38,11 +40,19 @@ class TestHandleSubscriptionCreated:
             "status": "active",
             "current_period_start": 1700000000,
             "current_period_end": 1702592000,
-            "metadata": {"practice_id": "practice-1", "plan_id": "plan-1"},
+            "items": {"data": [{"price": {"id": "price_test_001"}}]},
+            "metadata": {
+                "coredent_subscription_id": str(local_id),
+                "practice_id": str(local_sub.practice_id),
+                "coredent_plan_id": str(local_sub.plan_id),
+            },
         }
 
         await SubscriptionWebhookHandler.handle_subscription_created(mock_db, sub_data)
-        mock_db.add.assert_called_once()
+        mock_db.add.assert_not_called()
+        assert local_sub.stripe_subscription_id == "sub_test_001"
+        assert local_sub.stripe_customer_id == "cus_test_001"
+        assert local_sub.status == SubscriptionStatus.ACTIVE
         mock_db.commit.assert_awaited_once()
 
     async def test_skips_existing(self):
@@ -251,7 +261,60 @@ class TestProcessWebhookEvent:
             mock_db,
             {
                 "type": "customer.subscription.created",
-                "data": {"object": {"id": "sub_1"}},
+                "data": {
+                    "object": {
+                        "id": "sub_1",
+                        "metadata": {
+                            "coredent_subscription_id": "11111111-1111-4111-8111-111111111111",
+                            "practice_id": "22222222-2222-4222-8222-222222222222",
+                            "coredent_plan_id": "33333333-3333-4333-8333-333333333333",
+                        },
+                    }
+                },
             }
         )
         assert result is False
+
+class TestWebhookDeduplication:
+    def setup_method(self):
+        SubscriptionWebhookHandler._processed_events_fallback.clear()
+
+    def test_non_production_uses_local_fallback_when_redis_fails(self):
+        with patch(
+            "app.services.subscription_webhooks._redis_client",
+            side_effect=ConnectionError("redis is down"),
+        ):
+            with patch(
+                "app.services.subscription_webhooks.settings.ENVIRONMENT",
+                "test",
+            ):
+                assert SubscriptionWebhookHandler._is_duplicate_event("evt_dev") is False
+                assert SubscriptionWebhookHandler._is_duplicate_event("evt_dev") is True
+
+    def test_production_fails_closed_when_redis_fails(self):
+        with patch(
+            "app.services.subscription_webhooks._redis_client",
+            side_effect=ConnectionError("redis is down"),
+        ):
+            with patch(
+                "app.services.subscription_webhooks.settings.ENVIRONMENT",
+                "production",
+            ):
+                with pytest.raises(WebhookDeduplicationUnavailable):
+                    SubscriptionWebhookHandler._is_duplicate_event("evt_prod")
+
+    def test_redis_setnx_deduplicates_across_workers(self):
+        redis_client = MagicMock()
+        redis_client.set.side_effect = [True, None]
+        with patch(
+            "app.services.subscription_webhooks._redis_client",
+            return_value=redis_client,
+        ):
+            assert SubscriptionWebhookHandler._is_duplicate_event("evt_redis") is False
+            assert SubscriptionWebhookHandler._is_duplicate_event("evt_redis") is True
+        redis_client.set.assert_called_with(
+            "webhook:processed:evt_redis",
+            "1",
+            ex=86400,
+            nx=True,
+        )

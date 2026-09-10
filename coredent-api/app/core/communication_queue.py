@@ -1,144 +1,67 @@
+"""Deprecated compatibility facade for the legacy communications queue.
+
+The former implementation had an independent select/PENDING/send/commit state
+machine, so HTTP and billing producers could race the modern worker and
+transmit the same message twice. Keep its public import paths and Celery task
+name for queued legacy callers, but route every delivery through the durable
+``communication_tasks.send_message_task`` claimant.
 """
-Communications Task Queue Handler
-Bridges between Celery tasks and the unified task queue abstraction
-"""
+
+from __future__ import annotations
 
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
 
-from app.core.task_queue import get_task_queue
-from app.core.email import EmailService, EmailProvider
-from app.core.sms import SMSService, SMSProvider
-from app.core.config_simple import settings
-from app.models.communication import (
-    PatientMessage, MessageStatus, MessageType
-)
+from celery import shared_task
+
+from app.core.communication_tasks import send_message_task as _durable_send_message
 
 logger = logging.getLogger(__name__)
 
 
-def _do_send_message(message_id: str) -> Dict[str, Any]:
-    """
-    Actual implementation of message sending (sync version)
-    This is called by the Celery task OR by the memory queue fallback
-    """
-    from app.core.database import SessionLocal
-
-    db = SessionLocal()
-
+def _queue_durable_message(message_id: str):
+    """Publish only; a committed PENDING row is recovered by Beat on failure."""
     try:
-        message = db.query(PatientMessage).filter(PatientMessage.id == message_id).first()
-
-        if not message:
-            logger.error(f"Message not found: {message_id}")
-            return {"status": "error", "error": "Message not found"}
-
-        if message.status not in [MessageStatus.PENDING, MessageStatus.QUEUED]:
-            logger.warning(f"Message {message_id} already processed, status: {message.status}")
-            return {"status": "skipped", "reason": f"Message already has status {message.status}"}
-
-        from app.models.practice import Practice
-        practice = db.query(Practice).filter(Practice.id == message.practice_id).first()
-
-        message.status = MessageStatus.SENDING
-        message.sent_at = message.sent_at or datetime.now(timezone.utc)
-        db.commit()
-
-        success = False
-        error_message = None
-        external_id = None
-
-        if message.message_type == MessageType.SMS:
-            sms_service = SMSService(
-                provider=SMSProvider.TWILIO if settings.TWILIO_ACCOUNT_SID else SMSProvider.CONSOLE
-            )
-
-            result = sms_service.send_sms(
-                to=message.recipient_phone,
-                message=message.content
-            )
-
-            success = result.get("status") == "sent"
-            external_id = result.get("external_id")
-            error_message = result.get("error")
-
-        elif message.message_type == MessageType.EMAIL:
-            email_service = EmailService(
-                provider=EmailProvider.SENDGRID if settings.SENDGRID_API_KEY else EmailProvider.CONSOLE
-            )
-
-            result = email_service.send_email(
-                to=message.recipient_email,
-                subject=message.subject or f"Message from {practice.name if practice else 'CoreDent'}",
-                html_content=message.content,
-                text_content=message.content
-            )
-
-            success = result.get("status") == "sent"
-            external_id = result.get("message_id")
-            error_message = result.get("error")
-
-        if success:
-            message.status = MessageStatus.SENT
-            message.external_id = external_id
-            message.delivered_at = datetime.now(timezone.utc)
-            logger.info(f"Message {message_id} sent successfully via {message.message_type}")
-        else:
-            message.status = MessageStatus.FAILED
-            message.error_message = error_message
-            logger.error(f"Message {message_id} failed: {error_message}")
-
-        db.commit()
-        return {
-            "status": "sent" if success else "failed",
-            "message_id": message_id,
-            "external_id": external_id,
-            "error": error_message
-        }
-
-    except Exception as e:
-        logger.error(f"Error sending message {message_id}: {e}")
-        db.rollback()
-
-        try:
-            message = db.query(PatientMessage).filter(PatientMessage.id == message_id).first()
-            if message:
-                message.status = MessageStatus.FAILED
-                message.error_message = str(e)
-                db.commit()
-        except Exception:
-            pass
-
-        return {"status": "error", "error": str(e)}
-
-    finally:
-        db.close()
+        return _durable_send_message.delay(str(message_id))
+    except Exception as exc:
+        logger.warning(
+            "Could not publish legacy message %s; durable dispatcher will recover it: %s",
+            message_id,
+            exc,
+        )
+        return None
 
 
-from datetime import datetime, timezone
+@shared_task(
+    bind=True,
+    name="app.core.communication_queue.send_message_celery_task",
+)
+def send_message_celery_task(self, msg_id: str) -> Dict[str, Any]:
+    """Compatibility task for messages already present in older brokers."""
+    result = _queue_durable_message(msg_id)
+    return {
+        "status": "queued" if result is not None else "pending_recovery",
+        "message_id": str(msg_id),
+        "task_id": getattr(result, "id", None),
+    }
 
 
-def send_message_task(message_id: str) -> Dict[str, Any]:
-    """
-    Task to send a message - dispatches to Celery or memory queue
+def send_message_task(message_id: str):
+    """Deprecated public wrapper retained for existing imports."""
+    return _queue_durable_message(message_id)
 
-    This function can be called directly (sync) or via .delay() (async)
-    """
-    task_queue = get_task_queue()
 
-    if task_queue.is_celery:
-        from celery import shared_task
-        @shared_task(bind=True, max_retries=3, default_retry_delay=60)
-        def celery_task(self, msg_id):
-            return _do_send_message(msg_id)
-        return celery_task.delay(message_id)
-    else:
-        return _do_send_message(message_id)
+def _do_send_message(message_id: str) -> Dict[str, Any]:
+    """Compatibility alias; never sends directly outside the durable worker."""
+    result = _queue_durable_message(message_id)
+    return {
+        "status": "queued" if result is not None else "pending_recovery",
+        "message_id": str(message_id),
+        "task_id": getattr(result, "id", None),
+    }
 
 
 def send_message_sync(message_id: str) -> Dict[str, Any]:
-    """
-    Synchronous version of send_message_task
-    Use this when you need to wait for the result
-    """
-    return _do_send_message(message_id)
+    """Synchronous legacy adapter for callers that explicitly need a result."""
+    result = _durable_send_message.apply(args=(str(message_id),))
+    return result.get(propagate=True)

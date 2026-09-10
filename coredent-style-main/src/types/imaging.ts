@@ -3,7 +3,7 @@
 // TypeScript types for imaging management
 // ============================================
 
-export type ImageType = 'xray' | 'photo' | 'scan' | 'other';
+export type ImageType = 'xray' | 'photo' | 'scan' | 'document' | 'other';
 export type ImageCategory = 'periapical' | 'bitewing' | 'panoramic' | 'cephalometric' | 'cbct' | 'intraoral' | 'extraoral' | 'other';
 
 export interface PatientImage {

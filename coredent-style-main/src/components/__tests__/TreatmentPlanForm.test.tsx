@@ -13,12 +13,16 @@ function makePlan(overrides: Partial<TreatmentPlan> = {}): TreatmentPlan {
   return {
     id: '1',
     title: 'Root Canal Treatment',
-    description: 'Complex root canal',
+    treatmentGoals: 'Complex root canal',
     patientId: 'p1',
+    providerId: 'provider-1',
     patientName: 'John Doe',
-    status: 'proposed',
+    status: 'draft',
+    totalEstimatedCost: 0,
+    totalInsuranceEstimate: 0,
+    totalPatientResponsibility: 0,
     procedures: [],
-    createdBy: 'dentist-1',
+    phases: [],
     notes: 'Follow up required',
     ...overrides,
   };
@@ -40,7 +44,7 @@ describe('TreatmentPlanForm', () => {
   it('should populate form with plan data for editing', () => {
     const plan = makePlan({
       title: 'Root Canal Treatment',
-      description: 'Complex root canal',
+      treatmentGoals: 'Complex root canal',
       patientName: 'John Doe',
       notes: 'Follow up required',
     });
@@ -96,7 +100,7 @@ describe('TreatmentPlanForm', () => {
   it('should show Save Changes button for existing plan', () => {
     const plan = makePlan({
       title: 'Root Canal',
-      description: 'Treatment',
+      treatmentGoals: 'Treatment',
       notes: 'Notes',
     });
 
@@ -166,7 +170,7 @@ describe('TreatmentPlanForm', () => {
       />
     );
 
-    const descriptionInput = screen.getByPlaceholderText('Brief description of the treatment plan...');
+    const descriptionInput = screen.getByPlaceholderText('Clinical goals for this treatment plan...');
     await user.type(descriptionInput, 'Test description');
 
     expect(descriptionInput).toHaveValue('Test description');
@@ -176,7 +180,7 @@ describe('TreatmentPlanForm', () => {
     const plan1 = makePlan({
       id: '1',
       title: 'Plan 1',
-      description: 'Description 1',
+      treatmentGoals: 'Description 1',
       patientName: 'John Doe',
       notes: 'Notes 1',
     });
@@ -184,7 +188,7 @@ describe('TreatmentPlanForm', () => {
     const plan2 = makePlan({
       id: '2',
       title: 'Plan 2',
-      description: 'Description 2',
+      treatmentGoals: 'Description 2',
       patientId: 'p2',
       patientName: 'Jane Doe',
       notes: 'Notes 2',

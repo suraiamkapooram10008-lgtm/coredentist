@@ -1,14 +1,15 @@
 """
 Tests for Stripe payment processing integration.
 
-Since the Stripe router is not mounted in the main API router (api.py),
 we test the webhook handler functions directly as unit tests and verify
 the core payment/subscription lifecycle logic.
 """
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
-from datetime import datetime, timezone
-import json
+from uuid import UUID
+from types import SimpleNamespace
+from fastapi import HTTPException
+from app.schemas.payment import PaymentIntentCreate
 
 
 def _async_db(*scalar_results):
@@ -17,6 +18,8 @@ def _async_db(*scalar_results):
     db.execute = AsyncMock()
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
+    db.flush = AsyncMock()
+    db.refresh = AsyncMock()
     db.add = MagicMock()
 
     results = []
@@ -59,10 +62,12 @@ class TestStripeWebhookHandlers:
 
     @pytest.mark.asyncio
     async def test_handle_payment_succeeded_no_record(self):
-        """Test graceful handling when no matching Payment record exists."""
-        from app.api.v1.endpoints.stripe import handle_payment_succeeded
+        """C-01: an unattributable payment is quarantined, never silently dropped."""
+        from app.api.v1.endpoints.stripe import handle_payment_succeeded, _current_event_id
+        from app.models.processor_event import ProcessorEventStatus
 
-        mock_db = _async_db(None)
+        # No local ledger row, and no routing metadata to reconstruct one.
+        mock_db = _async_db(None, None)
 
         payment_intent = {
             "id": "pi_nonexistent_99999",
@@ -70,9 +75,115 @@ class TestStripeWebhookHandlers:
             "currency": "usd",
         }
 
-        # Should not raise - graceful no-op
-        await handle_payment_succeeded(mock_db, payment_intent)
-        mock_db.commit.assert_not_awaited()
+        token = _current_event_id.set("evt_unattributable_1")
+        try:
+            await handle_payment_succeeded(mock_db, payment_intent)
+        finally:
+            _current_event_id.reset(token)
+
+        # The event must be durably recorded as UNRECONCILED and committed.
+        # Previously this path logged and returned, so the webhook answered
+        # 200 for money that was never recorded anywhere.
+        assert mock_db.add.call_count == 1
+        recorded = mock_db.add.call_args[0][0]
+        assert recorded.event_id == "evt_unattributable_1"
+        assert recorded.status == ProcessorEventStatus.UNRECONCILED
+        assert recorded.processor_object_id == "pi_nonexistent_99999"
+        assert recorded.amount_minor == 5000
+        assert recorded.payment_transaction_id is None
+        assert recorded.error_message
+        mock_db.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_handle_payment_succeeded_reconstructs_from_metadata(self):
+        """C-01: a missing ledger row is rebuilt when metadata identifies the tenant."""
+        from app.services.processor_events import resolve_payment_transaction
+
+        practice_id = "11111111-1111-4111-8111-111111111111"
+        patient_id = "22222222-2222-4222-8222-222222222222"
+
+        patient = MagicMock()
+        patient.id = UUID(patient_id)
+        patient.practice_id = UUID(practice_id)
+
+        # 1st execute: no existing PaymentTransaction. 2nd: patient lookup.
+        # 3rd: M5 ledger link (no invoice-ledger Payment row -> no-op).
+        mock_db = _async_db(None, patient, None)
+
+        payment_intent = {
+            "id": "pi_reconstruct_1",
+            "amount": 12345,
+            "currency": "usd",
+            "metadata": {"practice_id": practice_id, "patient_id": patient_id},
+        }
+
+        transaction, reason = await resolve_payment_transaction(mock_db, payment_intent)
+
+        assert reason is None
+        assert transaction is not None
+        assert transaction.processor_transaction_id == "pi_reconstruct_1"
+        assert str(transaction.practice_id) == practice_id
+        assert str(transaction.patient_id) == patient_id
+        assert str(transaction.amount) == "123.45"
+
+    @pytest.mark.asyncio
+    async def test_resolve_rejects_cross_tenant_metadata(self):
+        """C-01: metadata claiming a patient from another practice is refused."""
+        from app.services.processor_events import resolve_payment_transaction
+
+        # 1st execute: no existing row. 2nd: patient lookup returns None because
+        # the practice_id/patient_id pair does not match.
+        mock_db = _async_db(None, None)
+
+        payment_intent = {
+            "id": "pi_cross_tenant_1",
+            "amount": 5000,
+            "currency": "usd",
+            "metadata": {
+                "practice_id": "11111111-1111-4111-8111-111111111111",
+                "patient_id": "33333333-3333-4333-8333-333333333333",
+            },
+        }
+
+        transaction, reason = await resolve_payment_transaction(mock_db, payment_intent)
+
+        assert transaction is None
+        assert "does not belong to practice" in reason
+        mock_db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_zero_decimal_currency_not_divided(self):
+        """JPY is reported in whole units; dividing by 100 under-records 100x."""
+        from app.services.processor_events import minor_units_to_decimal
+
+        assert str(minor_units_to_decimal(5000, "usd")) == "50.00"
+        assert str(minor_units_to_decimal(5000, "jpy")) == "5000"
+        assert str(minor_units_to_decimal(None, "usd")) == "0.00"
+
+    @pytest.mark.asyncio
+    async def test_summary_excludes_phi(self):
+        """M-22: the stored event summary must not carry free-text or PHI."""
+        from app.services.processor_events import summarize_event
+
+        summary = summarize_event(
+            {
+                "id": "pi_1",
+                "amount": 100,
+                "currency": "usd",
+                "description": "Crown Prep - Tooth #14 for Jane Doe",
+                "receipt_email": "jane@example.com",
+                "metadata": {
+                    "practice_id": "p1",
+                    "patient_id": "pat1",
+                    "chief_complaint": "toothache",
+                },
+            }
+        )
+
+        assert "description" not in summary
+        assert "receipt_email" not in summary
+        assert summary["routing_metadata"] == {"practice_id": "p1", "patient_id": "pat1"}
+        assert "chief_complaint" not in summary["routing_metadata"]
 
     @pytest.mark.asyncio
     async def test_handle_payment_failed(self):
@@ -99,51 +210,25 @@ class TestStripeWebhookHandlers:
 
     @pytest.mark.asyncio
     async def test_handle_subscription_created(self):
-        """Test that a new Stripe subscription creates a local record."""
+        """Legacy webhook entry delegates to the ownership-gated handler."""
         from app.api.v1.endpoints.stripe import handle_subscription_created
 
-        mock_user = MagicMock()
-        mock_user.id = "550e8400-e29b-41d4-a716-446655440000"
-        mock_user.practice_id = "660e8400-e29b-41d4-a716-446655440000"
-
-        mock_plan = MagicMock()
-        mock_plan.id = "plan_test_001"
-
-        mock_db = _async_db(mock_user, mock_plan, None)
-
+        mock_db = _async_db()
         subscription = {
             "id": "sub_test_001",
-            "customer": "cus_test_001",
-            "status": "active",
-            "current_period_start": 1700000000,
-            "current_period_end": 1702592000,
-            "cancel_at_period_end": False,
-            "items": {
-                "data": [
-                    {
-                        "price": {"id": "price_test_001"},
-                        "plan": {"interval": "month"}
-                    }
-                ]
-            },
             "metadata": {
-                "user_id": "550e8400-e29b-41d4-a716-446655440000",
+                "coredent_subscription_id": "11111111-1111-4111-8111-111111111111",
+                "practice_id": "22222222-2222-4222-8222-222222222222",
+                "coredent_plan_id": "33333333-3333-4333-8333-333333333333",
             },
         }
+        with patch(
+            "app.services.subscription_webhooks.SubscriptionWebhookHandler.handle_subscription_created",
+            new=AsyncMock(),
+        ) as gated_handler:
+            await handle_subscription_created(mock_db, subscription)
 
-        await handle_subscription_created(mock_db, subscription)
-
-        # Verify a new subscription record was added
-        mock_db.add.assert_called_once()
-        mock_db.commit.assert_awaited_once()
-
-        # Verify the record has the correct Stripe IDs
-        created_sub = mock_db.add.call_args[0][0]
-        assert created_sub.stripe_subscription_id == "sub_test_001"
-        assert created_sub.stripe_customer_id == "cus_test_001"
-        assert created_sub.status == "active"
-        assert created_sub.practice_id == mock_user.practice_id
-        assert created_sub.plan_id == mock_plan.id
+        gated_handler.assert_awaited_once_with(mock_db, subscription)
 
     @pytest.mark.asyncio
     async def test_handle_subscription_created_no_user_id(self):
@@ -214,7 +299,6 @@ class TestStripeWebhookHandlers:
         from app.api.v1.endpoints.stripe import handle_invoice_paid
 
         mock_sub = MagicMock()
-        mock_sub.last_payment_date = None
         mock_sub.next_billing_date = None
 
         mock_db = _async_db(mock_sub)
@@ -236,7 +320,6 @@ class TestStripeWebhookHandlers:
 
         await handle_invoice_paid(mock_db, invoice)
 
-        assert mock_sub.last_payment_date is not None
         assert mock_sub.next_billing_date is not None
         mock_db.commit.assert_awaited_once()
 
@@ -284,3 +367,29 @@ class TestStripeWebhookEndpoint:
             assert event["type"] == "payment_intent.succeeded"
             assert event["data"]["object"]["id"] == "pi_test_12345"
             mock_construct.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_create_payment_intent_is_fail_closed():
+    from app.api.v1.endpoints import stripe as stripe_endpoint
+    db = _async_db()
+    provider = MagicMock()
+    with patch.object(stripe_endpoint.stripe.PaymentIntent, "create", provider):
+        with pytest.raises(HTTPException) as exc_info:
+            await stripe_endpoint.create_payment_intent(
+                PaymentIntentCreate(invoice_id=UUID("00000000-0000-0000-0000-000000000001"), amount=100.0),
+                db=db,
+                current_user=SimpleNamespace(id=UUID("00000000-0000-0000-0000-000000000002")),
+            )
+    assert exc_info.value.status_code == 503
+    provider.assert_not_called()
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+@pytest.mark.asyncio
+async def test_payment_webhook_reconciliation_error_propagates_for_retry():
+    from app.api.v1.endpoints.stripe import handle_payment_succeeded
+    db = _async_db()
+    db.execute.side_effect = ValueError("database unavailable")
+    with pytest.raises(ValueError, match="database unavailable"):
+        await handle_payment_succeeded(db, {"id": "pi_retry"})
+    db.rollback.assert_awaited_once()

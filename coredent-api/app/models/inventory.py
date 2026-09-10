@@ -3,7 +3,7 @@ Inventory Models
 Supply tracking, inventory management, and reorder alerts
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, Numeric, Integer, Boolean
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, Numeric, Integer, Boolean, UniqueConstraint, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -46,6 +46,10 @@ class InventoryAlertType(str, enum.Enum):
 class InventoryItem(Base):
     """Inventory item model"""
     __tablename__ = "inventory_items"
+    __table_args__ = (
+        UniqueConstraint('practice_id', 'sku', name='uq_practice_inventory_sku'),
+        CheckConstraint('current_quantity >= 0', name='ck_inventory_current_quantity_non_negative'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
@@ -53,7 +57,7 @@ class InventoryItem(Base):
     # Item Information
     name = Column(String(255), nullable=False)
     description = Column(Text)
-    sku = Column(String(50), unique=True)
+    sku = Column(String(50), index=True)
     barcode = Column(String(50))
     category = Column(Enum(InventoryCategory), default=InventoryCategory.SUPPLIES)
 
@@ -215,6 +219,15 @@ class Supplier(Base):
 class PurchaseOrder(Base):
     """Purchase order model"""
     __tablename__ = "purchase_orders"
+    __table_args__ = (
+        # L-2 FIX: scope order numbers per practice like invoice numbers.
+        # The previous global unique let one tenant squat/probe another's.
+        UniqueConstraint(
+            "practice_id",
+            "order_number",
+            name="uq_purchase_order_practice_number",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
@@ -222,7 +235,7 @@ class PurchaseOrder(Base):
     ordered_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
 
     # Order Information
-    order_number = Column(String(50), unique=True, nullable=False)
+    order_number = Column(String(50), nullable=False, index=True)
     order_date = Column(DateTime(timezone=True), server_default=func.now())
     expected_delivery = Column(DateTime(timezone=True))
     received_date = Column(DateTime(timezone=True))

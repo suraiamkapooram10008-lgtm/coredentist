@@ -1,0 +1,24 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.3, pytest-9.1.1, pluggy-1.5.0
+benchmark: 4.0.0 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)
+rootdir: D:\coredentist\coredent-api
+configfile: pytest.ini
+plugins: anyio-4.9.0, Faker-22.2.0, langsmith-0.3.42, asyncio-1.4.0, benchmark-4.0.0, cov-6.3.0, mock-3.12.0, timeout-2.4.0, xdist-3.5.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 45 items
+
+tests\test_billing_comprehensive.py .......................              [ 51%]
+tests\test_enterprise.py .......F                                        [ 68%]
+tests\test_phase3_fix_regressions.py ........                            [ 86%]
+tests\test_redis_rate_limit.py ......                                    [100%]
+
+================================== FAILURES ===================================
+_ TestGroupAnalyticsMoneyDefinitions.test_group_analytics_agrees_with_practice_dashboard _
+tests\test_enterprise.py:238: in test_group_analytics_agrees_with_practice_dashboard
+    assert dashboard_resp.status_code == 200, dashboard_resp.text
+E   AssertionError: {"detail":"Insufficient permissions for this action."}
+E   assert 403 == 200
+E    +  where 403 = <Response [403 Forbidden]>.status_code
+=========================== short test summary info ===========================
+FAILED tests/test_enterprise.py::TestGroupAnalyticsMoneyDefinitions::test_group_analytics_agrees_with_practice_dashboard
+================== 1 failed, 44 passed in 151.99s (0:02:31) ===================

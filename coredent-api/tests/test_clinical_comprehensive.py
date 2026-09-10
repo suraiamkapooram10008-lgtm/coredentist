@@ -3,9 +3,8 @@ Comprehensive clinical endpoint tests.
 """
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.clinical import PerioChart, PerioChartEntry
+from app.models.clinical import PerioChart
 
 pytestmark = pytest.mark.asyncio
 
@@ -82,3 +81,51 @@ class TestPerioChartEndpoints:
             },
         )
         assert response.status_code == 404
+        assert response.status_code == 404
+
+
+class TestPatientNotesReadAuth:
+    """Clinical-note reads require a clinical role everywhere, including the
+    sibling /patients/{id}/notes route."""
+
+    async def _login(self, client: AsyncClient, user) -> dict:
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": user.email, "password": "testpassword123"},
+        )
+        assert response.status_code == 200, response.text
+        token = response.json()["access_token"]
+        return {"Authorization": f"Bearer {token}"}
+
+    async def test_front_desk_cannot_list_patient_notes(
+        self, client: AsyncClient, db_session, test_practice, test_patient
+    ):
+        from app.core.security import get_password_hash
+        from app.models.user import User, UserRole
+
+        front_desk = User(
+            email="frontdesk-notes@example.com",
+            password_hash=get_password_hash("testpassword123"),
+            first_name="Fiona",
+            last_name="Frontdesk",
+            role=UserRole.FRONT_DESK,
+            practice_id=test_practice.id,
+            is_active=True,
+            is_email_verified=True,
+        )
+        db_session.add(front_desk)
+        await db_session.commit()
+
+        headers = await self._login(client, front_desk)
+        response = await client.get(
+            f"/api/v1/patients/{test_patient.id}/notes", headers=headers
+        )
+        assert response.status_code == 403
+
+    async def test_owner_can_list_patient_notes(
+        self, client: AsyncClient, auth_headers, test_patient
+    ):
+        response = await client.get(
+            f"/api/v1/patients/{test_patient.id}/notes", headers=auth_headers
+        )
+        assert response.status_code == 200

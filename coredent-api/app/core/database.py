@@ -3,6 +3,9 @@ Database Configuration
 SQLAlchemy 2.0 async setup with PostgreSQL
 """
 
+import logging
+
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
@@ -43,6 +46,28 @@ AsyncSessionLocal = sessionmaker(
 )
 
 
+# Sync engine/session for Celery tasks and other synchronous contexts
+# (Celery workers cannot use the async engine directly).
+sync_engine_url = engine_url
+if sync_engine_url.startswith("postgresql+asyncpg://"):
+    sync_engine_url = sync_engine_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+elif sync_engine_url.startswith("sqlite+aiosqlite://"):
+    sync_engine_url = sync_engine_url.replace("sqlite+aiosqlite://", "sqlite://", 1)
+
+sync_engine = create_engine(
+    sync_engine_url,
+    echo=settings.DEBUG,
+    pool_pre_ping=True,
+)
+
+SessionLocal = sessionmaker(
+    bind=sync_engine,
+    expire_on_commit=False,
+    autocommit=False,
+    autoflush=False,
+)
+
+
 async def get_db() -> AsyncSession:
     """
     Dependency to get database session
@@ -56,3 +81,37 @@ async def get_db() -> AsyncSession:
         except Exception:
             await session.rollback()
             raise
+
+# H4 residual hardening: concurrency guards (SELECT ... FOR UPDATE,
+# pg_advisory_xact_lock) are real only on PostgreSQL. On SQLite — the local
+# dev/test database — both are silently ignored, so guarded sections degrade
+# to check-then-insert. That is acceptable for a single-user dev database,
+# but it must never happen silently: lock-taking call sites gate through
+# row_locks_supported(), which emits one loud warning per process so a
+# misconfigured DATABASE_URL (e.g. a deploy accidentally pointed at SQLite)
+# is visible in the logs immediately.
+
+_row_locks_warning_emitted = False
+
+
+def row_locks_supported() -> bool:
+    """True when the configured database honors row/advisory locks.
+
+    Returns False on SQLite (and any non-Postgres backend), warning once per
+    process so the silent loss of every FOR UPDATE / advisory-lock guard is
+    called out in logs instead of being invisible.
+    """
+    global _row_locks_warning_emitted
+    if engine_url.startswith("postgresql"):
+        return True
+    if not _row_locks_warning_emitted:
+        _row_locks_warning_emitted = True
+        logging.getLogger(__name__).warning(
+            "DATABASE_URL is not PostgreSQL (%r): FOR UPDATE row locks and "
+            "advisory locks are NOT enforced, so billing/booking concurrency "
+            "guards degrade to check-then-insert. Never use this database "
+            "for multi-user or production data.",
+            engine_url,
+        )
+    return False
+

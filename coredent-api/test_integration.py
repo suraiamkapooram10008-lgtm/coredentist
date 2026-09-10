@@ -11,9 +11,9 @@ os.environ["SECRET_KEY"] = "yWfBS3_teqlJHzliDS1073yjj4CaTS2ig7zv-t-LgOzX9uJFD0dt
 os.environ["ENCRYPTION_KEY"] = "CSpvNit8ELpFt6XWDM4CtIprX4LTqeD7oFCXVlXpHTo="
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./coredent_test.db"
 
-from app.core.database import engine, Base
-from app.main import app
-from httpx import AsyncClient, ASGITransport
+from app.core.database import engine, Base  # noqa: E402
+from app.main import app  # noqa: E402
+from httpx import AsyncClient, ASGITransport  # noqa: E402
 
 async def run_tests():
     print("🚀 Initializing Database...")

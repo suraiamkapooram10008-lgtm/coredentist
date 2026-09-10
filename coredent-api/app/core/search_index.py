@@ -1,19 +1,19 @@
 """
 Search index helpers for encrypted columns.
 
-Encryption at rest makes substring search impossible on the ciphertext.  We
+Encryption at rest makes substring search impossible on the ciphertext. We
 support search by storing a *deterministic HMAC* of the normalized value in a
-separate index column.  An attacker with the database can do equality lookups
-(``WHERE search_index_email = hmac('alice@example.com')``) but cannot
-invert the HMAC to recover the plaintext without the secret key.
+separate index column. An attacker with the database can do equality lookups
+(``WHERE search_index_email = hmac('alice@example.com')``) but cannot invert
+the HMAC to recover the plaintext without the secret key.
 
-The HMAC key is **distinct** from the field-encryption key.  Both come from
-the keyring: ``SEARCH_INDEX_KEY`` is derived from the active Fernet key.  This
-keeps rotation simple — when you rotate the Fernet key, also rotate the
-search index key, and re-index affected rows in a one-shot migration.
+``SEARCH_INDEX_KEY`` is an independent secret. Non-local deployments must
+configure it explicitly; they never derive an index key from a public key ID.
+Local development and tests retain a compatibility fallback derived from the
+active Fernet secret material, rather than from its public identifier.
 
-This module is intentionally small.  Use it in model setters or
-SQLAlchemy ``@validates`` hooks.
+This module is intentionally small. Use it in model setters or SQLAlchemy
+``@validates`` hooks.
 """
 
 from __future__ import annotations
@@ -23,23 +23,60 @@ import hmac
 import re
 from typing import Optional
 
-from app.core.config_simple import settings
+from app.core.config_simple import _LOCAL_ENVIRONMENTS, _looks_like_placeholder, settings
 from app.core.encryption import keyring
 
 
+def _development_search_index_secret() -> bytes:
+    """Derive a local-only index secret from active Fernet key material.
+
+    The keyring intentionally exposes the active key *identifier* publicly,
+    so it must never be used as secret material. The cryptographic key is
+    available only inside the active Fernet instance; this fallback exists
+    solely to preserve the established development/test setup where an
+    explicit search-index key is not configured.
+    """
+    ciphers = getattr(keyring, "_ciphers", ())
+    try:
+        _, cipher = ciphers[0]
+        signing_key = getattr(cipher, "_signing_key")
+        encryption_key = getattr(cipher, "_encryption_key")
+    except (AttributeError, IndexError) as exc:
+        raise RuntimeError(
+            "No active encryption key is available for the local search-index fallback."
+        ) from exc
+
+    if not isinstance(signing_key, bytes) or not isinstance(encryption_key, bytes):
+        raise RuntimeError(
+            "The active encryption key cannot provide safe local search-index material."
+        )
+
+    return hmac.new(
+        signing_key + encryption_key,
+        b"coredent-search-index-development-v1",
+        hashlib.sha256,
+    ).digest()
+
+
 def _search_index_secret() -> bytes:
-    """
-    Return the HMAC key used for search indexes.  Derived from the active
-    encryption key.  In production this should be its own env var
-    (SEARCH_INDEX_KEY) but falling back to the encryption key is safe.
-    """
-    explicit = (
-        getattr(settings, "SEARCH_INDEX_KEY", "") or ""
-    ).strip()
+    """Return the configured HMAC key, failing closed outside local use."""
+    explicit = (getattr(settings, "SEARCH_INDEX_KEY", "") or "").strip()
     if explicit:
+        if settings.ENVIRONMENT not in _LOCAL_ENVIRONMENTS and (
+            len(explicit) < 32 or _looks_like_placeholder(explicit)
+        ):
+            raise RuntimeError(
+                "SEARCH_INDEX_KEY must be an independent, non-placeholder secret "
+                "of at least 32 characters outside local environments."
+            )
         return explicit.encode("utf-8")
-    # Derive deterministically from the active Fernet key.
-    return hashlib.sha256(b"search-index:" + keyring.active_key_id.encode()).digest()
+
+    if settings.ENVIRONMENT not in _LOCAL_ENVIRONMENTS:
+        raise RuntimeError(
+            "SEARCH_INDEX_KEY is required outside local development and test environments."
+        )
+
+    return _development_search_index_secret()
 
 
 def normalize(value: Optional[str]) -> str:

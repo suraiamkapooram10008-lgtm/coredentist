@@ -16,6 +16,10 @@ class TaskQueue:
     """
     Unified task queue that works with or without Redis/Celery
 
+    DEV-ONLY WARNING: memory mode is fire-and-forget (ThreadPoolExecutor,
+    no retry/persistence/tenant fairness, unbounded RateLimiter dict). Never
+    use in production — pass force_mode='celery' when REDIS_URL is set.
+
     Usage:
         # Automatic detection - uses Celery if REDIS_URL is set
         task_queue = get_task_queue()
@@ -50,7 +54,20 @@ class TaskQueue:
             return False
 
     def _init_memory(self):
-        """Initialize in-memory queue for development/small deployments"""
+        """Initialize in-memory queue for development/small deployments.
+
+        Dev-only: no retry, no persistence, no per-tenant fairness. Production
+        must use Celery (force_mode='celery' when REDIS_URL is set).
+        """
+        from app.core.config_simple import settings as _settings
+
+        if _settings.ENVIRONMENT not in ("development", "dev", "test", "testing", "local"):
+            logger.error(
+                "TaskQueue memory mode requested in non-local ENVIRONMENT=%r — "
+                "refusing silent fallback; use force_mode='celery' with REDIS_URL.",
+                _settings.ENVIRONMENT,
+            )
+            raise RuntimeError("TaskQueue memory mode is dev-only; configure Celery/Redis")
         if self._memory_queue is None:
             self._memory_queue = queue.Queue()
             self._memory_executor = ThreadPoolExecutor(max_workers=4)

@@ -32,7 +32,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
-import { 
+import {
   MoreHorizontal,
   Phone,
   Mail,
@@ -41,30 +41,37 @@ import {
   User,
   Plus,
   Search,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { format, differenceInYears, parseISO } from 'date-fns';
+import { useAuth } from '@/contexts/auth-context';
 import { patientApi } from '@/services/patientApi';
 import { PatientDialog } from '@/components/patients/PatientDialog';
 import type { PatientListItem, PatientSearchParams } from '@/types/patient';
 
 import { useVirtualizer } from '@tanstack/react-virtual';
 
+// The backend caps list requests at 100 records per page (deps.py clamp), so
+// page through the directory instead of requesting more than it can return.
+const PAGE_SIZE = 100;
+
 export default function PatientList() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user } = useAuth();
   const parentRef = useRef<HTMLDivElement>(null);
-  
+
   const [patients, setPatients] = useState<PatientListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [totalPatients, setTotalPatients] = useState(0);
-  
+  const [totalPages, setTotalPages] = useState(1);
+
   // Search and filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('active');
-  const [alertFilter, setAlertFilter] = useState(false);
-  const [sortBy, setSortBy] = useState<'name' | 'lastVisit' | 'nextAppointment'>('name');
-  
-  // Virtualization is optimized for large batches, pagination removed
+  const [page, setPage] = useState(1);
+
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
   // Load patients
@@ -74,13 +81,13 @@ export default function PatientList() {
       const params: PatientSearchParams = {
         query: searchQuery || undefined,
         status: statusFilter,
-        hasMedicalAlert: alertFilter || undefined,
-        sortBy,
-        limit: 200, // Large batch sizing for virtualized view
+        page,
+        limit: PAGE_SIZE,
       };
       const result = await patientApi.getPatients(params);
       setPatients(result.data);
       setTotalPatients(result.total);
+      setTotalPages(result.totalPages || Math.max(1, Math.ceil(result.total / PAGE_SIZE)));
     } catch {
       toast({
         title: 'Error',
@@ -90,11 +97,23 @@ export default function PatientList() {
     } finally {
       setIsLoading(false);
     }
-  }, [searchQuery, statusFilter, alertFilter, sortBy, toast]);
+  }, [searchQuery, statusFilter, page, toast]);
 
+  // Load once on mount and debounce subsequent filter/search changes.
+  // NOTE: this single effect intentionally replaces the previous pair
+  // (an immediate effect on [loadPatients] PLUS a debounced effect on
+  // [searchQuery, loadPatients]) that fired two requests per change.
   useEffect(() => {
-    loadPatients();
+    const timer = setTimeout(() => {
+      loadPatients();
+    }, 300);
+    return () => clearTimeout(timer);
   }, [loadPatients]);
+
+  // A new search term or status filter always restarts from the first page.
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, statusFilter]);
 
   const rowVirtualizer = useVirtualizer({
     count: patients.length,
@@ -103,23 +122,9 @@ export default function PatientList() {
     overscan: 5,
   });
 
-  // Debounced search
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      loadPatients();
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery, loadPatients]);
-
   const handleStatusFilterChange = (value: string) => {
     if (value === 'all' || value === 'active' || value === 'inactive') {
       setStatusFilter(value);
-    }
-  };
-
-  const handleSortChange = (value: string) => {
-    if (value === 'name' || value === 'lastVisit' || value === 'nextAppointment') {
-      setSortBy(value);
     }
   };
 
@@ -179,26 +184,6 @@ export default function PatientList() {
               <SelectItem value="inactive">Inactive</SelectItem>
             </SelectContent>
           </Select>
-          
-          <Select value={sortBy} onValueChange={handleSortChange}>
-            <SelectTrigger className="w-[150px]">
-              <SelectValue placeholder="Sort by" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="name">Name</SelectItem>
-              <SelectItem value="lastVisit">Last Visit</SelectItem>
-              <SelectItem value="nextAppointment">Next Appt</SelectItem>
-            </SelectContent>
-          </Select>
-          
-          <Button
-            variant={alertFilter ? "default" : "outline"}
-            size="icon"
-            onClick={() => { setAlertFilter(!alertFilter); }}
-            title="Show patients with medical alerts"
-          >
-            <AlertTriangle className="h-4 w-4" />
-          </Button>
         </div>
       </div>
 
@@ -357,12 +342,39 @@ export default function PatientList() {
         </Table>
       </div>
 
+      {/* Pagination */}
+      <div className="flex items-center justify-between" data-testid="patient-list-pagination">
+        <p className="text-sm text-muted-foreground">
+          Page {page} of {totalPages}
+        </p>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+            disabled={page <= 1 || isLoading}
+          >
+            <ChevronLeft className="h-4 w-4 mr-1" />
+            Previous
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+            disabled={page >= totalPages || isLoading}
+          >
+            Next
+            <ChevronRight className="h-4 w-4 ml-1" />
+          </Button>
+        </div>
+      </div>
+
       {/* Create Patient Dialog */}
       <PatientDialog
         open={isCreateDialogOpen}
         onOpenChange={setIsCreateDialogOpen}
         onSave={handlePatientCreated}
-        region="US"
+        region={user?.practiceCountry || 'US'}
       />
     </div>
   );

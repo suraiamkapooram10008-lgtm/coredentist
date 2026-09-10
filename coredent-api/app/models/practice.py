@@ -38,9 +38,11 @@ class Practice(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
+    public_slug = Column(String(100), unique=True, nullable=False)
     group_id = Column(UUID(as_uuid=True), ForeignKey("practice_groups.id"), nullable=True)
     email = Column(String(255))
     phone = Column(String(20))
+    npi = Column(String(20), nullable=True)  # Service facility NPI (EDI claims)
     address = Column(String(255))  # Combined address field
     address_street = Column(String(255))
     address_city = Column(String(100))

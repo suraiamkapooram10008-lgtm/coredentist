@@ -1,41 +1,40 @@
-// ============================================
-// CoreDent PMS - Insurance Type Definitions
-// ============================================
-
 export type ClaimStatus =
   | 'draft'
-  | 'submitted'
-  | 'accepted'
-  | 'rejected'
-  | 'paid'
-  | 'partial'
-  | 'appealed';
-
-export type PreAuthStatus =
   | 'pending'
+  | 'submitting'
+  | 'submitted'
+  | 'in_review'
   | 'approved'
+  | 'partially_approved'
   | 'denied'
-  | 'expired';
+  | 'paid'
+  | 'appealed'
+  | 'submission_failed';
 
-export type InsuranceType = 'primary' | 'secondary' | 'tertiary';
+export type ClaimUpdateStatus = Exclude<
+  ClaimStatus,
+  'draft' | 'submitting' | 'submission_failed'
+>;
 
-export type RelationshipToInsured =
-  | 'self'
-  | 'spouse'
-  | 'child'
-  | 'other';
+export type PreAuthStatus = 'pending' | 'approved' | 'denied';
+
+export type RelationshipToSubscriber = 'self' | 'spouse' | 'child' | 'other';
 
 export interface InsuranceCarrier {
   id: string;
   name: string;
-  payerId?: string;
   phone?: string;
+  fax?: string;
   email?: string;
-  address?: string;
+  website?: string;
+  addressLine1?: string;
+  addressLine2?: string;
   city?: string;
   state?: string;
   zipCode?: string;
-  website?: string;
+  payerId?: string;
+  ediEnabled: boolean;
+  notes?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -45,50 +44,61 @@ export interface PatientInsurance {
   id: string;
   patientId: string;
   carrierId: string;
-  carrierName?: string;
-  insuranceType: InsuranceType;
-  policyNumber: string;
-  groupNumber?: string;
-  subscriberName: string;
   subscriberId: string;
-  relationshipToInsured: RelationshipToInsured;
-  effectiveDate: string;
-  expirationDate?: string;
-  coveragePercent?: number;
+  groupNumber?: string;
+  relationshipToSubscriber: RelationshipToSubscriber;
+  isPrimary: boolean;
+  isActive: boolean;
+  coverageType?: string;
   annualMaximum?: number;
-  deductible?: number;
-  deductibleMet?: number;
-  notes?: string;
+  annualDeductible?: number;
+  deductibleMet: number;
+  benefitsUsed: number;
+  preventiveCoverage: number;
+  basicCoverage: number;
+  majorCoverage: number;
+  orthoCoverage: number;
+  effectiveDate?: string;
+  expirationDate?: string;
+  verified: boolean;
+  verifiedAt?: string;
+  verifiedBy?: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface ClaimProcedure {
-  procedureCode: string;
+export interface ProcedureCode {
+  code: string;
   description: string;
-  toothNumber?: string;
-  quantity: number;
-  chargedAmount: number;
-  allowedAmount?: number;
-  paidAmount?: number;
+  fee: number;
 }
 
 export interface InsuranceClaim {
   id: string;
+  practiceId: string;
   patientId: string;
-  patientName: string;
-  insuranceId: string;
-  carrierName?: string;
+  patientInsuranceId: string;
+  carrierId: string;
   claimNumber: string;
   status: ClaimStatus;
   serviceDate: string;
-  submittedDate?: string;
-  processedDate?: string;
-  procedures: ClaimProcedure[];
-  totalAmount: number;
-  approvedAmount?: number;
-  paidAmount?: number;
+  submissionDate?: string;
+  receivedDate?: string;
+  paidDate?: string;
+  billedAmount: number;
+  allowedAmount?: number;
+  deductibleAmount: number;
+  copayAmount: number;
+  paidAmount: number;
+  patientResponsibility: number;
+  procedureCodes: ProcedureCode[];
+  diagnosisCodes: string[];
   notes?: string;
+  denialReason?: string;
+  ediTransactionId?: string;
+  ediBatchId?: string;
+  confirmationNumber?: string;
+  outstandingBalance: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -96,28 +106,105 @@ export interface InsuranceClaim {
 export interface InsurancePreAuthorization {
   id: string;
   patientId: string;
-  patientName?: string;
-  insuranceId: string;
-  carrierName?: string;
-  authNumber?: string;
+  patientInsuranceId: string;
+  authorizationNumber: string;
   status: PreAuthStatus;
-  requestedProcedures: string[];
-  estimatedCost?: number;
-  approvedCost?: number;
   requestDate: string;
+  procedureCodes: ProcedureCode[];
+  estimatedCost: number;
+  approvalDate?: string;
   expirationDate?: string;
+  approvedAmount?: number;
   notes?: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface InsuranceSummary {
-  totalClaims: number;
-  pendingClaims: number;
-  approvedClaims: number;
-  rejectedClaims: number;
-  totalBilled: number;
-  totalApproved: number;
-  totalPaid: number;
-  activePreAuths: number;
+export interface InsurancePage<T> {
+  items: T[];
+  count: number;
+  total: number;
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
+}
+
+export interface CreateCarrierInput {
+  name: string;
+  phone?: string;
+  fax?: string;
+  email?: string;
+  website?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  payerId?: string;
+  ediEnabled?: boolean;
+  notes?: string;
+  isActive?: boolean;
+}
+
+export type UpdateCarrierInput = Partial<CreateCarrierInput>;
+
+export interface CreatePatientInsuranceInput {
+  carrierId: string;
+  subscriberId: string;
+  groupNumber?: string;
+  relationshipToSubscriber?: RelationshipToSubscriber;
+  isPrimary?: boolean;
+  isActive?: boolean;
+  coverageType?: string;
+  annualMaximum?: number;
+  annualDeductible?: number;
+  deductibleMet?: number;
+  benefitsUsed?: number;
+  preventiveCoverage?: number;
+  basicCoverage?: number;
+  majorCoverage?: number;
+  orthoCoverage?: number;
+  effectiveDate?: string;
+  expirationDate?: string;
+}
+
+export type UpdatePatientInsuranceInput = Partial<CreatePatientInsuranceInput>;
+
+export interface CreateClaimInput {
+  patientInsuranceId: string;
+  serviceDate: string;
+  billedAmount: number;
+  procedureCodes: ProcedureCode[];
+  diagnosisCodes?: string[];
+  notes?: string;
+}
+
+export interface UpdateClaimInput {
+  status?: ClaimUpdateStatus;
+  submissionDate?: string;
+  receivedDate?: string;
+  paidDate?: string;
+  allowedAmount?: number;
+  deductibleAmount?: number;
+  copayAmount?: number;
+  paidAmount?: number;
+  patientResponsibility?: number;
+  notes?: string;
+  denialReason?: string;
+}
+
+export interface CreatePreAuthorizationInput {
+  patientInsuranceId: string;
+  requestDate: string;
+  procedureCodes: ProcedureCode[];
+  estimatedCost: number;
+  notes?: string;
+}
+
+export interface UpdatePreAuthorizationInput {
+  status?: PreAuthStatus;
+  approvalDate?: string;
+  expirationDate?: string;
+  approvedAmount?: number;
+  notes?: string;
 }

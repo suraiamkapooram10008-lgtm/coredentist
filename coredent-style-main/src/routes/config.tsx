@@ -16,10 +16,12 @@ export interface RouteConfig {
 }
 
 // Lazy load all page components
+const Landing = React.lazy(() => import('@/pages/Landing'));
 const Login = React.lazy(() => import('@/pages/Login'));
 const Register = React.lazy(() => import('@/pages/Register'));
 const ForgotPassword = React.lazy(() => import('@/pages/ForgotPassword'));
 const ResetPassword = React.lazy(() => import('@/pages/ResetPassword'));
+const VerifyEmail = React.lazy(() => import('@/pages/VerifyEmail'));
 const AcceptInvitation = React.lazy(() => import('@/pages/AcceptInvitation'));
 const Dashboard = React.lazy(() => import('@/pages/Dashboard'));
 const Schedule = React.lazy(() => import('@/pages/Schedule'));
@@ -29,43 +31,48 @@ const DentalChart = React.lazy(() => import('@/pages/DentalChart'));
 const TreatmentPlans = React.lazy(() => import('@/pages/TreatmentPlans'));
 const Billing = React.lazy(() => import('@/pages/Billing'));
 const Reports = React.lazy(() => import('@/pages/Reports'));
+const OnlineBooking = React.lazy(() => import('@/pages/OnlineBooking'));
+const Inventory = React.lazy(() => import('@/pages/Inventory'));
+const ProductAvailability = React.lazy(() => import('@/pages/ProductAvailability'));
+const EnterpriseHQ = React.lazy(() => import('@/pages/EnterpriseHQ'));
 const Settings = React.lazy(() => import('@/pages/Settings'));
 const ClinicalNotes = React.lazy(() => import('@/pages/ClinicalNotes'));
 const Insurance = React.lazy(() => import('@/pages/Insurance'));
-const Imaging = React.lazy(() => import('@/pages/Imaging'));
+const ImagingHub = React.lazy(() => import('@/pages/ImagingHub'));
 const Appointments = React.lazy(() => import('@/pages/Appointments'));
-const OnlineBooking = React.lazy(() => import('@/pages/OnlineBooking'));
-const Inventory = React.lazy(() => import('@/pages/Inventory'));
 const LabManagement = React.lazy(() => import('@/pages/LabManagement'));
 const Referrals = React.lazy(() => import('@/pages/Referrals'));
 const Communications = React.lazy(() => import('@/pages/Communications'));
-const Marketing = React.lazy(() => import('@/pages/Marketing'));
-const Documents = React.lazy(() => import('@/pages/Documents'));
 const Payments = React.lazy(() => import('@/pages/Payments'));
 const PublicBooking = React.lazy(() => import('@/pages/PublicBooking'));
 const BookingSuccess = React.lazy(() => import('@/pages/BookingSuccess'));
-const RevenueLanding = React.lazy(() => import('@/pages/RevenueLanding'));
-const BillingPortal = React.lazy(() => import('@/pages/BillingPortal'));
-const ImagingHub = React.lazy(() => import('@/pages/ImagingHub'));
-const EnterpriseHQ = React.lazy(() => import('@/pages/EnterpriseHQ'));
+// M7 FIX: BillingPortal removed — it was a decorative page rendering
+// hardcoded fake invoices/payment plans and a fabricated "$8,420 collected"
+// claim. Real billing lives at /billing.
 const ReferralHub = React.lazy(() => import('@/pages/ReferralHub'));
 const LabLogistics = React.lazy(() => import('@/pages/LabLogistics'));
 const Subscriptions = React.lazy(() => import('@/pages/Subscriptions'));
 const NotFound = React.lazy(() => import('@/pages/NotFound'));
 const PatientPortal = React.lazy(() => import('@/pages/PatientPortal'));
+const DataMigration = React.lazy(() => import('@/pages/admin/DataMigration'));
+const SecurityCompliance = React.lazy(() => import('@/pages/admin/SecurityCompliance'));
+const StaffManagement = React.lazy(() => import('@/pages/admin/StaffManagement'));
+const ForceChangePassword = React.lazy(() => import('@/pages/ForceChangePassword'));
 
 /**
  * Public routes (no authentication required)
  */
 export const publicRoutes: RouteConfig[] = [
+  { path: '/', component: Landing },
   { path: '/login', component: Login },
   { path: '/register', component: Register },
   { path: '/forgot-password', component: ForgotPassword },
   { path: '/reset-password', component: ResetPassword },
+  { path: '/verify-email', component: VerifyEmail },
   { path: '/accept-invitation', component: AcceptInvitation },
   // Public booking portal
   { path: '/book/success', component: BookingSuccess },
-  { path: '/book/:slug', component: PublicBooking },
+  { path: '/book/:practiceSlug/:slug', component: PublicBooking },
   // Patient self-service portal
   { path: '/patient-portal', component: PatientPortal },
 ];
@@ -76,290 +83,294 @@ export const publicRoutes: RouteConfig[] = [
  */
 export const protectedRoutes: RouteConfig[] = [
   // Dashboard
-  { 
-    path: '/dashboard', 
+  {
+    path: '/dashboard',
     component: Dashboard,
     title: 'Dashboard',
   },
 
   // Patient Management
-  { 
-    path: '/patients', 
+  {
+    path: '/patients',
     component: PatientList,
     roles: ['owner', 'admin', 'dentist', 'front_desk'],
     title: 'Patients',
   },
-  { 
-    path: '/patients/:id', 
+  {
+    path: '/patients/:id',
     component: PatientProfile,
     roles: ['owner', 'admin', 'dentist', 'front_desk'],
     title: 'Patient Profile',
   },
 
   // Scheduling
-  { 
-    path: '/schedule/*', 
+  {
+    path: '/schedule/*',
     component: Schedule,
     roles: ['owner', 'admin', 'dentist', 'front_desk'],
     title: 'Schedule',
   },
 
   // Clinical - Dentist only
-  { 
-    path: '/chart', 
+  {
+    path: '/chart',
     component: DentalChart,
     roles: ['owner', 'admin', 'dentist'],
     title: 'Dental Chart',
   },
-  { 
-    path: '/chart/*', 
+  {
+    path: '/chart/*',
     component: DentalChart,
     roles: ['owner', 'admin', 'dentist'],
     title: 'Dental Chart',
   },
 
   // Treatment Plans
-  { 
-    path: '/treatment-plans', 
+  {
+    path: '/treatment-plans',
     component: TreatmentPlans,
     roles: ['owner', 'admin', 'dentist'],
     title: 'Treatment Plans',
   },
-  { 
-    path: '/treatment-plans/*', 
+  {
+    path: '/treatment-plans/*',
     component: TreatmentPlans,
     roles: ['owner', 'admin', 'dentist'],
     title: 'Treatment Plans',
   },
 
   // Clinical Notes
-  { 
-    path: '/notes', 
+  {
+    path: '/notes',
     component: ClinicalNotes,
     roles: ['owner', 'admin', 'dentist'],
     title: 'Clinical Notes',
   },
-  { 
-    path: '/notes/:id', 
+  {
+    path: '/notes/:id',
     component: ClinicalNotes,
     roles: ['owner', 'admin', 'dentist'],
     title: 'Clinical Notes',
   },
-  { 
-    path: '/notes/*', 
+  {
+    path: '/notes/*',
     component: ClinicalNotes,
     roles: ['owner', 'admin', 'dentist'],
     title: 'Clinical Notes',
   },
 
   // Billing
-  { 
-    path: '/billing', 
+  {
+    path: '/billing',
     component: Billing,
     roles: ['owner', 'admin', 'front_desk'],
     title: 'Billing',
   },
-  { 
-    path: '/billing/*', 
+  {
+    path: '/billing/*',
     component: Billing,
     roles: ['owner', 'admin', 'front_desk'],
     title: 'Billing',
   },
 
-  // Reports - Owner and Admin only
-  { 
-    path: '/reports', 
+  // Revenue uses the live reports and billing-backed analytics page.
+  {
+    path: '/revenue',
     component: Reports,
-    roles: ['owner', 'admin'],
-    title: 'Reports',
-  },
-  { 
-    path: '/reports/*', 
-    component: Reports,
-    roles: ['owner', 'admin'],
-    title: 'Reports',
-  },
-
-  // Settings
-  { 
-    path: '/settings', 
-    component: Settings,
-    roles: ['owner', 'admin'],
-    title: 'Settings',
-  },
-  { 
-    path: '/settings/*', 
-    component: Settings,
-    roles: ['owner', 'admin'],
-    title: 'Settings',
-  },
-
-  // Revenue Management
-  { 
-    path: '/revenue', 
-    component: RevenueLanding,
     roles: ['owner', 'admin'],
     title: 'Revenue',
   },
 
-  // Billing Portal
-  { 
-    path: '/billing-portal', 
-    component: BillingPortal,
+  // Reports - Owner and Admin only
+  {
+    path: '/reports',
+    component: Reports,
     roles: ['owner', 'admin'],
-    title: 'Billing Portal',
+    title: 'Reports',
+  },
+  {
+    path: '/reports/*',
+    component: Reports,
+    roles: ['owner', 'admin'],
+    title: 'Reports',
   },
 
-  // Imaging Hub
-  { 
-    path: '/imaging-hub', 
-    component: ImagingHub,
-    roles: ['owner', 'admin', 'dentist', 'hygienist'],
-    title: 'Imaging Hub',
+  // Staff online booking. Dentists may manage requests; page configuration is
+  // intentionally limited to owner/admin by the page and backend contracts.
+  {
+    path: '/online-booking',
+    component: OnlineBooking,
+    roles: ['owner', 'admin', 'dentist'],
+    title: 'Online Booking',
   },
 
-  // Enterprise HQ
-  { 
-    path: '/enterprise/hq', 
+  // Inventory reads are available to authenticated practice staff. The page
+  // and backend enforce owner/admin for write operations.
+  {
+    path: '/inventory',
+    component: Inventory,
+    roles: ['owner', 'admin', 'dentist', 'hygienist', 'front_desk'],
+    title: 'Inventory',
+  },
+
+  // Honest capability gates for modules without live staff workflows.
+  {
+    path: '/documents',
+    component: ProductAvailability,
+    roles: ['owner', 'admin', 'dentist', 'hygienist', 'front_desk'],
+    title: 'Documents',
+  },
+  {
+    path: '/marketing',
+    component: ProductAvailability,
+    roles: ['owner', 'admin', 'dentist', 'hygienist', 'front_desk'],
+    title: 'Marketing',
+  },
+
+  // Enterprise HQ is available only to server-authorized group roles.
+  {
+    path: '/enterprise/hq',
     component: EnterpriseHQ,
-    roles: ['owner', 'admin'],
+    roles: ['group_owner', 'group_admin'],
     title: 'Enterprise HQ',
   },
 
+  // Settings
+  {
+    path: '/settings',
+    component: Settings,
+    roles: ['owner', 'admin'],
+    title: 'Settings',
+  },
+  {
+    path: '/settings/*',
+    component: Settings,
+    roles: ['owner', 'admin'],
+    title: 'Settings',
+  },
+
+  // Admin Data Migration
+  {
+    path: '/admin/migration',
+    component: DataMigration,
+    roles: ['owner', 'admin'],
+    title: 'Data Migration',
+  },
+
+  // Security & Compliance
+  {
+    path: '/admin/security',
+    component: SecurityCompliance,
+    roles: ['owner', 'admin'],
+    title: 'Security & Compliance',
+  },
+
   // Referral Hub
-  { 
-    path: '/referrals/hub', 
+  {
+    path: '/referrals/hub',
     component: ReferralHub,
     roles: ['owner', 'admin', 'dentist', 'hygienist', 'front_desk'],
     title: 'Referral Hub',
   },
 
   // Lab Logistics
-  { 
-    path: '/lab/logistics', 
+  {
+    path: '/lab/logistics',
     component: LabLogistics,
     roles: ['owner', 'admin', 'dentist', 'hygienist', 'front_desk'],
     title: 'Lab Logistics',
   },
 
   // Insurance Management
-  { 
-    path: '/insurance', 
+  {
+    path: '/insurance',
     component: Insurance,
     roles: ['owner', 'admin', 'front_desk'],
     title: 'Insurance',
   },
-  { 
-    path: '/insurance/*', 
+  {
+    path: '/insurance/*',
     component: Insurance,
     roles: ['owner', 'admin', 'front_desk'],
     title: 'Insurance',
   },
 
   // Imaging Management
-  { 
-    path: '/imaging', 
-    component: Imaging,
-    roles: ['owner', 'admin', 'dentist'],
-    title: 'Imaging',
-  },
-  { 
-    path: '/imaging/*', 
-    component: Imaging,
-    roles: ['owner', 'admin', 'dentist'],
+  {
+    path: '/imaging',
+    component: ImagingHub,
+    roles: ['owner', 'admin', 'dentist', 'hygienist'],
     title: 'Imaging',
   },
 
   // Appointments
-  { 
-    path: '/appointments', 
+  {
+    path: '/appointments',
     component: Appointments,
     roles: ['owner', 'admin', 'front_desk'],
     title: 'Appointments',
   },
 
-  // Online Booking
-  { 
-    path: '/online-booking', 
-    component: OnlineBooking,
-    roles: ['owner', 'admin', 'front_desk'],
-    title: 'Online Booking',
-  },
-
-  // Inventory
-  { 
-    path: '/inventory', 
-    component: Inventory,
-    roles: ['owner', 'admin'],
-    title: 'Inventory',
-  },
-
   // Lab Management
-  { 
-    path: '/labs', 
+  {
+    path: '/labs',
     component: LabManagement,
     roles: ['owner', 'admin', 'dentist'],
     title: 'Lab Management',
   },
 
   // Referrals
-  { 
-    path: '/referrals', 
+  {
+    path: '/referrals',
     component: Referrals,
     roles: ['owner', 'admin', 'front_desk'],
     title: 'Referrals',
   },
 
   // Communications
-  { 
-    path: '/communications', 
+  {
+    path: '/communications',
     component: Communications,
     roles: ['owner', 'admin', 'front_desk'],
     title: 'Communications',
   },
 
-  // Marketing
-  { 
-    path: '/marketing', 
-    component: Marketing,
-    roles: ['owner', 'admin'],
-    title: 'Marketing',
-  },
-
-  // Documents
-  { 
-    path: '/documents', 
-    component: Documents,
-    roles: ['owner', 'admin', 'front_desk'],
-    title: 'Documents',
-  },
-
   // Payments
-  { 
-    path: '/payments', 
+  {
+    path: '/payments',
     component: Payments,
     roles: ['owner', 'admin', 'front_desk'],
     title: 'Payments',
   },
 
   // Subscriptions
-  { 
-    path: '/subscriptions', 
+  {
+    path: '/subscriptions',
     component: Subscriptions,
     roles: ['owner', 'admin'],
     title: 'Subscriptions',
   },
+
+  // Staff Management
+  {
+    path: '/admin/staff-management',
+    component: StaffManagement,
+    roles: ['owner', 'admin'],
+    title: 'Staff Management',
+  },
+
+  // Force password change (first login after admin provisioning)
+  // No role restriction — the ProtectedRoute gate allows this through when
+  // mustChangePassword is armed, regardless of role.
+  {
+    path: '/force-change-password',
+    component: ForceChangePassword,
+    title: 'Change Password',
+  },
 ];
 
-/**
- * 404 route
- */
 export const notFoundRoute: RouteConfig = {
   path: '*',
   component: NotFound,
+  title: 'Not Found',
 };
-
-/**
- * Default redirect after login
- */
-export const DEFAULT_LOGIN_REDIRECT = '/dashboard';

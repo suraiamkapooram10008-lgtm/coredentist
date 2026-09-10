@@ -1,0 +1,292 @@
+
+> coredent-pms@1.0.0 test
+> vitest run
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90mD:/coredentist/coredent-style-main[39m
+
+ [32m✓[39m src/pages/__tests__/Register.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 5289[2mms[22m[39m
+     [33m[2m✓[22m[39m shows password strength validation errors [33m 2336[2mms[22m[39m
+     [33m[2m✓[22m[39m submits the registration form successfully and sends the user to email verification [33m 1248[2mms[22m[39m
+     [33m[2m✓[22m[39m handles failed registration and stays on the page [33m 1157[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Appointments.test.tsx [2m([22m[2m13 tests[22m[2m)[22m[33m 3386[2mms[22m[39m
+     [33m[2m✓[22m[39m should render appointments page with the table view as default [33m 794[2mms[22m[39m
+     [33m[2m✓[22m[39m should handle new appointment creation [33m 755[2mms[22m[39m
+     [33m[2m✓[22m[39m should handle new appointment creation failure [33m 314[2mms[22m[39m
+     [33m[2m✓[22m[39m should handle appointment update [33m 511[2mms[22m[39m
+     [33m[2m✓[22m[39m should handle appointment update failure [33m 332[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/highImpactCommunications.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 4458[2mms[22m[39m
+     [33m[2m✓[22m[39m covers template create/edit/delete workflows [33m 3063[2mms[22m[39m
+     [33m[2m✓[22m[39m covers reminder create/edit/delete workflows and communication settings toggles [33m 1388[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/PatientPortal.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 16611[2mms[22m[39m
+       [33m[2m✓[22m[39m renders the login form and logs in successfully [33m 7985[2mms[22m[39m
+       [33m[2m✓[22m[39m shows error on login failure [33m 502[2mms[22m[39m
+       [33m[2m✓[22m[39m displays appointments and supports tab switching [33m 4696[2mms[22m[39m
+       [33m[2m✓[22m[39m supports signing digital documents [33m 1431[2mms[22m[39m
+       [33m[2m✓[22m[39m supports invoice payment warning modal [33m 1119[2mms[22m[39m
+       [33m[2m✓[22m[39m supports signing out [33m 867[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/PatientList.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[33m 3818[2mms[22m[39m
+     [33m[2m✓[22m[39m renders patient directory and loads initial list [33m 1192[2mms[22m[39m
+     [33m[2m✓[22m[39m handles loading error gracefully [33m 342[2mms[22m[39m
+     [33m[2m✓[22m[39m filters patient list by search query [33m 492[2mms[22m[39m
+     [33m[2m✓[22m[39m paginates the patient directory with prev/next controls [33m 368[2mms[22m[39m
+     [33m[2m✓[22m[39m handles dropdown actions (view profile, schedule, call) [33m 429[2mms[22m[39m
+     [33m[2m✓[22m[39m renders empty state when no patients match filters [33m 339[2mms[22m[39m
+     [33m[2m✓[22m[39m handles changing the status filter [33m 396[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/highImpactPublicRoutes.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 4568[2mms[22m[39m
+     [33m[2m✓[22m[39m covers reset-password invalid, validation, and success states [33m 353[2mms[22m[39m
+     [33m[2m✓[22m[39m shows a configured-empty state instead of fake services [33m 1606[2mms[22m[39m
+     [33m[2m✓[22m[39m uses canonical availability, submits the slot provider, and gates success on phone verification [33m 2164[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Insurance.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 2916[2mms[22m[39m
+     [33m[2m✓[22m[39m renders real claim identifiers, statuses, and available workflow tabs [33m 728[2mms[22m[39m
+     [33m[2m✓[22m[39m filters loaded claims, shows coverage data, submits, and creates a backend-valid claim [33m 2181[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/highImpactAppointments.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 3374[2mms[22m[39m
+     [33m[2m✓[22m[39m covers list actions, tabs, search, date changes, and form submit/cancel paths [33m 3362[2mms[22m[39m
+ [32m✓[39m src/test/integration/auth-flow.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 2026[2mms[22m[39m
+     [33m[2m✓[22m[39m should handle login failure gracefully [33m 672[2mms[22m[39m
+     [33m[2m✓[22m[39m should handle network errors during login [33m 578[2mms[22m[39m
+     [33m[2m✓[22m[39m should handle token refresh failure [33m 579[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/highImpactCorePages.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 1807[2mms[22m[39m
+     [33m[2m✓[22m[39m covers communications conversations and template creation [33m 488[2mms[22m[39m
+     [33m[2m✓[22m[39m covers clinical note search, create, update, and delete workflows [33m 645[2mms[22m[39m
+     [33m[2m✓[22m[39m covers subscription plan selection and cancellation [33m 368[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/StaffManagement.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 1799[2mms[22m[39m
+     [33m[2m✓[22m[39m renders page heading and loads staff and invitations [33m 446[2mms[22m[39m
+     [33m[2m✓[22m[39m handles invite staff dialog flow [33m 316[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Login.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1587[2mms[22m[39m
+     [33m[2m✓[22m[39m submits the form successfully and navigates to dashboard [33m 569[2mms[22m[39m
+     [33m[2m✓[22m[39m handles failed login and stays on the login page [33m 600[2mms[22m[39m
+ [32m✓[39m src/components/__tests__/AppointmentForm.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 1476[2mms[22m[39m
+     [33m[2m✓[22m[39m should call onSubmit with form data [33m 767[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Schedule.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[33m 1349[2mms[22m[39m
+     [33m[2m✓[22m[39m should handle view and date navigation from header [33m 463[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/TreatmentPlans.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 1424[2mms[22m[39m
+     [33m[2m✓[22m[39m renders real mapped patient names, searches, and filters backend statuses [33m 487[2mms[22m[39m
+     [33m[2m✓[22m[39m updates using backend status names and cancels without claiming hard deletion [33m 387[2mms[22m[39m
+     [33m[2m✓[22m[39m loads details and uses actual procedure service methods [33m 309[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/ForgotPassword.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 1374[2mms[22m[39m
+     [33m[2m✓[22m[39m shows validation error for invalid email [33m 309[2mms[22m[39m
+     [33m[2m✓[22m[39m submits the form successfully and displays check email state [33m 451[2mms[22m[39m
+     [33m[2m✓[22m[39m handles failed password reset requests gracefully [33m 397[2mms[22m[39m
+ [32m✓[39m src/components/__tests__/TreatmentPlanForm.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 1297[2mms[22m[39m
+     [33m[2m✓[22m[39m should allow entering form data [33m 510[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Billing.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 1153[2mms[22m[39m
+     [33m[2m✓[22m[39m renders invoices, filters them, and shows summary data [33m 466[2mms[22m[39m
+     [33m[2m✓[22m[39m drives invoice actions end-to-end [33m 679[2mms[22m[39m
+ [32m✓[39m src/components/chart/__tests__/AddProcedureDialog.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 1313[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Settings.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 939[2mms[22m[39m
+     [33m[2m✓[22m[39m loads and shows settings tabs and handles updates [33m 803[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/misc-ui.test.tsx [2m([22m[2m18 tests[22m[2m)[22m[33m 1155[2mms[22m[39m
+     [33m[2m✓[22m[39m renders the trigger and shows content on hover [33m 774[2mms[22m[39m
+ [32m✓[39m src/components/settings/__tests__/highImpactSettings.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 1131[2mms[22m[39m
+     [33m[2m✓[22m[39m creates an appointment type [33m 461[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Appointments.integration.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[33m 1379[2mms[22m[39m
+     [33m[2m✓[22m[39m should filter appointments by search term [33m 313[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Inventory.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 1261[2mms[22m[39m
+     [33m[2m✓[22m[39m renders the live page heading and write entry point [33m 484[2mms[22m[39m
+     [33m[2m✓[22m[39m uses the live search, low-stock, and alert views [33m 504[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/DentalChart.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 908[2mms[22m[39m
+     [33m[2m✓[22m[39m lets the user select a tooth, update it, add procedures, and apply an AI finding [33m 539[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useAuth.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 833[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/complex-ui.test.tsx [2m([22m[2m12 tests[22m[2m)[22m[33m 669[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Documents.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 676[2mms[22m[39m
+     [33m[2m✓[22m[39m handles searching and tab switching [33m 335[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/imagingApi.test.ts [2m([22m[2m31 tests[22m[2m)[22m[33m 387[2mms[22m[39m
+ [32m✓[39m src/components/billing/__tests__/InvoiceCard.test.tsx [2m([22m[2m12 tests[22m[2m)[22m[33m 420[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/ClinicSettings.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 727[2mms[22m[39m
+     [33m[2m✓[22m[39m loads and shows settings tabs and handles updates [33m 617[2mms[22m[39m
+ [32m✓[39m src/components/insurance/__tests__/InsuranceList.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 438[2mms[22m[39m
+     [33m[2m✓[22m[39m renders carriers, filters them, and supports create and edit [33m 404[2mms[22m[39m
+ [32m✓[39m src/components/patients/__tests__/AttachmentsList.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 466[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/OnlineBooking.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 399[2mms[22m[39m
+     [33m[2m✓[22m[39m renders live requests and waitlist data for a dentist [33m 391[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useApi.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 427[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/usePayments.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 408[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Select.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[32m 282[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Patients.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 978[2mms[22m[39m
+     [33m[2m✓[22m[39m should handle search [33m 379[2mms[22m[39m
+ [32m✓[39m src/pages/patients/__tests__/PatientProfile.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 1207[2mms[22m[39m
+     [33m[2m✓[22m[39m renders the patient record and supports core actions [33m 1155[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/LabManagement.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 489[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Payments.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 308[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Sheet.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[32m 261[2mms[22m[39m
+ [32m✓[39m src/components/treatment/__tests__/TreatmentPlanCard.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 328[2mms[22m[39m
+     [33m[2m✓[22m[39m renders the plan and triggers actions [33m 316[2mms[22m[39m
+ [32m✓[39m src/components/patients/__tests__/PatientProfileHeader.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 341[2mms[22m[39m
+     [33m[2m✓[22m[39m renders the active patient summary and triggers actions [33m 311[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useAppointments.test.tsx [2m([22m[2m12 tests[22m[2m)[22m[33m 385[2mms[22m[39m
+ [32m✓[39m src/components/scheduling/__tests__/WeekView.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 308[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Dialog.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 306[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Communications.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 384[2mms[22m[39m
+[90mstderr[2m | Logger.error (D:\coredentist\coredent-style-main\src\lib\logger.ts:125:13)
+[22m[39m[ERROR] Network error TypeError: fetch failed
+[90m    at node:internal/deps/undici/undici:13502:13[39m
+[90m    at processTicksAndRejections (node:internal/process/task_queues:105:5)[39m
+    at until [90m(file:///D:/coredentist/coredent-style-main/[39mnode_modules/[4m@open-draft[24m/until/lib/index.mjs:4:18[90m)[39m
+    at Object.passthrough [90m(file:///D:/coredentist/coredent-style-main/[39mnode_modules/[4m@mswjs[24m/interceptors/lib/node/fetch-G1DVwDKG.mjs:178:63[90m)[39m
+    at RequestController.passthrough [90m(file:///D:/coredentist/coredent-style-main/[39mnode_modules/[4m@mswjs[24m/interceptors/lib/node/fetchUtils-CoU35g3M.mjs:198:3[90m)[39m
+    at handleRequest [90m(file:///D:/coredentist/coredent-style-main/[39mnode_modules/[4m@mswjs[24m/interceptors/lib/node/handleRequest-Y97UwBbF.mjs:184:74[90m)[39m
+    at globalThis.fetch [90m(file:///D:/coredentist/coredent-style-main/[39mnode_modules/[4m@mswjs[24m/interceptors/lib/node/fetch-G1DVwDKG.mjs:242:4[90m)[39m
+    at ApiClient.request (D:/coredentist/coredent-style-main/src/services/api.ts:152:24)
+    at checkSession (D:/coredentist/coredent-style-main/src/contexts/AuthContext.tsx:82:32) {
+  [cause]: AggregateError: 
+  [90m    at internalConnectMultiple (node:net:1139:18)[39m
+  [90m    at afterConnectMultiple (node:net:1712:7)[39m {
+    code: [32m'ECONNREFUSED'[39m,
+    [errors]: [ [36m[Error][39m, [36m[Error][39m ]
+  }
+} { endpoint: [32m'/auth/csrf'[39m }
+
+[90mstderr[2m | Logger.error (D:\coredentist\coredent-style-main\src\lib\logger.ts:125:13)
+[22m[39m[ERROR] Failed to rotate access token TypeError: Failed to parse URL from /api/v1/auth/refresh
+[90m    at node:internal/deps/undici/undici:13502:13[39m
+[90m    at processTicksAndRejections (node:internal/process/task_queues:105:5)[39m
+    at D:/coredentist/coredent-style-main/src/services/api.ts:384:26 {
+  [cause]: TypeError: Invalid URL
+  [90m    at new URL (node:internal/url:818:25)[39m
+      at new URL [90m(file:///D:/coredentist/coredent-style-main/[39mnode_modules/[4mvitest[24m/dist/chunks/index.DC7d2Pf8.js:557:2[90m)[39m
+  [90m    at new Request (node:internal/deps/undici/undici:9578:25)[39m
+  [90m    at fetch (node:internal/deps/undici/undici:10307:25)[39m
+  [90m    at fetch (node:internal/deps/undici/undici:13500:10)[39m
+  [90m    at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)[39m
+      at D:/coredentist/coredent-style-main/src/services/api.ts:384:32
+      at ApiClient.refreshAccessToken (D:/coredentist/coredent-style-main/src/services/api.ts:423:5)
+      at ApiClient.restoreSession (D:/coredentist/coredent-style-main/src/services/api.ts:117:33)
+      at Object.restoreSession (D:/coredentist/coredent-style-main/src/services/api.ts:521:15) {
+    code: [32m'ERR_INVALID_URL'[39m,
+    input: [32m'/api/v1/auth/refresh'[39m
+  }
+} [90mundefined[39m
+
+[90mstderr[2m | Logger.error (D:\coredentist\coredent-style-main\src\lib\logger.ts:125:13)
+[22m[39m[ERROR] Network error TypeError: Failed to parse URL from /api/v1/auth/me
+[90m    at node:internal/deps/undici/undici:13502:13[39m
+[90m    at processTicksAndRejections (node:internal/process/task_queues:105:5)[39m
+    at ApiClient.request (D:/coredentist/coredent-style-main/src/services/api.ts:152:24) {
+  [cause]: TypeError: Invalid URL
+  [90m    at new URL (node:internal/url:818:25)[39m
+      at new URL [90m(file:///D:/coredentist/coredent-style-main/[39mnode_modules/[4mvitest[24m/dist/chunks/index.DC7d2Pf8.js:557:2[90m)[39m
+  [90m    at new Request (node:internal/deps/undici/undici:9578:25)[39m
+  [90m    at fetch (node:internal/deps/undici/undici:10307:25)[39m
+  [90m    at fetch (node:internal/deps/undici/undici:13500:10)[39m
+  [90m    at fetch (node:internal/bootstrap/web/exposed-window-or-worker:75:12)[39m
+      at ApiClient.request (D:/coredentist/coredent-style-main/src/services/api.ts:152:30)
+      at ApiClient.getValidated (D:/coredentist/coredent-style-main/src/services/api.ts:318:17)
+      at Object.getCurrentUser (D:/coredentist/coredent-style-main/src/services/api.ts:514:15)
+      at checkSession (D:/coredentist/coredent-style-main/src/contexts/AuthContext.tsx:94:40) {
+    code: [32m'ERR_INVALID_URL'[39m,
+    input: [32m'/api/v1/auth/me'[39m
+  }
+} { endpoint: [32m'/auth/me'[39m }
+
+ [32m✓[39m src/pages/__tests__/Subscriptions.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 378[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/EnterpriseHQ.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 326[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Referrals.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 377[2mms[22m[39m
+ [32m✓[39m src/components/scheduling/__tests__/MonthView.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 365[2mms[22m[39m
+     [33m[2m✓[22m[39m renders the month grid, filters cancelled appointments, and exposes hidden counts [33m 353[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/RadioGroup.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[32m 238[2mms[22m[39m
+ [32m✓[39m src/components/dashboard/__tests__/dashboardCards.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 220[2mms[22m[39m
+ [32m✓[39m src/components/__tests__/Sidebar.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 215[2mms[22m[39m
+ [32m✓[39m src/contexts/__tests__/AuthContext.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 302[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/HubPages.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 238[2mms[22m[39m
+ [32m✓[39m src/__tests__/App.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 248[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Slider.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[32m 248[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Accordion.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[32m 238[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Marketing.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 273[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Button.test.tsx [2m([22m[2m13 tests[22m[2m)[22m[32m 278[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/AlertDialog.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[32m 220[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Textarea.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[32m 205[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/highImpactUi.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 330[2mms[22m[39m
+ [32m✓[39m src/components/patients/__tests__/PatientOverviewTab.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 377[2mms[22m[39m
+     [33m[2m✓[22m[39m renders the patient timeline and add-note action [33m 341[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Reports.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1983[2mms[22m[39m
+     [33m[2m✓[22m[39m renders the reports page and displays overview metrics [33m 449[2mms[22m[39m
+     [33m[2m✓[22m[39m switches tabs and exports reports [33m 664[2mms[22m[39m
+     [33m[2m✓[22m[39m handles preset range changes [33m 431[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Popover.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 286[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useScheduling.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[32m 166[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Tabs.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[32m 237[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/BookingSuccess.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 233[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Dashboard.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 264[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Switch.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 328[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Checkbox.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[32m 245[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Progress.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[32m 206[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useSubscriptions.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 372[2mms[22m[39m
+ [32m✓[39m src/components/__tests__/PwaInstallPrompt.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 203[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useBillingSummary.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 200[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Input.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[32m 238[2mms[22m[39m
+ [32m✓[39m src/components/auth/__tests__/ProtectedRoute.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[32m 180[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/NotFound.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 139[2mms[22m[39m
+ [32m✓[39m src/components/patients/__tests__/PatientMedicalTab.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 162[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/ReferralHub.test.tsx [2m([22m[2m1 test[22m[2m)[22m[32m 228[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/ClinicalNotes.test.tsx [2m([22m[2m1 test[22m[2m)[22m[32m 232[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useDashboardMetrics.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 163[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/ScrollArea.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 139[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useTodayAppointments.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 153[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/LabLogistics.test.tsx [2m([22m[2m1 test[22m[2m)[22m[32m 141[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Table.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[32m 114[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/sanitize.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 129[2mms[22m[39m
+ [32m✓[39m src/components/patients/__tests__/AppointmentHistory.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 114[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/errorRecovery.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 155[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/subscriptionsApi.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 161[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Badge.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[32m 99[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Card.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[32m 104[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/insuranceApi.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 125[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/billingApi.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 119[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/patientApi.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 99[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Avatar.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[32m 139[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useCommunications.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[32m 95[2mms[22m[39m
+ [32m✓[39m src/components/patients/__tests__/PatientQuickStats.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 134[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/staffApi.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 108[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/i18n.test.tsx [2m([22m[2m16 tests[22m[2m)[22m[32m 86[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/clinicApi.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 84[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/schedulingApi.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 89[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Skeleton.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[32m 69[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Tooltip.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 172[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Label.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[32m 105[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/communicationsApi.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 82[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/treatmentPlanApi.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 104[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/authApi.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 82[2mms[22m[39m
+ [32m✓[39m src/components/__tests__/ComingSoon.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 137[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/appointmentsApi.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 89[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/patientsApi.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 76[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/automationApi.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 105[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useTreatmentPlanForm.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 93[2mms[22m[39m
+ [32m✓[39m src/components/__tests__/DemoBanner.test.tsx [2m([22m[2m1 test[22m[2m)[22m[32m 86[2mms[22m[39m
+ [32m✓[39m src/components/__tests__/NavLink.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 66[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/sanitize.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 73[2mms[22m[39m
+ [32m✓[39m src/components/ui/__tests__/Separator.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 70[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useFormatters.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 65[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useApiRequest.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 112[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useAppointmentFilters.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 141[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/dentalChartApi.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 113[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useDateRange.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 78[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useInsuranceData.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 72[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/apiSurface.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 75[2mms[22m[39m
+ [32m✓[39m src/pages/__tests__/Index.test.tsx [2m([22m[2m1 test[22m[2m)[22m[32m 72[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/api.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 53[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/paymentApi.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 40[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/monitoring.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 41[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useRecentActivity.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 42[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/utils.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/rateLimiter.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 30[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/accessibility.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 29[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/domainContract.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 30[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/analytics.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 35[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/logger.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 37[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/reportsApi.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 40[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/operationalApi.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 43[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/webVitals.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 44[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/keyCase.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/csrf.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 27[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/clinicalFinancialApi.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 27[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/apiValidation.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 36[2mms[22m[39m
+ [32m✓[39m src/lib/__tests__/errorHandler.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m src/hooks/__tests__/useAppointmentStats.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m src/services/__tests__/liveOperationsApi.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m148 passed[39m[22m[90m (148)[39m
+[2m      Tests [22m [1m[32m986 passed[39m[22m[90m (986)[39m
+[2m   Start at [22m 23:18:11
+[2m   Duration [22m 309.10s[2m (transform 66.86s, setup 265.26s, import 368.48s, tests 95.55s, environment 430.92s)[22m
+

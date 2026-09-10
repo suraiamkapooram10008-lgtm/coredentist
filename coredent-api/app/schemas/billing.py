@@ -4,27 +4,48 @@ Pydantic models for billing data validation
 """
 
 from datetime import datetime, date
-from typing import Optional, List
-from pydantic import BaseModel, Field, validator
+from typing import Any, Optional, List
+from pydantic import BaseModel, Field, field_validator
 from uuid import UUID
 from decimal import Decimal
 
 from app.models.billing import InvoiceStatus, PaymentMethod, PaymentStatus, PaymentPlanStatus
 
 
+# M-02 FIX: money fields are persisted to Numeric(10, 2). The API previously
+# accepted an arbitrary-scale Decimal, so a request for 0.004 passed
+# validation (it is > 0) and then rounded to 0.00 on write -- a payment that
+# validated as non-zero but recorded nothing. Money inputs are now pinned to
+# the storage precision and out-of-scale values are rejected, not rounded.
+MONEY_MAX_DIGITS = 10
+MONEY_DECIMAL_PLACES = 2
+
+
+def MoneyField(**kwargs) -> Any:  # noqa: N802 - factory reads as a type
+    """Decimal field constrained to the Numeric(10, 2) storage precision."""
+    kwargs.setdefault("max_digits", MONEY_MAX_DIGITS)
+    kwargs.setdefault("decimal_places", MONEY_DECIMAL_PLACES)
+    return Field(**kwargs)
+
+
 # Line Item Schemas
 
 class LineItemBase(BaseModel):
     """Base line item schema"""
-    description: str
-    quantity: int = Field(..., gt=0)
-    unit_price: Decimal = Field(..., ge=0)
-    total: Decimal = Field(..., ge=0)
+    description: str = Field(..., min_length=1, max_length=500)
+    quantity: int = Field(..., gt=0, le=100_000)
+    unit_price: Decimal = MoneyField(ge=0)
+    total: Decimal = MoneyField(ge=0)
 
-    @validator('total')
-    def validate_total(cls, v, values):
-        if 'quantity' in values and 'unit_price' in values:
-            expected_total = values['quantity'] * values['unit_price']
+    @field_validator('total')
+    @classmethod
+    def validate_total(cls, v, info):
+        # L12 FIX: Pydantic v2 field_validator (the v1 @validator compat
+        # shim silently stops validating if v1 support is dropped).
+        quantity = info.data.get('quantity')
+        unit_price = info.data.get('unit_price')
+        if quantity is not None and unit_price is not None:
+            expected_total = quantity * unit_price
             if v != expected_total:
                 raise ValueError(f'total must equal quantity * unit_price ({expected_total})')
         return v
@@ -41,8 +62,8 @@ class InvoiceBase(BaseModel):
     """Base invoice schema"""
     patient_id: UUID
     status: Optional[InvoiceStatus] = InvoiceStatus.PENDING
-    line_items: List[LineItemCreate]
-    tax_rate: Optional[Decimal] = Field(Decimal('0.0'), ge=0, le=1)
+    line_items: List[LineItemCreate] = Field(..., min_length=1, max_length=500)
+    tax_rate: Optional[Decimal] = Field(Decimal('0.0'), ge=0, le=1, max_digits=8, decimal_places=6)
     due_date: Optional[date] = None
     notes: Optional[str] = None
 
@@ -55,8 +76,8 @@ class InvoiceCreate(InvoiceBase):
 class InvoiceUpdate(BaseModel):
     """Schema for updating invoices"""
     status: Optional[InvoiceStatus] = None
-    line_items: Optional[List[LineItemCreate]] = None
-    tax_rate: Optional[Decimal] = Field(None, ge=0, le=1)
+    line_items: Optional[List[LineItemCreate]] = Field(None, min_length=1, max_length=500)
+    tax_rate: Optional[Decimal] = Field(None, ge=0, le=1, max_digits=8, decimal_places=6)
     due_date: Optional[date] = None
     notes: Optional[str] = None
 
@@ -65,6 +86,9 @@ class InvoiceResponse(InvoiceBase):
     """Schema for invoice responses"""
     id: UUID
     practice_id: UUID
+    patient_name: str
+    patient_email: Optional[str] = None
+    patient_phone: Optional[str] = None
     invoice_number: str
     subtotal: Decimal
     tax: Decimal
@@ -73,48 +97,88 @@ class InvoiceResponse(InvoiceBase):
     updated_at: datetime
     amount_paid: Decimal
     balance_due: Decimal
+    payments: List["PaymentResponse"] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
 
 
 class InvoiceListResponse(BaseModel):
-    """Schema for list of invoices"""
+    """Schema for a bounded page of invoices."""
     invoices: List[InvoiceResponse]
+    # ``count`` retains its historic meaning (items in this response) while
+    # the additive fields let clients page without inferring an end state.
     count: int
+    total: Optional[int] = None
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+    next_offset: Optional[int] = None
 
 
 # Payment Schemas
 
 class PaymentBase(BaseModel):
-    """Base payment schema"""
+    """Fields shared by payment requests and responses."""
     invoice_id: UUID
     patient_id: UUID
-    amount: Decimal = Field(..., gt=0)
+    amount: Decimal = MoneyField(gt=0)
     payment_method: PaymentMethod
-    transaction_id: Optional[str] = None
-    status: Optional[PaymentStatus] = PaymentStatus.COMPLETED
+    transaction_id: Optional[str] = Field(None, max_length=255)
     notes: Optional[str] = None
 
 
+# M-01 FIX: statuses a client may assign when recording a payment.
+# REFUNDED is excluded: ``Invoice.amount_paid`` counts REFUNDED rows (net of
+# ``refunded_amount``, which defaults to 0), so a client-created REFUNDED
+# payment used to increase the invoice's paid total with no refund ledger
+# behind it. FAILED is excluded because a failed payment is an outcome
+# reported by a processor, not something a user records by hand. Refunds go
+# through the refund path, which writes ``refunded_amount`` atomically.
+CLIENT_SETTABLE_PAYMENT_STATUSES: frozenset[PaymentStatus] = frozenset(
+    {PaymentStatus.COMPLETED, PaymentStatus.PENDING}
+)
+
+
 class PaymentCreate(PaymentBase):
-    """Schema for creating payments"""
-    pass
+    """Schema for creating payments."""
+    status: PaymentStatus = PaymentStatus.COMPLETED
+
+    @field_validator("status")
+    @classmethod
+    def _reject_derived_status(cls, v: PaymentStatus) -> PaymentStatus:
+        if v not in CLIENT_SETTABLE_PAYMENT_STATUSES:
+            allowed = ", ".join(sorted(s.value for s in CLIENT_SETTABLE_PAYMENT_STATUSES))
+            raise ValueError(
+                f"status '{v.value}' cannot be set when recording a payment "
+                f"(allowed: {allowed}). Refunds and failures are recorded by "
+                "the refund and processor-callback paths."
+            )
+        return v
 
 
 class PaymentResponse(PaymentBase):
     """Schema for payment responses"""
     id: UUID
+    status: PaymentStatus
+    refunded_amount: Decimal = Decimal('0')
     created_at: datetime
 
     class Config:
         from_attributes = True
 
 
+# Resolve the embedded payment response after PaymentResponse is declared.
+InvoiceResponse.model_rebuild()
+
+
 class PaymentListResponse(BaseModel):
-    """Schema for list of payments"""
+    """Schema for a bounded page of payments."""
     payments: List[PaymentResponse]
     count: int
+    total: Optional[int] = None
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+    next_offset: Optional[int] = None
 
 
 # Summary Schemas
@@ -143,17 +207,33 @@ class PaymentPlanCreate(BaseModel):
     """Schema for creating a payment plan with installment validation"""
     patient_id: UUID
     invoice_id: Optional[UUID] = None
-    total_amount: Decimal = Field(..., gt=0)
-    initial_deposit: Decimal = Field(Decimal('0'), ge=0)
+    total_amount: Decimal = MoneyField(gt=0)
+    initial_deposit: Decimal = MoneyField(default=Decimal('0'), ge=0)
     months: int = Field(12, ge=1, le=60)
     notes: Optional[str] = None
 
-    @validator('initial_deposit')
-    def _deposit_not_gt_total(cls, v, values):
-        total = values.get('total_amount')
+    @field_validator('initial_deposit')
+    @classmethod
+    def _deposit_not_gt_total(cls, v, info):
+        # L12 FIX: Pydantic v2 field_validator (see LineItemBase).
+        total = info.data.get('total_amount')
         if total is not None and v > total:
             raise ValueError('initial_deposit cannot exceed total_amount')
         return v
+
+
+class PaymentPlanInstallmentPay(BaseModel):
+    """Schema for paying a single installment (M3).
+
+    ``amount`` is retained for client compatibility but, when supplied, must
+    equal the stored installment amount exactly. The server always uses the
+    deterministic ``PLAN-{installment_id}`` transaction reference; callers
+    may only echo that value, never substitute an arbitrary reference.
+    """
+    payment_method: PaymentMethod
+    amount: Optional[Decimal] = MoneyField(default=None, gt=0)
+    transaction_id: Optional[str] = Field(None, max_length=255)
+    notes: Optional[str] = None
 
 
 class PaymentPlanInstallmentResponse(BaseModel):
@@ -191,6 +271,10 @@ class PaymentPlanResponse(BaseModel):
 
 
 class PaymentPlanListResponse(BaseModel):
-    """Schema for list of payment plans"""
+    """Schema for a bounded page of payment plans."""
     payment_plans: List[PaymentPlanResponse]
     count: int
+    total: Optional[int] = None
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+    next_offset: Optional[int] = None

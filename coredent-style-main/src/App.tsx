@@ -1,25 +1,14 @@
 import { Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { Toaster } from '@/components/ui/toaster';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { publicRoutes, protectedRoutes, notFoundRoute } from '@/routes/config';
 import { Loader2 } from 'lucide-react';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 5 * 60 * 1000, // 5 minutes
-      retry: 1,
-      refetchOnWindowFocus: false,
-    },
-    mutations: {
-      retry: 0,
-    },
-  },
-});
+import { PwaInstallPrompt } from '@/components/PwaInstallPrompt';
+import { queryClient } from '@/lib/queryClient';
 
 function AppRoutes() {
   return (
@@ -52,8 +41,7 @@ function AppRoutes() {
         />
       ))}
 
-      {/* Default redirect */}
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      {/* Default redirect removed, / is now mapped in publicRoutes */}
 
       {/* 404 */}
       <Route
@@ -83,6 +71,7 @@ export default function App() {
         <BrowserRouter>
           <AuthProvider>
             <AppRoutes />
+            <PwaInstallPrompt />
             <Toaster />
           </AuthProvider>
         </BrowserRouter>

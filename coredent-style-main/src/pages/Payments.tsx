@@ -38,6 +38,7 @@ import {
   useRecurringPlans,
   useTerminals,
 } from "@/hooks/usePayments";
+import { useCurrencyFormatter } from "@/hooks/useCurrencyFormatter";
 
 export default function Payments() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -55,12 +56,7 @@ export default function Payments() {
   const recurringPlans = recurringData?.data?.plans ?? [];
   const terminals = terminalsData?.data?.terminals ?? [];
 
-  const formatUSD = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(amount);
-  };
+  const { formatCurrency: formatUSD } = useCurrencyFormatter();
 
   return (
     <div className="container mx-auto py-6 space-y-6">

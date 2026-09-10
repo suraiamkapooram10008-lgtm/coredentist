@@ -10,7 +10,7 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading, mustChangePassword } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -23,6 +23,10 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  if (mustChangePassword && location.pathname !== "/force-change-password") {
+    return <Navigate to="/force-change-password" replace />;
   }
 
   if (roles?.length && (!user || !roles.includes(user.role))) {

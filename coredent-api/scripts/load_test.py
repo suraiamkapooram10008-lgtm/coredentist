@@ -134,7 +134,7 @@ def simulate_user(metrics: LoadTestMetrics, vu_id: int):
     while time.time() - start_time < LoadTestConfig.DURATION_SECONDS:
         if random.random() < 0.9:
             endpoint, method, _ = random.choice(endpoints)
-            path = endpoint + f"?page=1&limit=20"
+            path = endpoint + "?page=1&limit=20"
         else:
             endpoint, method, body = random.choice(operations)
             path = endpoint
@@ -178,7 +178,7 @@ def run_load_test():
     print(f"RPS: {report['summary']['requests_per_second']}")
     print(f"Errors: {report['summary']['errors']} ({report['summary']['error_rate']}%)")
 
-    print(f"\nLatency (ms):")
+    print("\nLatency (ms):")
     print(f"  Min: {report['latency']['min_ms']}")
     print(f"  Mean: {report['latency']['mean_ms']}")
     print(f"  Median: {report['latency']['median_ms']}")
@@ -186,7 +186,7 @@ def run_load_test():
     print(f"  P99: {report['latency']['p99_ms']}")
     print(f"  Max: {report['latency']['max_ms']}")
 
-    print(f"\nStatus Codes:")
+    print("\nStatus Codes:")
     for code, count in sorted(report['status_codes'].items()):
         print(f"  {code}: {count}")
 

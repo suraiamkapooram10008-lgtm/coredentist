@@ -7,7 +7,7 @@ import tsParser from "@typescript-eslint/parser";
 import tsPlugin from "@typescript-eslint/eslint-plugin";
 
 export default tseslint.config(
-  { ignores: ["dist", "dev-dist/**", "**/dev-dist/**"] },
+  { ignores: ["dist", "dev-dist/**", "**/dev-dist/**", "coverage/**", "public/mockServiceWorker.js"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],
@@ -24,7 +24,14 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
-      "@typescript-eslint/no-unused-vars": "warn",
+      "@typescript-eslint/no-unused-vars": ["warn", {
+        // Catch-block bindings are typically intentional (e.g. `catch (error)`)
+        // even when only the side-effect is used. Allow the common pattern.
+        caughtErrors: "none",
+        argsIgnorePattern: "^_",
+        varsIgnorePattern: "^_",
+        ignoreRestSiblings: true,
+      }],
       "@typescript-eslint/ban-types": "off",
       "@typescript-eslint/no-unsafe-member-access": "off",
       "@typescript-eslint/no-unsafe-assignment": "off",

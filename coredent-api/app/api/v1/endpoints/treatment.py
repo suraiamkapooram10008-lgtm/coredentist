@@ -8,16 +8,18 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-from datetime import datetime, date
+from datetime import date
 from typing import Optional
 from uuid import UUID
 import logging
 
 from app.core.database import get_db
+from app.core.business_time import business_date, get_practice_timezone
 from app.api.deps import get_current_user, verify_csrf, require_role
 from app.models.user import User, UserRole
 from app.core.audit import log_audit_event
 from app.models.treatment import (
+    TreatmentPlan,
     TreatmentProcedure,
     ProcedureLibrary,
     TreatmentPlanStatus,
@@ -51,9 +53,41 @@ from app.schemas.treatment import (
 from app.services.treatment_service import TreatmentService
 from app.services.treatment_planning import TreatmentPlanningService
 from app.services.treatment_costing import TreatmentCostingService
+from app.services.tenant_refs import require_appointment, require_pre_authorization
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+async def _validate_procedure_references(
+    db: AsyncSession,
+    *,
+    practice_id: UUID,
+    patient_id: UUID,
+    appointment_id: Optional[UUID],
+    pre_auth_id: Optional[UUID],
+) -> None:
+    """M-11 FIX: prove a procedure's optional references belong to this plan.
+
+    Both ids are optional and both were previously written straight from the
+    request body. An appointment must belong to this practice *and* this
+    plan's patient; a pre-authorization must belong to this patient. Anything
+    else would link a procedure to a visit or authorization that is not this
+    patient's.
+    """
+    if appointment_id is not None:
+        await require_appointment(
+            db, appointment_id, practice_id, patient_id=patient_id, field="Appointment"
+        )
+    if pre_auth_id is not None:
+        await require_pre_authorization(
+            db, pre_auth_id, practice_id, patient_id=patient_id, field="Pre-authorization"
+        )
+
+
+def _next_offset(offset: int, count: int, total: int) -> Optional[int]:
+    """Return the next offset only when another treatment-plan page exists."""
+    return offset + count if offset + count < total else None
 
 
 # Treatment Plan Endpoints
@@ -65,13 +99,15 @@ async def list_treatment_plans(
     provider_id: Optional[str] = Query(None, description="Filter by provider"),
     start_date: Optional[date] = Query(None, description="Start date"),
     end_date: Optional[date] = Query(None, description="End date"),
+    offset: int = Query(0, ge=0, description="Number of treatment plans to skip"),
+    limit: int = Query(50, ge=1, le=200, description="Maximum treatment plans to return"),
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> TreatmentPlanListResponse:
-    """List treatment plans for the current practice"""
+    """List a bounded, practice-local-date page of treatment plans."""
     try:
-        plans = await TreatmentService.list_treatment_plans(
+        plans, total = await TreatmentService.list_treatment_plans_page(
             db,
             current_user.practice_id,
             patient_id=patient_id,
@@ -79,15 +115,25 @@ async def list_treatment_plans(
             provider_id=provider_id,
             start_date=start_date,
             end_date=end_date,
+            offset=offset,
+            limit=limit,
         )
 
         # HIPAA: Log access
         await log_audit_event(db, current_user, "list_treatment_plans", "treatment_plan", None, request)
         await db.commit()
 
-        logger.info(f"Listed {len(plans)} treatment plans")
-        return TreatmentPlanListResponse(plans=plans, count=len(plans))
-    except (ValueError, TypeError, SQLAlchemyError) as e:
+        logger.info("Listed %d of %d treatment plans", len(plans), total)
+        return TreatmentPlanListResponse(
+            plans=plans,
+            count=len(plans),
+            total=total,
+            next_offset=_next_offset(offset, len(plans), total),
+        )
+    except ValueError as e:
+        logger.error(f"Invalid treatment plan list parameters: {e}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except (TypeError, SQLAlchemyError) as e:
         logger.error(f"Error listing treatment plans: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -96,11 +142,15 @@ async def list_treatment_plans(
 async def list_patient_treatment_plans(
     patient_id: str,
     status_filter: Optional[TreatmentPlanStatus] = Query(None, description="Filter by status"),
+    start_date: Optional[date] = Query(None, description="Start date"),
+    end_date: Optional[date] = Query(None, description="End date"),
+    offset: int = Query(0, ge=0, description="Number of treatment plans to skip"),
+    limit: int = Query(50, ge=1, le=200, description="Maximum treatment plans to return"),
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> TreatmentPlanListResponse:
-    """List treatment plans for a specific patient"""
+    """List a bounded, practice-local-date page of a patient's treatment plans."""
     try:
         # Verify patient belongs to practice
         result = await db.execute(
@@ -114,25 +164,34 @@ async def list_patient_treatment_plans(
         if not patient:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
 
-        plans = await TreatmentService.list_treatment_plans(
+        plans, total = await TreatmentService.list_treatment_plans_page(
             db,
             current_user.practice_id,
             patient_id=patient_id,
             status=status_filter,
+            start_date=start_date,
+            end_date=end_date,
+            offset=offset,
+            limit=limit,
         )
 
         # HIPAA: Log access
         await log_audit_event(db, current_user, "list_patient_treatment_plans", "patient", patient_id, request)
         await db.commit()
 
-        logger.info(f"Listed {len(plans)} treatment plans for patient: {patient_id}")
-        return TreatmentPlanListResponse(plans=plans, count=len(plans))
+        logger.info("Listed %d of %d treatment plans for patient: %s", len(plans), total, patient_id)
+        return TreatmentPlanListResponse(
+            plans=plans,
+            count=len(plans),
+            total=total,
+            next_offset=_next_offset(offset, len(plans), total),
+        )
     except HTTPException:
         raise
     except ValueError as e:
         logger.error(f"Validation error listing patient treatment plans: {e}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request parameters")
-    except (ValueError, TypeError, SQLAlchemyError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except (TypeError, SQLAlchemyError) as e:
         logger.error(f"Unexpected error listing patient treatment plans: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -243,16 +302,22 @@ async def update_treatment_plan(
         plan = await TreatmentService.update_treatment_plan(
             db,
             plan_id,
+            current_user.practice_id,
             **plan_data.model_dump(exclude_unset=True)
         )
+        if plan is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treatment plan not found")
 
         logger.info(f"Updated treatment plan: {plan_id}")
         return plan
     except HTTPException:
         raise
+    except ValueError as e:
+        # M-11: invalid status transition.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except IntegrityError:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource already exists")
-    except (ValueError, TypeError, SQLAlchemyError) as e:
+    except (TypeError, SQLAlchemyError) as e:
         logger.error(f"Error updating treatment plan: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
@@ -365,11 +430,12 @@ async def update_treatment_phase(
         if not phase:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treatment phase not found")
 
-        # Verify plan belongs to practice
+        # Verify plan belongs to practice (404, not 403 — never confirm a
+        # foreign-practice row exists).
         plan = await TreatmentService.get_treatment_plan(db, phase.treatment_plan_id, current_user.practice_id)
 
         if not plan:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treatment phase not found")
 
         phase = await TreatmentPlanningService.update_treatment_phase(
             db,
@@ -438,7 +504,7 @@ async def list_treatment_procedures(
 
 @router.post("/plans/{plan_id}/procedures", response_model=TreatmentProcedureResponse)
 async def create_treatment_procedure(
-    plan_id: str,
+    plan_id: UUID,
     procedure_data: TreatmentProcedureCreate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.DENTIST)),
     db: AsyncSession = Depends(get_db),
@@ -458,6 +524,18 @@ async def create_treatment_procedure(
 
             if not phase or phase.treatment_plan_id != plan_id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treatment phase not found")
+
+        # M-11 FIX: appointment_id and pre_auth_id arrived straight from the
+        # request body and were written unvalidated, so a procedure could point
+        # at another practice's appointment or another patient's
+        # pre-authorization. Validate against the plan's own patient/practice.
+        await _validate_procedure_references(
+            db,
+            practice_id=current_user.practice_id,
+            patient_id=plan.patient_id,
+            appointment_id=procedure_data.appointment_id,
+            pre_auth_id=procedure_data.pre_auth_id,
+        )
 
         procedure = TreatmentProcedure(
             treatment_plan_id=plan_id,
@@ -492,21 +570,44 @@ async def update_treatment_procedure(
 ) -> TreatmentProcedureResponse:
     """Update treatment procedure"""
     try:
-        result = await db.execute(
-            select(TreatmentProcedure).where(TreatmentProcedure.id == procedure_id)
-        )
-        procedure = result.scalar_one_or_none()
-
-        if not procedure:
+        try:
+            procedure_uuid = UUID(procedure_id)
+        except ValueError:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treatment procedure not found")
+        # Tenant scoping happens in the fetch itself: join to the parent plan
+        # and filter by practice so a cross-tenant procedure id yields 404.
+        # The previous pattern loaded the bare-id row first and checked the
+        # plan afterwards, which pulled another practice's PHI row into
+        # memory and leaked existence via a 403-vs-404 difference.
+        result = await db.execute(
+            select(TreatmentProcedure, TreatmentPlan)
+            .join(
+                TreatmentPlan,
+                TreatmentProcedure.treatment_plan_id == TreatmentPlan.id,
+            )
+            .where(
+                TreatmentProcedure.id == procedure_uuid,
+                TreatmentPlan.practice_id == current_user.practice_id,
+            )
+        )
+        row = result.one_or_none()
 
-        # Verify plan belongs to practice
-        plan = await TreatmentService.get_treatment_plan(db, procedure.treatment_plan_id, current_user.practice_id)
-
-        if not plan:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treatment procedure not found")
+        procedure, plan = row
 
         update_data = procedure_data.dict(exclude_unset=True)
+        # M-11 FIX: same unvalidated references on the update path.
+        await _validate_procedure_references(
+            db,
+            practice_id=current_user.practice_id,
+            patient_id=plan.patient_id,
+            appointment_id=update_data.get("appointment_id"),
+            pre_auth_id=update_data.get("pre_auth_id"),
+        )
+        # The parent plan is not client-reassignable: moving a procedure to
+        # another plan would move its cost into a different patient's total.
+        update_data.pop("treatment_plan_id", None)
         for field, value in update_data.items():
             setattr(procedure, field, value)
 
@@ -536,19 +637,28 @@ async def delete_treatment_procedure(
 ) -> dict:
     """Delete treatment procedure"""
     try:
-        result = await db.execute(
-            select(TreatmentProcedure).where(TreatmentProcedure.id == procedure_id)
-        )
-        procedure = result.scalar_one_or_none()
-
-        if not procedure:
+        try:
+            procedure_uuid = UUID(procedure_id)
+        except ValueError:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treatment procedure not found")
+        # Same join-scoped fetch as the update path: cross-tenant ids 404,
+        # never 403, and no foreign-tenant row is ever loaded.
+        result = await db.execute(
+            select(TreatmentProcedure, TreatmentPlan)
+            .join(
+                TreatmentPlan,
+                TreatmentProcedure.treatment_plan_id == TreatmentPlan.id,
+            )
+            .where(
+                TreatmentProcedure.id == procedure_uuid,
+                TreatmentPlan.practice_id == current_user.practice_id,
+            )
+        )
+        row = result.one_or_none()
 
-        # Verify plan belongs to practice
-        plan = await TreatmentService.get_treatment_plan(db, procedure.treatment_plan_id, current_user.practice_id)
-
-        if not plan:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Treatment procedure not found")
+        procedure, _plan = row
 
         plan_id = procedure.treatment_plan_id
 
@@ -584,7 +694,7 @@ async def list_procedure_library(
     try:
         query = select(ProcedureLibrary).where(
             ProcedureLibrary.practice_id == current_user.practice_id,
-            ProcedureLibrary.is_archived == False,
+            ProcedureLibrary.is_archived.is_(False),
         )
 
         if is_active is not None:
@@ -714,6 +824,7 @@ async def estimate_costs(
             db,
             estimate_request.patient_insurance_id,
             estimate_request.procedures,
+            practice_id=current_user.practice_id,
         )
 
         logger.info(f"Generated cost estimate for {len(estimate_request.procedures)} procedures")
@@ -742,13 +853,16 @@ async def accept_treatment_plan(
 
         # Update plan status
         plan.status = TreatmentPlanStatus.ACCEPTED
-        plan.accepted_date = datetime.now().date()
+        plan.accepted_date = business_date(
+            await get_practice_timezone(db, plan.practice_id)
+        )
         plan.acceptance_method = acceptance_data.acceptance_method
         plan.acceptance_notes = acceptance_data.acceptance_notes
 
         # Update accepted procedures if specified
         accepted_procedures = []
-        total_accepted_cost = 0
+        from decimal import Decimal
+        total_accepted_cost = Decimal('0')
 
         if acceptance_data.accepted_procedures:
             # Get all procedures for this plan
@@ -764,7 +878,7 @@ async def accept_treatment_plan(
                     procedure.is_accepted = True
                     procedure.acceptance_notes = acceptance_data.acceptance_notes
                     accepted_procedures.append(procedure.id)
-                    total_accepted_cost += float(procedure.fee or 0)
+                    total_accepted_cost += Decimal(str(procedure.fee or 0))
                 else:
                     procedure.is_accepted = False
         else:
@@ -780,7 +894,7 @@ async def accept_treatment_plan(
                 procedure.is_accepted = True
                 procedure.acceptance_notes = acceptance_data.acceptance_notes
                 accepted_procedures.append(procedure.id)
-                total_accepted_cost += float(procedure.fee or 0)
+                total_accepted_cost += Decimal(str(procedure.fee or 0))
 
         await db.commit()
 
@@ -790,7 +904,7 @@ async def accept_treatment_plan(
             status=plan.status,
             accepted_date=plan.accepted_date,
             acceptance_method=plan.acceptance_method,
-            total_accepted_cost=total_accepted_cost,
+            total_accepted_cost=str(total_accepted_cost),
             accepted_procedures=accepted_procedures,
         )
     except HTTPException:

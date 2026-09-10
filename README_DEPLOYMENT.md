@@ -1,212 +1,159 @@
-# 🚀 CoreDent Backend Deployment Status
+# CoreDent deployment runbook
 
-## ✅ Current Status: DEPLOYED - Needs Configuration
+CoreDent uses:
 
-Your backend is successfully deployed to Railway and is waiting for environment variables.
+- Vercel for the Vite frontend in `coredent-style-main`
+- Railway for the FastAPI backend and its PostgreSQL, Redis, ClamAV,
+  Celery worker, and Celery Beat services
 
----
+Do not process real patient data until Business Associate Agreements and
+required compliance controls are active for every vendor that may handle PHI.
 
-## 🎯 Quick Start (5 Minutes)
+## Production domains
 
-### Option 1: Follow the Checklist
-Open **`DO_THIS_NOW.md`** and follow the step-by-step instructions.
+Replace these examples with the real domains:
 
-### Option 2: Quick Commands
-```bash
-# 1. Generate SECRET_KEY
-python generate_secret_key.py
+- Frontend: `https://app.example.com`
+- API: `https://api.example.com`
+- Frontend API base: `https://api.example.com/api/v1`
 
-# 2. Go to Railway and add PostgreSQL database
-# https://railway.app/project/practical-dream
+## Railway API service
 
-# 3. Add environment variables in Railway Dashboard
-# (See DO_THIS_NOW.md for the list)
+Connect the repository and configure:
 
-# 4. Redeploy in Railway Dashboard
-
-# 5. Run migrations
-railway run alembic upgrade head
+```text
+Root Directory: /coredent-api
+Config File Path: /railway.json
+Healthcheck Path: /health
 ```
 
----
+Add PostgreSQL and Redis to the same Railway project and environment. Use
+private reference variables:
 
-## 📋 What's Been Done
-
-### ✅ Completed
-- [x] Backend code written and tested
-- [x] Docker configuration created
-- [x] Railway project created
-- [x] GitHub repository connected
-- [x] Deployment pipeline configured
-- [x] Docker image builds successfully
-- [x] Container starts correctly
-- [x] All code committed and pushed to `master` branch
-
-### ⏳ Remaining (5 minutes)
-- [ ] Add PostgreSQL database in Railway
-- [ ] Generate SECRET_KEY
-- [ ] Add environment variables
-- [ ] Redeploy backend
-- [ ] Run database migrations
-
----
-
-## 📚 Documentation Guide
-
-| Document | Purpose | Time |
-|----------|---------|------|
-| **START_HERE_NOW.md** | Overview and quick links | 1 min read |
-| **DO_THIS_NOW.md** | Step-by-step checklist | 5 min to complete |
-| **RAILWAY_SETUP_NOW.md** | Detailed setup guide | Reference |
-| **CURRENT_STATUS.md** | Status explanation | 2 min read |
-| **SETUP_FLOWCHART.md** | Visual flowchart | 1 min read |
-| **QUICK_COMMANDS.md** | Command reference | Reference |
-
----
-
-## 🔧 Tools Provided
-
-| File | Purpose |
-|------|---------|
-| `generate_secret_key.py` | Generate SECRET_KEY (Python) |
-| `generate_secret_key.bat` | Generate SECRET_KEY (Windows) |
-
----
-
-## 🎯 The Error Explained
-
-You're seeing this error:
-```
-ValidationError: 2 validation errors for Settings
-DATABASE_URL: Field required
-SECRET_KEY: Field required
+```text
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+REDIS_URL=${{Redis.REDIS_URL}}
+CELERY_BROKER_URL=${{Redis.REDIS_URL}}
+CELERY_RESULT_BACKEND=${{Redis.REDIS_URL}}
 ```
 
-**This is EXPECTED and NORMAL!**
+Add a private ClamAV service and configure:
 
-Your backend is deployed and working. It's just waiting for configuration. Think of it like a car that's built and ready - it just needs gas (environment variables) to run.
-
----
-
-## 🔗 Important Links
-
-- **Railway Project**: https://railway.app/project/practical-dream
-- **GitHub Repository**: https://github.com/suraiamkapooram10008-lgtm/coredentist
-- **Service Name**: coredentist
-- **Branch**: master
-- **Region**: us-east4
-
----
-
-## 📊 Deployment Details
-
-### What's Working
-- ✅ Code repository connected
-- ✅ Dockerfile builds successfully
-- ✅ Python 3.12 environment
-- ✅ Dependencies installed
-- ✅ Container starts
-- ✅ Port configuration correct
-- ✅ Health check endpoint ready
-
-### What's Needed
-- ⏳ PostgreSQL database
-- ⏳ DATABASE_URL variable
-- ⏳ SECRET_KEY variable
-- ⏳ Other environment variables
-- ⏳ Database migrations
-
----
-
-## 🎯 Next Steps
-
-### Immediate (5 minutes)
-1. Open `DO_THIS_NOW.md`
-2. Follow the checklist
-3. Backend will be live!
-
-### After Backend Works (30 minutes)
-1. Deploy frontend to Railway
-2. Configure frontend environment variables
-3. Test full application
-4. 🎉 You're live!
-
----
-
-## 🆘 Troubleshooting
-
-### "No config file 'alembic.ini' found"
-- Running locally instead of in container
-- Use `railway shell` to run inside container
-- See `QUICK_COMMANDS.md` for alternatives
-
-### "Field required" errors persist
-- Check all variables are added in Railway
-- Verify no typos in variable names
-- Click "Redeploy" after adding variables
-- Check logs: Railway Dashboard → Deployments → View Logs
-
-### Can't run migrations
-- Make sure backend is running first
-- Check DATABASE_URL is correct
-- Try Railway Dashboard Shell
-- See `RAILWAY_SETUP_NOW.md` for alternatives
-
----
-
-## 💡 Pro Tips
-
-1. **Use the checklist**: `DO_THIS_NOW.md` has everything in order
-2. **Generate key first**: Run `generate_secret_key.py` before going to Railway
-3. **Copy DATABASE_URL**: Get it from PostgreSQL service, not manually typed
-4. **Redeploy after variables**: Always click "Redeploy" after adding variables
-5. **Check logs**: If something fails, logs will tell you exactly what's wrong
-
----
-
-## 🎊 You're Almost Done!
-
-The hard work is complete:
-- ✅ 95% of deployment is done
-- ✅ All code is working
-- ✅ Infrastructure is set up
-- ⏳ Just needs 5 minutes of configuration
-
-**Open `START_HERE_NOW.md` to begin! 🚀**
-
----
-
-## 📞 Support
-
-If you get stuck:
-1. Check the error in Railway logs
-2. Review `CURRENT_STATUS.md` for explanation
-3. Follow `DO_THIS_NOW.md` step-by-step
-4. Reference `QUICK_COMMANDS.md` for commands
-
----
-
-## 🎯 Success Criteria
-
-You'll know it's working when:
-
-```bash
-# Health check returns success
-curl https://your-backend-url.railway.app/health
-# Response: {"status": "healthy"}
-
-# Can access API docs
-curl https://your-backend-url.railway.app/docs
-# Response: OpenAPI documentation page
-
-# Database tables exist
-railway shell
-psql $DATABASE_URL -c "\dt"
-# Response: List of tables
+```text
+CLAMAV_HOST=${{ClamAV.RAILWAY_PRIVATE_DOMAIN}}
+CLAMAV_PORT=3310
 ```
 
----
+Required API production settings include:
 
-## 🚀 Let's Go!
+```text
+ENVIRONMENT=production
+DEBUG=False
+PORT=3000
+RUN_MIGRATIONS_ON_START=false
+FRONTEND_URL=https://app.example.com
+CORS_ORIGINS=https://app.example.com
+ALLOWED_HOSTS=api.example.com,healthcheck.railway.app
+SECRET_KEY=<generated random value>
+ENCRYPTION_KEYS=current:<generated Fernet key>
+MONITORING_TOKEN=<generated random value>
+SENTRY_DSN=<backend Sentry DSN>
+STRIPE_WEBHOOK_SECRET=<Stripe endpoint signing secret>
+```
 
-Everything is ready. Open **`DO_THIS_NOW.md`** and let's get your backend live in 5 minutes!
+Use this API pre-deploy command:
+
+```text
+python -c "from start import run_migrations; run_migrations()"
+```
+
+## Railway background services
+
+The worker uses the same repository, root directory, image, and necessary
+variables as the API. It must not have a public domain.
+
+```text
+celery -A app.core.celery_app:celery_app worker -Q default,communications,reminders,emails -l info
+```
+
+Celery Beat must run with exactly one replica and no public domain:
+
+```text
+celery -A app.core.celery_app:celery_app beat -l info
+```
+
+PostgreSQL, Redis, and ClamAV must not have public HTTP domains.
+
+## Vercel frontend
+
+Import the same repository and configure:
+
+```text
+Root Directory: coredent-style-main
+Framework: Vite
+Build Command: npm run build
+Output Directory: dist
+```
+
+Set this production environment variable:
+
+```text
+VITE_API_BASE_URL=https://api.example.com/api/v1
+```
+
+Optional frontend monitoring:
+
+```text
+VITE_SENTRY_DSN=<public frontend Sentry DSN>
+```
+
+Never place server credentials in a `VITE_*` variable. Vite embeds these
+values in public browser code.
+
+## Release checks
+
+Run locally before promoting a release:
+
+```powershell
+cd coredent-style-main
+npm run typecheck
+npm run lint:ci
+npm test
+npm run build
+npm audit
+
+cd ..\coredent-api
+python -m ruff check app tests
+python -m pytest
+pip-audit -r requirements.txt
+```
+
+After staging deployment:
+
+```powershell
+.\scripts\production-smoke.ps1 `
+  -ApiOrigin https://api-staging.example.com `
+  -FrontendOrigin https://app-staging.example.com
+```
+
+1. Confirm the API `/health` endpoint returns HTTP 200.
+2. Confirm the frontend loads without browser console or CORS errors.
+3. Exercise registration, login, logout, password reset, patient portal,
+   appointments, document upload, and Stripe test payments.
+4. Confirm ClamAV accepts a harmless file and rejects an EICAR test file.
+5. Confirm Celery processes email/reminder jobs and Beat schedules each job
+   only once.
+6. Restore a PostgreSQL backup into a separate environment.
+7. Confirm one clinic cannot read or alter another clinic's records.
+8. Review audit logs and ensure monitoring does not capture PHI.
+
+## Rollback
+
+If a release fails:
+
+1. Roll back the frontend deployment in Vercel.
+2. Roll back the API deployment in Railway.
+3. Do not reverse a database migration until its downgrade safety has been
+   reviewed.
+4. Restore a database backup only for confirmed data corruption, and preserve
+   the affected database for incident investigation.

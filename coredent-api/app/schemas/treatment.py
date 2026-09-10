@@ -5,6 +5,7 @@ Pydantic models for treatment planning API
 
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime
+from decimal import Decimal
 from pydantic import BaseModel, Field
 import uuid as uuid_lib
 
@@ -51,14 +52,14 @@ class TreatmentPlanUpdate(BaseModel):
 
 
 class TreatmentPlanResponse(TreatmentPlanBase):
-    """Schema for treatment plan response"""
+    """Schema for treatment plan response (L-6 FIX: money as Decimal, not float)"""
     id: uuid_lib.UUID
     practice_id: uuid_lib.UUID
     patient_id: uuid_lib.UUID
     provider_id: uuid_lib.UUID
-    total_estimated_cost: float
-    total_insurance_estimate: float
-    total_patient_responsibility: float
+    total_estimated_cost: Decimal
+    total_insurance_estimate: Decimal
+    total_patient_responsibility: Decimal
     created_date: date
     presented_date: Optional[date] = None
     accepted_date: Optional[date] = None
@@ -70,9 +71,11 @@ class TreatmentPlanResponse(TreatmentPlanBase):
 
 
 class TreatmentPlanListResponse(BaseModel):
-    """Schema for listing treatment plans"""
+    """Schema for listing treatment plans."""
     plans: List[TreatmentPlanResponse]
     count: int
+    total: int = 0
+    next_offset: Optional[int] = None
 
 
 # Treatment Phase Schemas
@@ -105,12 +108,12 @@ class TreatmentPhaseUpdate(BaseModel):
 
 
 class TreatmentPhaseResponse(TreatmentPhaseBase):
-    """Schema for treatment phase response"""
+    """Schema for treatment phase response (L-6 FIX: money as Decimal)"""
     id: uuid_lib.UUID
     treatment_plan_id: uuid_lib.UUID
-    estimated_cost: float
-    insurance_estimate: float
-    patient_responsibility: float
+    estimated_cost: Decimal
+    insurance_estimate: Decimal
+    patient_responsibility: Decimal
     actual_start_date: Optional[date] = None
     actual_completion_date: Optional[date] = None
     created_at: datetime
@@ -134,16 +137,16 @@ class ProcedureSurface(BaseModel):
 
 
 class TreatmentProcedureBase(BaseModel):
-    """Base treatment procedure schema"""
+    """Base treatment procedure schema (L-6 FIX: money as Decimal)"""
     procedure_type: ProcedureType
     ada_code: str = Field(..., min_length=4, max_length=10)
     description: str = Field(..., min_length=1, max_length=500)
     tooth_number: Optional[str] = None
     surfaces: Optional[str] = None
     quadrant: Optional[int] = Field(None, ge=1, le=4)
-    fee: float = Field(..., ge=0)
-    insurance_estimate: float = Field(0, ge=0)
-    patient_responsibility: float = Field(0, ge=0)
+    fee: Decimal = Field(..., ge=0)
+    insurance_estimate: Decimal = Field(Decimal("0"), ge=0)
+    patient_responsibility: Decimal = Field(Decimal("0"), ge=0)
     is_covered: bool = True
     coverage_percentage: int = Field(0, ge=0, le=100)
     requires_pre_auth: bool = False
@@ -159,19 +162,21 @@ class TreatmentProcedureBase(BaseModel):
 class TreatmentProcedureCreate(TreatmentProcedureBase):
     """Schema for creating a treatment procedure"""
     phase_id: Optional[uuid_lib.UUID] = None
+    appointment_id: Optional[uuid_lib.UUID] = None
+    pre_auth_id: Optional[uuid_lib.UUID] = None
 
 
 class TreatmentProcedureUpdate(BaseModel):
-    """Schema for updating a treatment procedure"""
+    """Schema for updating a treatment procedure (L-6 FIX: money as Decimal)"""
     procedure_type: Optional[ProcedureType] = None
     ada_code: Optional[str] = Field(None, min_length=4, max_length=10)
     description: Optional[str] = Field(None, min_length=1, max_length=500)
     tooth_number: Optional[str] = None
     surfaces: Optional[str] = None
     quadrant: Optional[int] = Field(None, ge=1, le=4)
-    fee: Optional[float] = Field(None, ge=0)
-    insurance_estimate: Optional[float] = Field(None, ge=0)
-    patient_responsibility: Optional[float] = Field(None, ge=0)
+    fee: Optional[Decimal] = Field(None, ge=0)
+    insurance_estimate: Optional[Decimal] = Field(None, ge=0)
+    patient_responsibility: Optional[Decimal] = Field(None, ge=0)
     is_covered: Optional[bool] = None
     coverage_percentage: Optional[int] = Field(None, ge=0, le=100)
     requires_pre_auth: Optional[bool] = None
@@ -197,12 +202,12 @@ class TreatmentProcedureResponse(TreatmentProcedureBase):
     updated_at: datetime
 
     @property
-    def insurance_coverage_amount(self) -> float:
-        return self.fee * (self.coverage_percentage / 100)
+    def insurance_coverage_amount(self) -> Decimal:
+        return Decimal(str(self.fee)) * (Decimal(self.coverage_percentage) / Decimal(100))
 
     @property
-    def patient_amount(self) -> float:
-        return self.fee - self.insurance_coverage_amount
+    def patient_amount(self) -> Decimal:
+        return Decimal(str(self.fee)) - self.insurance_coverage_amount
 
     class Config:
         from_attributes = True
@@ -216,14 +221,14 @@ class TreatmentProcedureListResponse(BaseModel):
 
 # Procedure Library Schemas
 class ProcedureLibraryBase(BaseModel):
-    """Base procedure library schema"""
+    """Base procedure library schema (L-6 FIX: money as Decimal)"""
     ada_code: str = Field(..., min_length=4, max_length=10)
     description: str = Field(..., min_length=1, max_length=500)
     long_description: Optional[str] = None
     procedure_type: ProcedureType
     category: Optional[str] = None
     subcategory: Optional[str] = None
-    default_fee: Optional[float] = None
+    default_fee: Optional[Decimal] = None
     typical_duration_minutes: int = Field(30, ge=1)
     typical_coverage_percentage: Optional[int] = Field(None, ge=0, le=100)
     requires_pre_auth: bool = False
@@ -237,13 +242,13 @@ class ProcedureLibraryCreate(ProcedureLibraryBase):
 
 
 class ProcedureLibraryUpdate(BaseModel):
-    """Schema for updating a procedure library entry"""
+    """Schema for updating a procedure library entry (L-6 FIX: money as Decimal)"""
     description: Optional[str] = Field(None, min_length=1, max_length=500)
     long_description: Optional[str] = None
     procedure_type: Optional[ProcedureType] = None
     category: Optional[str] = None
     subcategory: Optional[str] = None
-    default_fee: Optional[float] = None
+    default_fee: Optional[Decimal] = None
     typical_duration_minutes: Optional[int] = Field(None, ge=1)
     typical_coverage_percentage: Optional[int] = Field(None, ge=0, le=100)
     requires_pre_auth: Optional[bool] = None
@@ -272,10 +277,10 @@ class ProcedureLibraryListResponse(BaseModel):
 
 # Treatment Plan Template Schemas
 class TemplateProcedure(BaseModel):
-    """Schema for template procedure configuration"""
+    """Schema for template procedure configuration (L-6 FIX: money as Decimal)"""
     ada_code: str
     description: str
-    default_fee: Optional[float] = None
+    default_fee: Optional[Decimal] = None
     typical_duration_minutes: Optional[int] = None
     typical_coverage_percentage: Optional[int] = None
 
@@ -374,10 +379,10 @@ class CostEstimateRequest(BaseModel):
 
 
 class CostEstimateResponse(BaseModel):
-    """Schema for cost estimate response"""
-    total_fee: float
-    total_insurance_estimate: float
-    total_patient_responsibility: float
+    """Schema for cost estimate response (L-6 FIX: money as Decimal)"""
+    total_fee: Decimal
+    total_insurance_estimate: Decimal
+    total_patient_responsibility: Decimal
     procedure_estimates: List[Dict[str, Any]]
     insurance_details: Optional[Dict[str, Any]] = None
 
@@ -391,12 +396,12 @@ class PlanAcceptanceRequest(BaseModel):
 
 
 class PlanAcceptanceResponse(BaseModel):
-    """Schema for plan acceptance response"""
+    """Schema for plan acceptance response (L-6 FIX: money as Decimal)"""
     plan_id: uuid_lib.UUID
     status: TreatmentPlanStatus
     accepted_date: date
     acceptance_method: str
-    total_accepted_cost: float
+    total_accepted_cost: Decimal
     accepted_procedures: List[uuid_lib.UUID]
 
 

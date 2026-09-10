@@ -4,7 +4,7 @@
 // ============================================
 
 import React, { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,14 +12,18 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Stethoscope, Eye, EyeOff, Loader2, CheckCircle, Lock } from 'lucide-react';
 import { z } from 'zod';
 import { useToast } from '@/hooks/use-toast';
+import { useOneTimeToken } from '@/hooks/useOneTimeToken';
 import { authApi } from '@/services/api';
 
+// Aligned with Register and the backend policy (config_simple.py): 12+
+// characters with upper, lower, digit, and special character classes.
 const passwordSchema = z.object({
   password: z.string()
-    .min(8, 'Password must be at least 8 characters')
+    .min(12, 'Password must be at least 12 characters')
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
     .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
-    .regex(/[0-9]/, 'Password must contain at least one number'),
+    .regex(/[0-9]/, 'Password must contain at least one number')
+    .regex(/[!@#$%^&*(),.?":{}|<>]/, 'Password must contain at least one special character'),
   confirmPassword: z.string(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
@@ -27,8 +31,10 @@ const passwordSchema = z.object({
 });
 
 export default function ResetPassword() {
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get('token');
+  // H-11: the reset token arrives in the URL fragment, not the query string,
+  // so it is never sent to a server and cannot land in access logs, analytics
+  // or Referer headers. useOneTimeToken also scrubs it from the address bar.
+  const { token } = useOneTimeToken();
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -41,7 +47,7 @@ export default function ResetPassword() {
   // Password strength indicator
   const getPasswordStrength = (pwd: string) => {
     let strength = 0;
-    if (pwd.length >= 8) strength++;
+    if (pwd.length >= 12) strength++;
     if (/[A-Z]/.test(pwd)) strength++;
     if (/[a-z]/.test(pwd)) strength++;
     if (/[0-9]/.test(pwd)) strength++;
@@ -262,10 +268,11 @@ export default function ResetPassword() {
               <div className="text-xs text-muted-foreground space-y-1">
                 <p>Password must contain:</p>
                 <ul className="list-disc list-inside space-y-0.5">
-                  <li className={password.length >= 8 ? 'text-green-600' : ''}>At least 8 characters</li>
+                  <li className={password.length >= 12 ? 'text-green-600' : ''}>At least 12 characters</li>
                   <li className={/[A-Z]/.test(password) ? 'text-green-600' : ''}>One uppercase letter</li>
                   <li className={/[a-z]/.test(password) ? 'text-green-600' : ''}>One lowercase letter</li>
                   <li className={/[0-9]/.test(password) ? 'text-green-600' : ''}>One number</li>
+                  <li className={/[!@#$%^&*(),.?":{}|<>]/.test(password) ? 'text-green-600' : ''}>One special character</li>
                 </ul>
               </div>
             </CardContent>

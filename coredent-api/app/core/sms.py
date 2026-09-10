@@ -6,7 +6,7 @@ Twilio integration for SMS messaging
 import os
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -25,11 +25,14 @@ class SMSService:
     """
 
     def __init__(self, provider: Optional[SMSProvider] = None):
-        self.provider = provider or SMSProvider(
-            os.getenv("SMS_PROVIDER", "console")
-        )
-        self.from_number = os.getenv("TWILIO_PHONE_NUMBER", "+1234567890")
+        raw_provider = os.getenv(
+            "SMS_PROVIDER",
+            "twilio" if os.getenv("ENVIRONMENT", "development").strip().lower() == "production" else "console",
+        ).strip().lower()
+        self.provider = provider or SMSProvider(raw_provider)
+        self.from_number = os.getenv("TWILIO_PHONE_NUMBER", "")
         self.client = None
+        self._configuration_error = None
 
         # Initialize Twilio client if credentials are available
         if self.provider == SMSProvider.TWILIO:
@@ -42,14 +45,14 @@ class SMSService:
                     self.client = Client(account_sid, auth_token)
                     logger.info("Twilio SMS client initialized successfully")
                 except ImportError:
-                    logger.warning("Twilio library not installed. Install with: pip install twilio")
-                    self.provider = SMSProvider.CONSOLE
+                    self._configuration_error = "Twilio library is not installed"
+                    logger.error(self._configuration_error)
                 except Exception as e:
-                    logger.error(f"Failed to initialize Twilio client: {str(e)}")
-                    self.provider = SMSProvider.CONSOLE
+                    self._configuration_error = "Twilio client initialization failed"
+                    logger.error("Failed to initialize Twilio client: %s", e)
             else:
-                logger.warning("Twilio credentials not found, using console mode")
-                self.provider = SMSProvider.CONSOLE
+                self._configuration_error = "Twilio credentials are not configured"
+                logger.error(self._configuration_error)
 
     async def send_sms(
         self,
@@ -68,14 +71,20 @@ class SMSService:
         Returns:
             Dict with success status, provider, message_id, etc.
         """
-        # Validate phone number format
+        if not to or not message:
+            return {"success": False, "provider": self.provider.value, "error": "Recipient and message are required"}
         if not to.startswith('+'):
-            logger.warning(f"Phone number {to} should be in E.164 format (+1234567890)")
+            logger.warning("Phone number should be in E.164 format")
 
-        if self.provider == SMSProvider.TWILIO and self.client:
+        if self.provider == SMSProvider.TWILIO:
+            if not self.client:
+                return {"success": False, "provider": "twilio", "error": self._configuration_error or "SMS provider is unavailable"}
             return await self._send_twilio(to, message, media_url)
-        else:
+        if self.provider == SMSProvider.CONSOLE:
+            if os.getenv("ENVIRONMENT", "development").strip().lower() == "production":
+                return {"success": False, "provider": "console", "error": "Console SMS delivery is disabled in production"}
             return await self._send_console(to, message, media_url)
+        return {"success": False, "provider": str(self.provider), "error": "Unsupported SMS provider"}
 
     async def _send_twilio(
         self,
@@ -113,7 +122,7 @@ class SMSService:
             return {
                 "success": False,
                 "provider": "twilio",
-                "error": str(e),
+                "error": "SMS delivery failed",
             }
 
     async def _send_console(
@@ -124,7 +133,7 @@ class SMSService:
     ) -> Dict[str, Any]:
         """Log SMS to console (development)"""
         logger.info("=" * 60)
-        logger.info(f"📱 SMS (Development Mode)")
+        logger.info("📱 SMS (Development Mode)")
         logger.info("=" * 60)
         logger.info(f"From: {self.from_number}")
         logger.info(f"To: {to}")
@@ -138,7 +147,7 @@ class SMSService:
         return {
             "success": True,
             "provider": "console",
-            "message_id": f"dev-sms-{datetime.now().timestamp()}",
+            "message_id": f"dev-sms-{datetime.now(timezone.utc).timestamp()}",
             "status": "sent",
             "to": to,
             "from": self.from_number,

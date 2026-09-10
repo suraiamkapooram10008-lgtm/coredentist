@@ -124,6 +124,9 @@ describe('Authentication Flow Integration', () => {
     server.use(
       http.get('/api/v1/auth/me', () => {
         return HttpResponse.json({ message: 'Unauthorized' }, { status: 401 });
+      }),
+      http.get('/api/v1/auth/csrf', () => {
+        return HttpResponse.json({ csrf_token: 'mock-csrf-token' });
       })
     );
   });

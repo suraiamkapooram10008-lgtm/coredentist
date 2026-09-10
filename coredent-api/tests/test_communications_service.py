@@ -1,10 +1,9 @@
 """Unit tests for CommunicationsEngine using mocked sync DB session."""
-import pytest
 from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from app.services.communications_service import CommunicationsEngine
-from app.models.communication import MessageType, MessageStatus, MessageDirection
+from app.models.communication import MessageType
 
 
 class TestReplaceVariables:
@@ -35,7 +34,7 @@ class TestReplaceVariables:
 class TestSendSms:
     def test_missing_phone(self):
         engine = CommunicationsEngine(MagicMock())
-        result = engine.send_sms("", "Hello", MagicMock())
+        result = engine.send_sms("", "Hello")
         assert result["status"] == "failed"
 
     def test_unconfigured_provider_fails_closed(self, monkeypatch):
@@ -43,17 +42,89 @@ class TestSendSms:
         monkeypatch.delenv("TWILIO_AUTH_TOKEN", raising=False)
         monkeypatch.delenv("TWILIO_PHONE_NUMBER", raising=False)
         engine = CommunicationsEngine(MagicMock())
-        result = engine.send_sms("+1234567890", "Hello", MagicMock())
+        result = engine.send_sms("+1234567890", "Hello")
         assert result == {
             "status": "failed",
             "error": "SMS provider is not configured",
         }
 
 
+class TestSendSmsWithRetry:
+    def test_success_on_first_attempt(self):
+        engine = CommunicationsEngine(MagicMock())
+        with patch.object(engine, "send_sms", return_value={"status": "sent", "external_id": "SM1"}) as mock_send:
+            result = engine.send_sms_with_retry("+1234567890", "Hello")
+        assert result["status"] == "sent"
+        mock_send.assert_called_once()
+
+    def test_retries_until_success(self):
+        engine = CommunicationsEngine(MagicMock())
+        side_effects = [
+            {"status": "failed", "error": "down"},
+            {"status": "sent", "external_id": "SM2"},
+        ]
+        with patch.object(engine, "send_sms", side_effect=side_effects) as mock_send:
+            with patch("app.services.communications_service.time.sleep"):
+                result = engine.send_sms_with_retry(
+                    "+1234567890", "Hello", retries=3, backoff=0.0
+                )
+        assert result["status"] == "sent"
+        assert mock_send.call_count == 2
+
+    def test_gives_up_after_exhausting_retries(self):
+        engine = CommunicationsEngine(MagicMock())
+        with patch.object(
+            engine, "send_sms", return_value={"status": "failed", "error": "down"}
+        ) as mock_send:
+            with patch("app.services.communications_service.time.sleep"):
+                result = engine.send_sms_with_retry(
+                    "+1234567890", "Hello", retries=2, backoff=0.0
+                )
+        assert result["status"] == "failed"
+        assert mock_send.call_count == 3  # initial + 2 retries
+
+
+class TestSendSmsTwilio:
+    def test_configured_provider_sends(self, monkeypatch):
+        monkeypatch.setenv("TWILIO_ACCOUNT_SID", "AC-test")
+        monkeypatch.setenv("TWILIO_AUTH_TOKEN", "token-test")
+        monkeypatch.setenv("TWILIO_PHONE_NUMBER", "+18001234567")
+
+        engine = CommunicationsEngine(MagicMock())
+        mock_message = MagicMock()
+        mock_message.sid = "SM123"
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_message
+
+        with patch("twilio.rest.Client", return_value=mock_client):
+            result = engine.send_sms("+15551234567", "Hello")
+
+        assert result == {"status": "sent", "external_id": "SM123"}
+        mock_client.messages.create.assert_called_once()
+
+    def test_twilio_exception_fails_closed(self, monkeypatch):
+        monkeypatch.setenv("TWILIO_ACCOUNT_SID", "AC-test")
+        monkeypatch.setenv("TWILIO_AUTH_TOKEN", "token-test")
+        monkeypatch.setenv("TWILIO_PHONE_NUMBER", "+18001234567")
+
+        engine = CommunicationsEngine(MagicMock())
+        with patch(
+            "twilio.rest.Client",
+            side_effect=Exception("twilio is down"),
+        ):
+            result = engine.send_sms("+15551234567", "Hello")
+
+        assert result["status"] == "failed"
+        assert "SMS delivery failed" in result["error"]
+
+
 class TestHandleInboundSms:
     def test_unknown_number(self):
         mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.return_value = None
+        # Patient matching uses query().filter().limit(2).all() and refuses
+        # anything but exactly one candidate.
+        chain = mock_db.query.return_value.filter.return_value
+        chain.limit.return_value.all.return_value = []  # no patient match
         engine = CommunicationsEngine(mock_db)
         result = engine.handle_inbound_sms("+15551234567", "+18001234567", "Hello", "ext-1")
         assert result is False
@@ -64,10 +135,12 @@ class TestHandleInboundSms:
         mock_patient.practice_id = "practice-1"
 
         mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.side_effect = [
-            mock_patient,   # patient lookup
-            None,           # no existing conversation
-        ]
+        # One shared query chain serves both lookups: the patient match uses
+        # .limit(2).all() (exactly-one rule), the conversation lookup uses
+        # .first().
+        chain = mock_db.query.return_value.filter.return_value
+        chain.limit.return_value.all.return_value = [mock_patient]
+        chain.first.return_value = None  # no existing conversation
 
         engine = CommunicationsEngine(mock_db)
         result = engine.handle_inbound_sms("+15551234567", "+18001234567", "Hello there", "ext-1")
@@ -85,10 +158,9 @@ class TestHandleInboundSms:
         mock_conv.unread_count = 2
 
         mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.first.side_effect = [
-            mock_patient,   # patient lookup
-            mock_conv,      # existing conversation
-        ]
+        chain = mock_db.query.return_value.filter.return_value
+        chain.limit.return_value.all.return_value = [mock_patient]
+        chain.first.return_value = mock_conv  # active conversation exists
 
         engine = CommunicationsEngine(mock_db)
         result = engine.handle_inbound_sms("+15551234567", "+18001234567", "Hello again", "ext-2")
@@ -96,6 +168,39 @@ class TestHandleInboundSms:
         assert mock_conv.unread_count == 3
         mock_db.add.assert_called()
         mock_db.commit.assert_called_once()
+
+    def test_duplicate_external_id_ignored(self):
+        """Twilio retries must not persist the same message twice."""
+        from sqlalchemy.orm import Session
+
+        mock_patient = MagicMock()
+        mock_patient.id = "patient-1"
+        mock_patient.practice_id = "practice-1"
+
+        # The service only runs the duplicate check for real Session objects;
+        # mirror that with a mock that passes isinstance(..., Session).
+        mock_db = MagicMock(spec=Session)
+
+        def query_side_effect(model):
+            q = MagicMock()
+            if model.__name__ == "Patient":
+                # real-Session path: patient_query.limit(2).all()
+                q.filter.return_value.limit.return_value.all.return_value = [mock_patient]
+            elif model.__name__ == "ConversationMessage":
+                # duplicate already persisted -> found
+                q.filter.return_value.first.return_value = MagicMock()
+            return q
+
+        mock_db.query.side_effect = query_side_effect
+
+        engine = CommunicationsEngine(mock_db)
+        result = engine.handle_inbound_sms(
+            "+15551234567", "+18001234567", "Hello", "ext-dupe"
+        )
+        assert result is True
+        # No conversation updates, no messages persisted.
+        mock_db.add.assert_not_called()
+        mock_db.commit.assert_not_called()
 
 
 class TestProcessAutomatedRecalls:
@@ -154,11 +259,7 @@ class TestProcessAutomatedRecalls:
         mock_patient.email = "test@example.com"
         mock_patient.first_name = "John"
 
-        # Future appointment exists -> skip recall
-        mock_future_apt = MagicMock()
-
         mock_db = MagicMock()
-        q = mock_db.query.return_value
 
         def build_query(model):
             m = MagicMock()

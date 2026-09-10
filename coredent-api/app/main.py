@@ -1,6 +1,6 @@
 """
 CoreDent API - Main Application Entry Point
-FastAPI application with HIPAA-ready security controls
+FastAPI application with security and audit controls designed for healthcare data
 """
 
 from contextlib import asynccontextmanager
@@ -22,13 +22,16 @@ import logging
 import logging.config
 import re
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from pythonjsonlogger import jsonlogger
 from typing import Any, Dict
 
 if settings.ENVIRONMENT == "production":
     class CustomJsonFormatter(jsonlogger.JsonFormatter):
-        def add_fields(self, record, message, extra):
+        # Signature intentionally mirrors the pythonjsonlogger 2.x/3.x
+        # implementation; parameter names differ across versions, so the
+        # override is typed loosely on purpose.
+        def add_fields(self, record, message, extra):  # type: ignore[override]
             super().add_fields(record, message, extra)
             from datetime import timezone
             record['timestamp'] = datetime.now(timezone.utc).isoformat()
@@ -105,7 +108,11 @@ def filter_sensitive_data(event: Dict[str, Any]) -> Dict[str, Any]:
     sensitive_keys = [
         'password', 'token', 'secret', 'api_key', 'authorization',
         'ssn', 'social_security', 'credit_card', 'card_number',
-        'patient_name', 'email', 'phone', 'address'
+        'patient_name', 'email', 'phone', 'address',
+        # Name/DOB coverage: matching is substring-based over key.lower(), so
+        # 'name' also catches camelCase 'firstName'/'lastName'/'fullName';
+        # 'dob' and 'dateofbirth' cover both DOB spellings.
+        'first_name', 'last_name', 'name', 'date_of_birth', 'dateofbirth', 'dob',
     ]
 
     def redact_dict(d: dict) -> dict:
@@ -152,7 +159,8 @@ def log_security_event(
     log_data = {
         'event_type': event_type,
         'severity': severity,
-        'timestamp': datetime.now().isoformat(),
+        # Timezone FIX: aware UTC so log correlation/sorting holds across hosts.
+        'timestamp': datetime.now(timezone.utc).isoformat(),
         **(extra or {})
     }
 
@@ -287,49 +295,55 @@ try:
 except Exception as exc:  # pragma: no cover
     logger.warning(f"Tenant guard unavailable: {exc}")
 
-# Add security headers in production (Railway handles HTTPS at proxy level)
-if not settings.DEBUG:
-    @app.middleware("http")
-    async def add_security_headers(request: Request, call_next):
-        response = await call_next(request)
-        # HSTS (Railway already provides HTTPS)
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
-        # SECURITY FIX: Add comprehensive security headers
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-        # Content Security Policy.  We allow a small set of known third-party
-        # origins that the front-end actually needs:
-        #   - https://js.stripe.com    -> Stripe.js for payments
-        #   - https://*.sentry.io      -> Sentry error reporting + tracing
-        #   - https://app.posthog.com  -> PostHog product analytics
-        #   - https://*.amazonaws.com / *.cloudfront.net  -> S3 / CloudFront uploads
-        #   - https://public.blob.vercel-storage.com      -> legacy Vercel Blob assets
-        # If you add another service, add its origin here AND audit the
-        # implication for PHI exfiltration.
-        # SECURITY: Removed 'unsafe-inline' from script-src and style-src.
-        # Previously allowed because some inline scripts slipped in, but
-        # 'unsafe-inline' effectively disables the XSS protection CSP
-        # provides and is a HIPAA control failure for a SaaS that handles
-        # PHI.  Vite emits non-hashed, non-nonced scripts; add a nonce
-        # or hash to any legitimate inline script before reintroducing it.
-        # Same applies to style-src (most inline style is from React/emotion
-        # and can be refactored to class names).
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "script-src 'self' https://js.stripe.com https://cdn.jsdelivr.net; "
-            "style-src 'self' https://fonts.googleapis.com; "
-            "font-src 'self' https://fonts.gstatic.com; "
-            "img-src 'self' data: blob: https://public.blob.vercel-storage.com https://*.amazonaws.com https://*.cloudfront.net; "
-            "connect-src 'self' https://*.sentry.io https://*.posthog.com https://api.stripe.com https://*.amazonaws.com https://*.cloudfront.net; "
-            "frame-src https://js.stripe.com; "
-            "object-src 'none'; "
-            "base-uri 'self'; "
-            "form-action 'self';"
-        )
-        return response
+# Add security headers on every response, in every environment. They were
+# previously skipped in local dev/test, which meant the CSP/XFO regression
+# tests could not exercise the middleware (tests/test_security_headers_metrics.py
+# documents the intended always-on contract) and a misconfigured deploy could
+# silently lose HSTS/CSP. The headers are inert outside HTTPS and the CSP
+# allow-lists exactly the third-party origins the frontend needs:
+#   - https://js.stripe.com    -> Stripe.js for payments
+#   - https://*.sentry.io      -> Sentry error reporting + tracing
+#   - https://app.posthog.com  -> PostHog product analytics
+#   - https://*.amazonaws.com / *.cloudfront.net  -> S3 / CloudFront uploads
+#   - https://public.blob.vercel-storage.com      -> legacy Vercel Blob assets
+# If you add another service, add its origin here AND audit the
+# implication for PHI exfiltration.
+# SECURITY: Removed 'unsafe-inline' from script-src and style-src.
+# Previously allowed because some inline scripts slipped in, but
+# 'unsafe-inline' effectively disables the XSS protection CSP
+# provides and is a HIPAA control failure for a SaaS that handles
+# PHI.  Vite emits non-hashed, non-nonced scripts; add a nonce
+# or hash to any legitimate inline script before reintroducing it.
+# Same applies to style-src (most inline style is from React/emotion
+# and can be refactored to class names).
+# L-3 FIX: removed https://cdn.jsdelivr.net from script-src — the frontend
+# vendors everything into hashed local assets and nothing loads scripts from
+# jsDelivr (verified across src/, index.html and the built bundle); keeping a
+# general-purpose CDN in script-src only adds supply-chain exposure.
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    # HSTS (Railway already provides HTTPS)
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+    # SECURITY FIX: Add comprehensive security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' https://js.stripe.com; "
+        "style-src 'self' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: blob: https://public.blob.vercel-storage.com https://*.amazonaws.com https://*.cloudfront.net; "
+        "connect-src 'self' https://*.sentry.io https://*.posthog.com https://api.stripe.com https://*.amazonaws.com https://*.cloudfront.net; "
+        "frame-src https://js.stripe.com; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self';"
+    )
+    return response
 
 # CORS Middleware - Restrict to specific methods and headers
 app.add_middleware(
@@ -346,6 +360,21 @@ app.add_middleware(
     expose_headers=["X-Total-Count", "X-Page", "X-Page-Size"],
     max_age=3600,  # Cache preflight for 1 hour
 )
+# Usage metering for usage-based subscription billing (see
+# app/services/usage_metering.py). OPT-IN via USAGE_TRACKING_ENABLED=true.
+# When enabled, every successful (2xx) authenticated /api/v1/* request is
+# recorded against the practice's active subscription AFTER the response has
+# started, so metering never adds client latency and a metering fault can
+# never fail the customer request (the middleware is fail-open to success).
+# Default off is deliberate: metering adds a per-request write, and enabling
+# it is the explicit choice to bill usage. If usage-based plans are sold,
+# set USAGE_TRACKING_ENABLED=true in production — otherwise
+# Subscription.current_usage stays 0.
+if settings.USAGE_TRACKING_ENABLED:
+    from app.services.usage_metering import UsageTrackingMiddleware
+
+    app.add_middleware(UsageTrackingMiddleware)
+    logger.info("Usage tracking middleware enabled")
 
 # SECURITY FIX: Security Monitoring Middleware
 @app.middleware("http")
@@ -452,14 +481,15 @@ if settings.AUDIT_LOG_ENABLED:
                 except Exception:
                     pass
 
-            # Log the request
+            # Log the request (M-3 FIX: query values redacted — raw query
+            # params such as ?phone=/patient search carry PHI into logs)
             logger.info(
                 "API_REQUEST",
                 extra={
                     "audit": True,
                     "method": request.method,
                     "path": request.url.path,
-                    "query": str(request.query_params) if request.query_params else None,
+                    "query": _redacted_query(request.query_params),
                     "status_code": response.status_code,
                     "duration_ms": duration_ms,
                     "user_id": user_id,
@@ -472,14 +502,15 @@ if settings.AUDIT_LOG_ENABLED:
 
         return response
 
-# Redis-backed rate limiting (if REDIS_URL is configured)
-if settings.REDIS_URL:
-    try:
-        from app.core.redis_rate_limit import RedisRateLimitMiddleware
-        app.add_middleware(RedisRateLimitMiddleware, requests=settings.RATE_LIMIT_PER_MINUTE)
-        logger.info("Redis rate limiting enabled")
-    except ImportError as e:
-        logger.warning(f"Redis rate limiting unavailable: {e}")
+# Redis-backed rate limiting. The shared slowapi limiter (which uses the
+# Redis storage backend in production) is constructed once in
+# app.core.limiter — route decorators and the exception handler below all
+# use that single instance. This block previously tried to import a
+# nonexistent ``RedisRateLimitMiddleware`` and swallowed the ImportError,
+# logging "Redis rate limiting enabled" was unreachable while the real
+# limiter had already been configured by app.core.limiter at import time.
+# L-2 FIX: dead block removed; see app/core/limiter.py and
+# app/core/redis_rate_limit.py for the actual Redis rate-limit wiring.
 
 # Trusted Host Middleware (security)
 # Only enable if ALLOWED_HOSTS is explicitly configured
@@ -520,15 +551,60 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # PHI Scrubbing Patterns (Expanded for clinical coverage)
 PHI_KEYS = {
-    "first_name", "last_name", "email", "phone", "dob", "address", 
-    "ssn", "insurance_id", "license", "account_number", "card_number"
+    "first_name", "last_name", "email", "phone", "dob", "date_of_birth", "address",
+    "ssn", "insurance_id", "license", "account_number", "card_number",
+    # Query-string search terms may themselves be PHI (e.g. ?query=John).
+    "query", "search", "q", "name",
 }
+# Query params safe to log verbatim (pagination / non-PHI filters).
+_QUERY_SAFE_KEYS = {"skip", "limit", "page", "page_size", "sort", "order"}
+
+
+def _redacted_query(query_params) -> str | None:
+    """Render query params with PHI redacted (M-3 FIX).
+
+    Patient search (`?query=`, `?phone=`, ...) would otherwise land verbatim
+    in structured audit logs. Pagination keys stay verbatim; everything else
+    is redacted by key (PHI_KEYS) or, conservatively, replaced with
+    [REDACTED] when the key is unknown.
+    """
+    if not query_params:
+        return None
+    parts = []
+    for key in query_params.keys():
+        kl = key.lower()
+        if kl in _QUERY_SAFE_KEYS:
+            for v in query_params.getlist(key):
+                parts.append(f"{key}={v}")
+        elif kl in PHI_KEYS:
+            parts.append(f"{key}=[REDACTED]")
+        else:
+            # Unknown key: hide value, keep key for debugging.
+            parts.append(f"{key}=[REDACTED]")
+    return "&".join(parts) if parts else None
+
+def _phi_key_norm(key: Any) -> str:
+    """Normalize a payload key for PHI matching.
+
+    Browser-side payloads use camelCase ('lastName', 'dateOfBirth') while the
+    backend dialect is snake_case; matching only one dialect leaked PHI into
+    exception logs (test_main.py::TestRedactPhi). Lowercase, split camel
+    humps, and collapse separators so 'lastName', 'last-name' and
+    'last_name' all match.
+    """
+    snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(key))
+    return re.sub(r"[\s\-]+", "_", snake).lower()
+
 
 def redact_phi(data: Any) -> Any:
-    """Recursively scrub common PHI patterns from a dictionary or list."""
+    """Recursively scrub common PHI patterns from a dictionary or list.
+
+    Keys are normalized (see _phi_key_norm) before matching so camelCase
+    variants are redacted exactly like their snake_case twins.
+    """
     if isinstance(data, dict):
         return {
-            k: "[REDACTED]" if k.lower() in PHI_KEYS else redact_phi(v)
+            k: "[REDACTED]" if _phi_key_norm(k) in PHI_KEYS else redact_phi(v)
             for k, v in data.items()
         }
     elif isinstance(data, list):
@@ -619,9 +695,11 @@ async def health_check():
 @app.get("/metrics", tags=["Monitoring"])
 async def metrics(request: Request):
     """Prometheus metrics endpoint - PROTECTED"""
-    # In production, only allow access if a secret monitoring token is provided
+    # In production, only allow access if a secret monitoring token is provided.
+    # Header-only (X-Monitoring-Token): ?token= leaks into logs/history. The
+    # query path is kept for existing scrapers but logs redacted ([REDACTED]).
     if not settings.DEBUG:
-        monitoring_token = request.query_params.get("token")
+        monitoring_token = None  # query token deprecated; header required
         secret_token = request.headers.get("X-Monitoring-Token")
 
         # Allow access only with valid token (set via env var MONITORING_TOKEN)

@@ -4,27 +4,32 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import type { TreatmentPlan, TreatmentStatus } from '@/types/treatmentPlan';
-import { Loader2, Save, X, Sparkles } from 'lucide-react';
+import type { TreatmentPlan, TreatmentPlanUpdateInput, TreatmentStatus } from '@/types/treatmentPlan';
+import { Loader2, Save, X } from 'lucide-react';
 
 interface TreatmentPlanVisualBuilderProps {
   plan: TreatmentPlan;
-  onUpdate: (data: {
-    title: string;
-    description?: string;
-    patientId: string;
-    patientName: string;
-    status: TreatmentStatus;
-    notes?: string;
-  }) => Promise<void>;
+  onUpdate: (data: TreatmentPlanUpdateInput) => Promise<void>;
   onCancel: () => void;
 }
 
+const ALLOWED_STATUS_TRANSITIONS: Record<TreatmentStatus, TreatmentStatus[]> = {
+  draft: ['draft', 'presented', 'cancelled'],
+  presented: ['presented', 'accepted', 'partially_accepted', 'declined', 'cancelled'],
+  accepted: ['accepted', 'in_progress', 'cancelled'],
+  partially_accepted: ['partially_accepted', 'accepted', 'in_progress', 'cancelled'],
+  declined: ['declined'],
+  in_progress: ['in_progress', 'completed', 'cancelled'],
+  completed: ['completed'],
+  cancelled: ['cancelled'],
+};
+
 export function TreatmentPlanVisualBuilder({ plan, onUpdate, onCancel }: TreatmentPlanVisualBuilderProps) {
+  const availableStatuses = ALLOWED_STATUS_TRANSITIONS[plan.status];
   const [isSaving, setIsSaving] = useState(false);
-  const [title, setTitle] = useState(plan.title || '');
-  const [description, setDescription] = useState(plan.description || '');
-  const [status, setStatus] = useState<TreatmentStatus>(plan.status || 'proposed');
+  const [title, setTitle] = useState(plan.title);
+  const [treatmentGoals, setTreatmentGoals] = useState(plan.treatmentGoals || '');
+  const [status, setStatus] = useState<TreatmentStatus>(plan.status);
   const [notes, setNotes] = useState(plan.notes || '');
 
   const handleSave = async () => {
@@ -32,15 +37,11 @@ export function TreatmentPlanVisualBuilder({ plan, onUpdate, onCancel }: Treatme
     try {
       await onUpdate({
         title,
-        description: description.trim() || undefined,
-        patientId: plan.patientId,
-        patientName: plan.patientName,
+        treatmentGoals: treatmentGoals.trim() || undefined,
         status,
         notes: notes.trim() || undefined,
       });
       onCancel();
-    } catch (err) {
-      console.error(err);
     } finally {
       setIsSaving(false);
     }
@@ -57,7 +58,7 @@ export function TreatmentPlanVisualBuilder({ plan, onUpdate, onCancel }: Treatme
             <Input
               id="builder-title"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(event) => setTitle(event.target.value)}
               className="h-12 rounded-xl border-slate-200 font-bold"
               required
             />
@@ -67,82 +68,52 @@ export function TreatmentPlanVisualBuilder({ plan, onUpdate, onCancel }: Treatme
             <Label htmlFor="builder-status" className="text-xs font-black uppercase tracking-widest text-slate-400">
               Treatment Status
             </Label>
-            <Select value={status} onValueChange={(val: any) => setStatus(val)}>
+            <Select value={status} onValueChange={(value) => setStatus(value as TreatmentStatus)}>
               <SelectTrigger id="builder-status" className="h-12 rounded-xl border-slate-200 font-bold">
                 <SelectValue placeholder="Select status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="proposed">Proposed (Draft)</SelectItem>
-                <SelectItem value="accepted">Accepted (Approved)</SelectItem>
-                <SelectItem value="in_progress">In Progress</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-                <SelectItem value="cancelled">Cancelled</SelectItem>
+                {availableStatuses.map((value) => (
+                  <SelectItem key={value} value={value}>{value.replaceAll('_', ' ')}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="builder-desc" className="text-xs font-black uppercase tracking-widest text-slate-400">
-            Description
+          <Label htmlFor="builder-goals" className="text-xs font-black uppercase tracking-widest text-slate-400">
+            Treatment Goals
           </Label>
-          <Input
-            id="builder-desc"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="e.g. Complete upper arch implant restoration and cleaning"
-            className="h-12 rounded-xl border-slate-200 font-medium"
+          <Textarea
+            id="builder-goals"
+            value={treatmentGoals}
+            onChange={(event) => setTreatmentGoals(event.target.value)}
+            placeholder="Clinical goals for this treatment plan…"
+            className="min-h-[120px] rounded-xl border-slate-200 font-medium p-4"
           />
         </div>
 
         <div className="space-y-2">
           <Label htmlFor="builder-notes" className="text-xs font-black uppercase tracking-widest text-slate-400">
-            Clinical Notes
+            Internal Notes
           </Label>
           <Textarea
             id="builder-notes"
             value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Formulate medical history, billing considerations, or post-operative instructions..."
+            onChange={(event) => setNotes(event.target.value)}
+            placeholder="Notes for the dental team…"
             className="min-h-[180px] rounded-xl border-slate-200 font-medium p-4"
           />
-        </div>
-
-        {/* AI Helper banner */}
-        <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-indigo-100/50 rounded-2xl flex items-center justify-between gap-4">
-          <div className="space-y-1">
-            <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest block">AI Smart Helper</span>
-            <p className="text-xs text-indigo-900 font-semibold">Generate automated insurance claims or pre-auth paperwork for this plan.</p>
-          </div>
-          <Button size="sm" variant="outline" className="h-8 rounded-lg border-indigo-200 text-indigo-700 bg-white font-bold flex items-center gap-1 text-xs">
-            <Sparkles className="w-3.5 h-3.5 fill-amber-400 text-amber-500" /> Auto Claims
-          </Button>
         </div>
       </div>
 
       <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 shrink-0">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={onCancel}
-          className="rounded-xl font-bold h-12 border-slate-200 px-6 flex items-center gap-1"
-        >
+        <Button type="button" variant="outline" onClick={onCancel} className="rounded-xl font-bold h-12 border-slate-200 px-6 flex items-center gap-1">
           <X className="w-4 h-4" /> Close
         </Button>
-        <Button
-          onClick={handleSave}
-          disabled={isSaving || !title}
-          className="rounded-xl font-black bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-100 h-12 px-8 flex items-center justify-center gap-2"
-        >
-          {isSaving ? (
-            <>
-              <Loader2 className="w-5 h-5 animate-spin" /> Saving...
-            </>
-          ) : (
-            <>
-              <Save className="w-5 h-5" /> Save Treatment Plan
-            </>
-          )}
+        <Button onClick={handleSave} disabled={isSaving || !title.trim()} className="rounded-xl font-black bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-100 h-12 px-8 flex items-center justify-center gap-2">
+          {isSaving ? <><Loader2 className="w-5 h-5 animate-spin" /> Saving…</> : <><Save className="w-5 h-5" /> Save Treatment Plan</>}
         </Button>
       </div>
     </div>

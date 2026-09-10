@@ -1,9 +1,11 @@
 """Unit tests for payment service mocked async methods."""
-import pytest
 from decimal import Decimal
-from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
+import pytest
+
+from app.models.billing import InvoiceStatus, PaymentMethod, PaymentStatus
 from app.services.payment_service import PaymentService
 
 
@@ -17,7 +19,7 @@ class TestPaymentService:
         mock_result.scalar_one_or_none.return_value = mock_invoice
         mock_db.execute.return_value = mock_result
 
-        result = await PaymentService.get_invoice(mock_db, uuid4())
+        result = await PaymentService.get_invoice(mock_db, uuid4(), uuid4())
         assert result is mock_invoice
 
     async def test_get_invoice_not_found(self):
@@ -26,7 +28,7 @@ class TestPaymentService:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await PaymentService.get_invoice(mock_db, uuid4())
+        result = await PaymentService.get_invoice(mock_db, uuid4(), uuid4())
         assert result is None
 
     async def test_get_payment_found(self):
@@ -36,71 +38,115 @@ class TestPaymentService:
         mock_result.scalar_one_or_none.return_value = mock_payment
         mock_db.execute.return_value = mock_result
 
-        result = await PaymentService.get_payment(mock_db, "txn_123")
+        result = await PaymentService.get_payment(mock_db, "txn_123", uuid4())
         assert result is mock_payment
 
     async def test_create_payment_record(self):
         mock_db = AsyncMock()
+        mock_db.add = MagicMock()
+        practice_id = uuid4()
+        patient_id = uuid4()
         mock_invoice = MagicMock()
         mock_invoice.id = uuid4()
+        mock_invoice.patient_id = patient_id
         mock_invoice.balance_due = Decimal("100.00")
+        mock_invoice.status = InvoiceStatus.PENDING
 
-        # get_invoice side-effect
-        async def get_invoice_side_effect(db, invoice_id, practice_id=None):
-            return mock_invoice
+        invoice_result = MagicMock()
+        invoice_result.scalar_one_or_none.return_value = mock_invoice
+        transaction_result = MagicMock()
+        transaction_result.scalar_one_or_none.return_value = None
+        mock_db.execute.side_effect = [invoice_result, transaction_result]
 
-        # Patch get_invoice inside the service
-        original_get_invoice = PaymentService.get_invoice
-        PaymentService.get_invoice = staticmethod(get_invoice_side_effect)
+        result = await PaymentService.create_payment_record(
+            mock_db,
+            mock_invoice.id,
+            patient_id,
+            practice_id,
+            Decimal("50.00"),
+            PaymentMethod.CARD,
+            "txn_123",
+            PaymentStatus.COMPLETED,
+        )
 
-        from app.models.payment import PaymentStatus
-        try:
-            result = await PaymentService.create_payment_record(
-                mock_db, mock_invoice.id, uuid4(), 50.00, "card", "txn_123", PaymentStatus.COMPLETED
-            )
-            assert result is not None
-            assert result.invoice_id == mock_invoice.id
-        finally:
-            PaymentService.get_invoice = original_get_invoice
+        assert result.invoice_id == mock_invoice.id
+        assert result.patient_id == patient_id
+        assert result.amount == Decimal("50.00")
+        assert result.status == PaymentStatus.COMPLETED
+        mock_db.flush.assert_awaited_once()
 
     async def test_mark_invoice_paid(self):
         mock_db = AsyncMock()
+        practice_id = uuid4()
         mock_invoice = MagicMock()
         mock_invoice.id = uuid4()
         mock_invoice.balance_due = Decimal("0.00")
-        mock_invoice.status = "pending"
+        mock_invoice.status = InvoiceStatus.PENDING
+        mock_invoice.total = Decimal("10.00")
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_invoice
         mock_db.execute.return_value = mock_result
 
-        result = await PaymentService.mark_invoice_paid(mock_db, mock_invoice.id)
-        assert result is mock_invoice
-        assert result.status == "paid"
+        # The amount-aware transition path needs a completed-payments sum.
+        original_completed = PaymentService.completed_total
+        PaymentService.completed_total = staticmethod(
+            AsyncMock(return_value=Decimal("10.00"))
+        )
+        try:
+            result = await PaymentService.mark_invoice_paid(
+                mock_db, mock_invoice.id, practice_id
+            )
+            assert result is mock_invoice
+            assert result.status == InvoiceStatus.PAID
+        finally:
+            PaymentService.completed_total = original_completed
 
     async def test_update_payment_status(self):
         mock_db = AsyncMock()
+        practice_id = uuid4()
         mock_payment = MagicMock()
         mock_payment.id = uuid4()
-        mock_payment.status = "pending"
+        mock_payment.status = PaymentStatus.PENDING
+        mock_payment.invoice_id = uuid4()
 
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_payment
-        mock_db.execute.return_value = mock_result
+        mock_invoice = MagicMock()
+        mock_invoice.id = mock_payment.invoice_id
+        mock_invoice.status = InvoiceStatus.PENDING
+        mock_invoice.total = Decimal("10.00")
 
-        from app.models.payment import PaymentStatus
-        result = await PaymentService.update_payment_status(
-            mock_db, mock_payment.id, PaymentStatus.COMPLETED
+        # First execute resolves the payment; subsequent ones (the invoice
+        # refresh) resolve the invoice.
+        mock_payment_result = MagicMock()
+        mock_payment_result.scalar_one_or_none.return_value = mock_payment
+        mock_invoice_result = MagicMock()
+        mock_invoice_result.scalar_one_or_none.return_value = mock_invoice
+        mock_db.execute.side_effect = [mock_payment_result, mock_invoice_result]
+
+        original_completed = PaymentService.completed_total
+        PaymentService.completed_total = staticmethod(
+            AsyncMock(return_value=Decimal("10.00"))
         )
-        assert result is mock_payment
-        assert result.status == PaymentStatus.COMPLETED
+        try:
+            result = await PaymentService.update_payment_status(
+                mock_db,
+                mock_payment.id,
+                PaymentStatus.COMPLETED,
+                practice_id,
+            )
+            assert result is mock_payment
+            assert result.status == PaymentStatus.COMPLETED
+            # Invoice recomputed from the new completed total.
+            assert mock_invoice.status == InvoiceStatus.PAID
+        finally:
+            PaymentService.completed_total = original_completed
 
     async def test_list_payments(self):
         mock_db = AsyncMock()
         mock_payments = [MagicMock(), MagicMock()]
 
         mock_count_result = MagicMock()
-        mock_count_result.scalars.return_value.all.return_value = [1, 2]  # two dummy items
+        mock_count_result.scalar.return_value = 2  # func.count() aggregate
 
         mock_paginated_result = MagicMock()
         mock_paginated_result.scalars.return_value.all.return_value = mock_payments

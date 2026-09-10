@@ -3,7 +3,7 @@ Audit Models
 Audit logs and user sessions for HIPAA compliance
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, JSON, Text
+from sqlalchemy import Boolean, Column, String, DateTime, ForeignKey, JSON, Text, event
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -47,6 +47,14 @@ class Session(Base):
 
     refresh_token = Column(String(500), unique=True, nullable=True, index=True)  # DEPRECATED: never store plaintext; retained for migration compatibility
     token_hash = Column(String(255), nullable=True, index=True)  # SECURITY FIX: Store hashed refresh token
+    previous_token_hash = Column(String(255), nullable=True, index=True)
+    previous_token_valid_until = Column(DateTime(timezone=True), nullable=True)
+    # H8 FIX: single-use guard for the overlap window. The previous-token leg
+    # of the refresh lookup is accepted at most once; a second use within the
+    # window is treated as credential replay and revokes every session.
+    previous_token_consumed = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     expires_at = Column(DateTime(timezone=True), nullable=False)
 
     # Use string type for IP address for SQLite compatibility
@@ -60,3 +68,12 @@ class Session(Base):
 
     def __repr__(self):
         return f"<Session {self.id} for User {self.user_id}>"
+
+
+@event.listens_for(AuditLog, 'before_update')
+def prevent_audit_log_update(mapper, connection, target):
+    raise RuntimeError("HIPAA Compliance: Audit logs are write-once and cannot be modified.")
+
+@event.listens_for(AuditLog, 'before_delete')
+def prevent_audit_log_delete(mapper, connection, target):
+    raise RuntimeError("HIPAA Compliance: Audit logs are write-once and cannot be deleted.")

@@ -5,7 +5,7 @@ Supports: Auto-billing, Dunning, Proration, Trials, Cancellations, Usage-Based B
 
 from sqlalchemy import (
     Column, String, DateTime, ForeignKey, Enum, Text, Boolean, Numeric,
-    Integer, JSON, Index
+    Integer, JSON, Index, text
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -133,6 +133,13 @@ class Subscription(Base):
         Index('idx_sub_practice_status', 'practice_id', 'status'),
         Index('idx_sub_patient_status', 'patient_id', 'status'),
         Index('idx_sub_stripe_id', 'stripe_subscription_id'),
+        Index(
+            'uq_subscriptions_stripe_subscription_id',
+            'stripe_subscription_id',
+            unique=True,
+            postgresql_where=text('stripe_subscription_id IS NOT NULL'),
+            sqlite_where=text('stripe_subscription_id IS NOT NULL'),
+        ),
         Index('idx_sub_next_billing', 'next_billing_date'),
     )
 

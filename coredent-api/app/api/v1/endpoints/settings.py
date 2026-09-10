@@ -1,24 +1,195 @@
-"""
-Settings Endpoints
-Practice and billing settings management
-"""
-
-
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import get_db
-from app.api.deps import require_role
+from app.core.audit import log_audit_event
+from app.api.deps import get_current_user, require_role, verify_csrf
 from app.models.user import User, UserRole
 from app.models.practice import Practice
-from app.schemas.settings import BillingPreferencesResponse, BillingPreferencesUpdate
+from app.schemas.settings import (
+    BillingPreferencesResponse,
+    BillingPreferencesUpdate,
+    PracticeSettingsUpdate,
+)
 
 router = APIRouter()
 
 
+def _practice_settings_payload(practice: Practice) -> dict:
+    return {
+        "id": str(practice.id),
+        "name": practice.name,
+        "email": practice.email or "",
+        "phone": practice.phone or "",
+        "website": practice.website or "",
+        "logoUrl": practice.logo_url or "",
+        "timezone": practice.timezone or "America/New_York",
+        "currency": practice.currency or "USD",
+        "address": {
+            "street": practice.address_street or practice.address or "",
+            "city": practice.address_city or practice.city or "",
+            "state": practice.address_state or practice.state or "",
+            "zipCode": practice.address_zip or practice.zip_code or "",
+            "country": practice.country or "US",
+        },
+        "settings": practice.settings or {},
+        "updatedAt": practice.updated_at.isoformat() if practice.updated_at else None,
+    }
+
+
+@router.get("/")
+async def get_practice_settings(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get and audit general settings for the current practice."""
+    result = await db.execute(
+        select(Practice).where(Practice.id == current_user.practice_id)
+    )
+    practice = result.scalar_one_or_none()
+    if not practice:
+        raise HTTPException(status_code=404, detail="Practice not found")
+
+    response = _practice_settings_payload(practice)
+    await log_audit_event(
+        db, current_user, "practice_settings_viewed", "practice", practice.id, request
+    )
+    await db.commit()
+    return response
+
+
+@router.put("/")
+async def update_practice_settings(
+    request: Request,
+    settings_data: PracticeSettingsUpdate,
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> dict:
+    """Update validated general settings and audit in the same transaction."""
+    result = await db.execute(
+        select(Practice).where(Practice.id == current_user.practice_id)
+    )
+    practice = result.scalar_one_or_none()
+    if not practice:
+        raise HTTPException(status_code=404, detail="Practice not found")
+
+    update_data = settings_data.model_dump(exclude_unset=True)
+    scalar_map = {
+        "name": "name",
+        "email": "email",
+        "phone": "phone",
+        "website": "website",
+        "timezone": "timezone",
+        "currency": "currency",
+        "logoUrl": "logo_url",
+    }
+    for schema_field, model_field in scalar_map.items():
+        if schema_field in update_data:
+            setattr(practice, model_field, update_data[schema_field])
+
+    address = update_data.get("address")
+    if address is not None:
+        address_map = {
+            "street": ("address_street", "address"),
+            "city": ("address_city", "city"),
+            "state": ("address_state", "state"),
+            "zipCode": ("address_zip", "zip_code"),
+            "country": ("country",),
+        }
+        for field, model_fields in address_map.items():
+            if field in address:
+                for model_field in model_fields:
+                    setattr(practice, model_field, address[field])
+
+    if "workingHours" in update_data:
+        current_settings = dict(practice.settings or {})
+        current_settings["workingHours"] = update_data["workingHours"]
+        practice.settings = current_settings
+
+    await db.flush()
+    await log_audit_event(
+        db,
+        current_user,
+        "practice_settings_updated",
+        "practice",
+        practice.id,
+        request,
+        changes={"fields": sorted(update_data.keys())},
+    )
+    await db.commit()
+    await db.refresh(practice)
+    return _practice_settings_payload(practice)
+
+
+@router.post("/logo")
+async def upload_practice_logo(
+    request: Request,
+    logo: UploadFile = File(...),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> dict:
+    """
+    Upload and set practice logo
+    """
+    stmt = select(Practice).where(Practice.id == current_user.practice_id)
+    result = await db.execute(stmt)
+    practice = result.scalar_one_or_none()
+
+    if not practice:
+        raise HTTPException(status_code=404, detail="Practice not found")
+
+    # M-21 FIX: actually store the upload bytes through the storage strategy,
+    # with MIME allowlisting and a size cap. Previously only a URL derived
+    # from the client-controlled filename was recorded -- no file was ever
+    # written, and an unvalidated filename reached the stored path.
+    MAX_LOGO_BYTES = 2 * 1024 * 1024
+    ALLOWED_LOGO_MIME_TYPES = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+    }
+
+    content = await logo.read()
+    if len(content) > MAX_LOGO_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Logo must be 2 MB or smaller",
+        )
+    mime_type = (logo.content_type or "").split(";")[0].strip().lower()
+    extension = ALLOWED_LOGO_MIME_TYPES.get(mime_type)
+    if extension is None:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Logo must be a PNG, JPEG, or WebP image",
+        )
+
+    from app.utils.storage import storage as file_storage
+
+    destination = f"logos/logo_{practice.id}{extension}"
+    file_storage.upload(content, destination, mime_type)
+    practice.logo_url = f"/uploads/{destination}"
+    await db.flush()
+    await log_audit_event(
+        db,
+        current_user,
+        "practice_logo_updated",
+        "practice",
+        practice.id,
+        request,
+        changes={"content_type": mime_type},
+    )
+    await db.commit()
+
+    return {"url": practice.logo_url}
+
+
 @router.get("/billing", response_model=BillingPreferencesResponse)
 async def get_billing_preferences(
+    request: Request,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> BillingPreferencesResponse:
@@ -33,8 +204,7 @@ async def get_billing_preferences(
     if not practice:
         raise HTTPException(status_code=404, detail="Practice not found")
 
-    # Return billing preferences with defaults
-    return {
+    response = {
         "taxRate": practice.tax_rate or 0.0,
         "currency": practice.currency or "USD",
         "invoicePrefix": practice.invoice_prefix or "INV",
@@ -45,13 +215,20 @@ async def get_billing_preferences(
         "autoSendReminders": practice.auto_send_reminders or False,
         "reminderDaysBefore": practice.reminder_days_before or 3,
     }
+    await log_audit_event(
+        db, current_user, "billing_settings_viewed", "practice", practice.id, request
+    )
+    await db.commit()
+    return response
 
 
 @router.put("/billing", response_model=BillingPreferencesResponse)
 async def update_billing_preferences(
+    request: Request,
     preferences: BillingPreferencesUpdate,
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
 ) -> BillingPreferencesResponse:
     """
     Update billing preferences for the practice
@@ -82,6 +259,16 @@ async def update_billing_preferences(
         if hasattr(practice, model_field):
             setattr(practice, model_field, value)
 
+    await db.flush()
+    await log_audit_event(
+        db,
+        current_user,
+        "billing_settings_updated",
+        "practice",
+        practice.id,
+        request,
+        changes={"fields": sorted(update_data.keys())},
+    )
     await db.commit()
     await db.refresh(practice)
 

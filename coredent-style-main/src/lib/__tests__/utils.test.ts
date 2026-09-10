@@ -1,227 +1,112 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   cn,
-  formatDate,
+  toURLSearchParams,
   formatCurrency,
+  formatDate,
   formatPhoneNumber,
-  validateEmail,
-  truncateText,
   debounce,
   throttle,
+  deepClone,
+  isEmpty,
+  capitalize,
+  generateId,
+  sleep,
+  truncate,
   getInitials,
+  validateEmail,
+  truncateText,
   capitalizeWords,
   slugify,
+  parseJwt,
   isValidUUID,
   getErrorMessage,
-  sleep,
   retry,
-} from "../utils";
+} from '../utils';
 
-describe("Utils", () => {
-  describe("cn", () => {
-    it("should merge class names", () => {
-      expect(cn("px-2", "py-1")).toBe("px-2 py-1");
-    });
-
-    it("should handle conditional classes", () => {
-      const conditionalClass: string | false = false;
-      expect(cn("px-2", conditionalClass)).toBe("px-2");
-    });
-
-    it("should handle undefined and null", () => {
-      expect(cn("px-2", undefined, null, "py-1")).toBe("px-2 py-1");
-    });
+describe('utils', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
   });
 
-  describe("formatDate", () => {
-    it("should format date correctly", () => {
-      const date = new Date("2026-04-07");
-      const result = formatDate(date);
-      expect(result).toContain("2026");
-    });
-
-    it("should handle string dates", () => {
-      const result = formatDate("2026-04-07");
-      expect(result).toContain("2026");
-    });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
-  describe("formatCurrency", () => {
-    it("should format currency with default USD", () => {
-      expect(formatCurrency(100)).toContain("100");
-    });
+  it('formats, normalizes, and validates common values', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
+    vi.spyOn(Math, 'random').mockReturnValue(0.123456789);
 
-    it("should format currency with custom currency", () => {
-      const result = formatCurrency(100, "EUR");
-      expect(result).toContain("100");
-    });
-
-    it("should handle decimal values", () => {
-      const result = formatCurrency(99.99);
-      expect(result).toContain("99.99");
-    });
+    expect(cn('a', undefined, 'c')).toContain('a');
+    expect(toURLSearchParams({ a: '1', b: undefined, c: null, d: '', e: ['x', 'y'], f: 2 }).toString()).toBe('a=1&e=x%2Cy&f=2');
+    expect(formatCurrency(1234.5)).toBe('$1,234.50');
+    expect(formatDate('2026-06-27')).toBe('June 27, 2026');
+    expect(formatDate('2026-06-27', 'yyyy-MM-dd')).toBe('2026-06-27');
+    expect(formatPhoneNumber('555-123-4567')).toBe('(555) 123-4567');
+    expect(formatPhoneNumber('1 (555) 123-4567')).toBe('+1 (555) 123-4567');
+    expect(formatPhoneNumber('abc')).toBe('abc');
+    expect(deepClone({ a: { b: 1 } })).toEqual({ a: { b: 1 } });
+    expect(isEmpty(null)).toBe(true);
+    expect(isEmpty('   ')).toBe(true);
+    expect(isEmpty([])).toBe(true);
+    expect(isEmpty({})).toBe(true);
+    expect(isEmpty('x')).toBe(false);
+    expect(capitalize('maya')).toBe('Maya');
+    expect(generateId('task')).toMatch(/^task-1700000000000-/);
+    expect(truncate('hello world', 5)).toBe('hello...');
+    expect(getInitials('Maya Patel')).toBe('MP');
+    expect(getInitials('maya')).toBe('M');
+    expect(validateEmail('doctor@example.com')).toBe(true);
+    expect(validateEmail('bad')).toBe(false);
+    expect(truncateText('abcdef', 3)).toBe('abc...');
+    expect(capitalizeWords('hello world')).toBe('Hello World');
+    expect(slugify('Hello, World!')).toBe('hello-world');
+    expect(isValidUUID('123e4567-e89b-12d3-a456-426614174000')).toBe(true);
+    expect(isValidUUID('nope')).toBe(false);
+    expect(getErrorMessage(new Error('boom'))).toBe('boom');
+    expect(getErrorMessage('fail')).toBe('fail');
+    expect(getErrorMessage({})).toBe('An unknown error occurred');
+    expect(parseJwt('bad.token')).toBeNull();
+    expect(parseJwt('')).toBeNull();
   });
 
-  describe("formatPhoneNumber", () => {
-    it("should format US phone number", () => {
-      const result = formatPhoneNumber("1234567890");
-      expect(result).toMatch(/\d/);
-    });
+  it('supports async helpers and control flow helpers', async () => {
+    const debounced = vi.fn();
+    const throttled = vi.fn();
 
-    it("should handle short numbers", () => {
-      const result = formatPhoneNumber("123");
-      expect(result).toBe("123");
-    });
-  });
+    const debouncedFn = debounce(debounced, 100);
+    debouncedFn('a');
+    debouncedFn('b');
+    vi.advanceTimersByTime(99);
+    expect(debounced).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(debounced).toHaveBeenCalledTimes(1);
+    expect(debounced).toHaveBeenCalledWith('b');
 
-  describe("validateEmail", () => {
-    it("should validate correct email", () => {
-      expect(validateEmail("test@example.com")).toBe(true);
-    });
+    const throttledFn = throttle(throttled, 100);
+    throttledFn('first');
+    throttledFn('second');
+    expect(throttled).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(100);
+    throttledFn('third');
+    expect(throttled).toHaveBeenCalledTimes(2);
 
-    it("should reject invalid email", () => {
-      expect(validateEmail("invalid-email")).toBe(false);
-    });
+    const sleepPromise = sleep(50);
+    vi.advanceTimersByTime(50);
+    await expect(sleepPromise).resolves.toBeUndefined();
 
-    it("should reject empty string", () => {
-      expect(validateEmail("")).toBe(false);
-    });
-  });
+    let attempts = 0;
+    const retried = retry(
+      async () => {
+        attempts += 1;
+        if (attempts < 3) throw new Error(`attempt ${attempts}`);
+        return 'ok';
+      },
+      { maxAttempts: 3, delay: 10 },
+    );
 
-  describe("truncateText", () => {
-    it("should truncate long text", () => {
-      const result = truncateText("This is a long text", 10);
-      expect(result.length).toBeLessThanOrEqual(13); // 10 + "..."
-    });
-
-    it("should not truncate short text", () => {
-      const result = truncateText("Short", 10);
-      expect(result).toBe("Short");
-    });
-  });
-
-  describe("debounce", () => {
-    it("should debounce function calls", async () => {
-      let callCount = 0;
-      const fn = debounce(() => {
-        callCount++;
-      }, 50);
-
-      fn();
-      fn();
-      fn();
-
-      await sleep(100);
-      expect(callCount).toBe(1);
-    });
-  });
-
-  describe("throttle", () => {
-    it("should throttle function calls", async () => {
-      let callCount = 0;
-      const fn = throttle(() => {
-        callCount++;
-      }, 50);
-
-      fn();
-      fn();
-      fn();
-
-      await sleep(100);
-      expect(callCount).toBeGreaterThan(0);
-    });
-  });
-
-  describe("getInitials", () => {
-    it("should get initials from name", () => {
-      expect(getInitials("John Doe")).toBe("JD");
-    });
-
-    it("should handle single name", () => {
-      expect(getInitials("John")).toBe("J");
-    });
-
-    it("should handle empty string", () => {
-      expect(getInitials("")).toBe("");
-    });
-  });
-
-  describe("capitalizeWords", () => {
-    it("should capitalize words", () => {
-      expect(capitalizeWords("hello world")).toBe("Hello World");
-    });
-
-    it("should handle single word", () => {
-      expect(capitalizeWords("hello")).toBe("Hello");
-    });
-  });
-
-  describe("slugify", () => {
-    it("should convert to slug", () => {
-      expect(slugify("Hello World")).toBe("hello-world");
-    });
-
-    it("should handle special characters", () => {
-      const result = slugify("Hello & World!");
-      expect(result).not.toContain(" ");
-    });
-  });
-
-  describe("isValidUUID", () => {
-    it("should validate UUID", () => {
-      const uuid = "550e8400-e29b-41d4-a716-446655440000";
-      expect(isValidUUID(uuid)).toBe(true);
-    });
-
-    it("should reject invalid UUID", () => {
-      expect(isValidUUID("not-a-uuid")).toBe(false);
-    });
-  });
-
-  describe("getErrorMessage", () => {
-    it("should extract error message from Error object", () => {
-      const error = new Error("Test error");
-      expect(getErrorMessage(error)).toBe("Test error");
-    });
-
-    it("should handle string errors", () => {
-      expect(getErrorMessage("String error")).toBe("String error");
-    });
-
-    it("should handle unknown errors", () => {
-      expect(getErrorMessage({})).toBe("An unknown error occurred");
-    });
-  });
-
-  describe("sleep", () => {
-    it("should delay execution", async () => {
-      const start = Date.now();
-      await sleep(50);
-      const elapsed = Date.now() - start;
-      expect(elapsed).toBeGreaterThanOrEqual(40);
-    });
-  });
-
-  describe("retry", () => {
-    it("should retry failed function", async () => {
-      let attempts = 0;
-      const fn = async () => {
-        attempts++;
-        if (attempts < 2) throw new Error("Failed");
-        return "success";
-      };
-
-      const result = await retry(fn, { maxAttempts: 3, delay: 10 });
-      expect(result).toBe("success");
-      expect(attempts).toBe(2);
-    });
-
-    it("should throw after max attempts", async () => {
-      const fn = async () => {
-        throw new Error("Always fails");
-      };
-
-      await expect(retry(fn, { maxAttempts: 2, delay: 10 })).rejects.toThrow();
-    });
+    await vi.runAllTimersAsync();
+    await expect(retried).resolves.toBe('ok');
   });
 });

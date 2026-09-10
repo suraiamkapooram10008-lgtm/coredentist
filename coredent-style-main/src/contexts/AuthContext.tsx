@@ -10,8 +10,9 @@ import { authApi } from '@/services/api';
 import { logger } from '@/lib/logger';
 import { useToast } from '@/hooks/use-toast';
 import { AuthContext, type AuthContextValue, type RegisterData } from '@/contexts/auth-context';
-import { refreshCsrfToken, clearCsrfToken } from '@/lib/csrf';
-import { analytics, trackLogin, trackLogout, trackSignup } from '@/lib/analytics';
+import { getCsrfToken, refreshCsrfToken, clearCsrfToken } from '@/lib/csrf';
+import { queryClient } from '@/lib/queryClient';
+import { analytics, trackLogin, trackLogout } from '@/lib/analytics';
 
   // Development mode bypass - ONLY works in development builds, NEVER in production
   const DEV_MODE = import.meta.env.MODE === 'development';
@@ -32,12 +33,12 @@ const DEV_USER: User = {
   practiceId: 'dev-practice-1',
   practiceName: 'Development Practice',
   practiceCountry: 'US',
+  mustChangePassword: false,
 };
-
-export { useAuth } from '@/contexts/auth-context';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
 
@@ -46,6 +47,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       authApi.setToken(null);
       authApi.setRefreshToken(null);
       clearCsrfToken();
+      // Drop all cached queries: without this the next user in this tab sees
+      // the previous account's cached PHI for up to the 5-minute staleTime.
+      queryClient.clear();
       setUser(null);
       setIsLoading(false);
     };
@@ -68,13 +72,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Session persistence: the access token lives in memory only, but the
-      // refresh token is persisted in sessionStorage (cleared on tab close).
-      // On reload we exchange it for a fresh access token so users are not
-      // forced to log in again on every page refresh.
+      // The access token lives in memory. The durable refresh credential is an
+      // HttpOnly cookie, so bootstrap a readable CSRF header before exchanging
+      // it on a reload or a newly opened tab.
       logger.debug('Session check: attempting refresh-token restore');
 
       try {
+        if (!getCsrfToken()) {
+          const csrfResponse = await authApi.getCsrf();
+          if (csrfResponse.success && csrfResponse.data?.csrf_token) {
+            refreshCsrfToken(csrfResponse.data.csrf_token);
+          }
+        }
         await authApi.restoreSession();
       } catch (err) {
         logger.debug('Session restore failed', { error: err instanceof Error ? err.message : String(err) });
@@ -112,8 +121,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const response = await authApi.login(credentials);
       
       if (response.success && response.data) {
-        const { csrf_token, access_token, refresh_token } = response.data;
-        
+        const { csrf_token, access_token, refresh_token, must_change_password } = response.data;
+
         // CRIT-06 FIX: Store tokens in ApiClient memory ONLY (NOT localStorage)
         // This prevents XSS attacks from stealing tokens via localStorage access
         if (access_token) {
@@ -123,9 +132,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (refresh_token) {
           authApi.setRefreshToken(refresh_token);
         }
-        
+
         // Store CSRF token for request headers
         refreshCsrfToken(csrf_token);
+
+        // Capture the force-change flag before the user object is populated.
+        // The flag is also surfaced via /auth/me, but the login response is the
+        // authoritative source at session start and survives a token refresh
+        // that hasn't yet re-fetched the user profile.
+        setMustChangePassword(!!must_change_password);
 
         const userResponse = await authApi.getCurrentUser();
         if (!userResponse.success || !userResponse.data) {
@@ -144,12 +159,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const user = userResponse.data;
         setUser(user);
 
+        // /auth/me may carry a stale flag after a password reset by an admin;
+        // prefer the me-endpoint value so the gate always reflects DB state.
+        setMustChangePassword(user.mustChangePassword);
+
         analytics.identify(user.id, {
+          // L-2 FIX: do NOT send the user's email or the practice name
+          // to PostHog. Both are PHI / PII under HIPAA + GDPR; a breach
+          // of the analytics account would disclose who uses the
+          // system. Operational metadata (role, practiceId, userId)
+          // remains so product analytics still answer "which roles
+          // use which features" without identifying a person.
           userId: user.id,
-          email: user.email,
           role: user.role,
           practiceId: user.practiceId,
-          practiceName: user.practiceName,
         });
         trackLogin(user.id, 'email');
         
@@ -195,47 +218,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         phone: data.phone,
       });
 
-      if (response.success && response.data) {
-        const { csrf_token, access_token, refresh_token } = response.data;
-
-        if (access_token) {
-          authApi.setToken(access_token);
-        }
-        if (refresh_token) {
-          authApi.setRefreshToken(refresh_token);
-        }
-        refreshCsrfToken(csrf_token);
-
-        const userResponse = await authApi.getCurrentUser();
-        if (!userResponse.success || !userResponse.data) {
-          clearCsrfToken();
-          authApi.setToken(null);
-          authApi.setRefreshToken(null);
-          toast({
-            variant: 'destructive',
-            title: 'Registration Failed',
-            description: 'Account created but unable to load profile. Please sign in.',
-          });
-          return false;
-        }
-
-        const newUser = userResponse.data;
-        setUser(newUser);
-
-        analytics.identify(newUser.id, {
-          userId: newUser.id,
-          email: newUser.email,
-          role: newUser.role,
-          practiceId: newUser.practiceId,
-          practiceName: newUser.practiceName,
-        });
-        trackSignup(newUser.id, 'email');
-
+      if (response.success) {
         toast({
-          title: 'Welcome to CoreDent!',
-          description: `Your practice "${newUser.practiceName}" is ready.`,
+          title: 'Check your email',
+          description: response.data?.message || 'Verify your email before signing in.',
         });
-
         return true;
       } else {
         toast({
@@ -269,9 +256,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     authApi.setToken(null);
     authApi.setRefreshToken(null);
     setUser(null);
-    
+
     // Clear CSRF token on logout
     clearCsrfToken();
+
+    // Clear the React Query cache so the next account in this tab cannot see
+    // this user's cached PHI (staleTime is 5 minutes).
+    queryClient.clear();
     
     // Track logout event
     trackLogout();
@@ -281,6 +272,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       description: 'You have been signed out',
     });
   }, [toast]);
+
+  const clearMustChangePassword = useCallback(() => {
+    setMustChangePassword(false);
+  }, []);
 
   const hasRole = useCallback((...roles: UserRole[]): boolean => {
     if (!user) return false;
@@ -292,9 +287,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isAuthenticated: !!user,
     isLoading,
     role: user?.role || null,
+    mustChangePassword,
     login,
     register,
     logout,
+    clearMustChangePassword,
     hasRole,
   };
 

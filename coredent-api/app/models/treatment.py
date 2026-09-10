@@ -3,10 +3,11 @@ Treatment Planning Models
 Treatment plans, procedures, cost estimates, and acceptance tracking
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Numeric, Date, Boolean, Text, Integer, JSON
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Numeric, Date, Boolean, Text, Integer, JSON, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from decimal import Decimal
 import uuid
 import enum
 
@@ -201,14 +202,18 @@ class TreatmentProcedure(Base):
     appointment = relationship("Appointment")
 
     @property
-    def insurance_coverage_amount(self) -> float:
+    def insurance_coverage_amount(self) -> Decimal:
         """Calculate insurance coverage amount"""
-        return float(self.fee or 0) * (float(self.coverage_percentage or 0) / 100)
+        from decimal import Decimal, ROUND_HALF_UP
+        fee = Decimal(str(self.fee or 0))
+        pct = Decimal(str(self.coverage_percentage or 0))
+        return (fee * pct / Decimal('100')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     @property
-    def patient_amount(self) -> float:
+    def patient_amount(self) -> Decimal:
         """Calculate patient responsibility amount"""
-        return float(self.fee or 0) - self.insurance_coverage_amount
+        from decimal import Decimal
+        return Decimal(str(self.fee or 0)) - self.insurance_coverage_amount
 
     def __repr__(self):
         return f"<TreatmentProcedure {self.ada_code} - {self.description}>"
@@ -217,12 +222,15 @@ class TreatmentProcedure(Base):
 class ProcedureLibrary(Base):
     """Library of common dental procedures with ADA codes"""
     __tablename__ = "procedure_library"
+    __table_args__ = (
+        UniqueConstraint('practice_id', 'ada_code', name='uq_practice_ada_code'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
 
     # Procedure Information
-    ada_code = Column(String(10), nullable=False, unique=True, index=True)
+    ada_code = Column(String(10), nullable=False, index=True)
     description = Column(String(500), nullable=False)
     long_description = Column(Text)
     procedure_type = Column(Enum(ProcedureType), nullable=False)

@@ -3,7 +3,7 @@ Online Booking Models
 Public booking pages, availability, waitlist, and intake forms
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Boolean, Text, Integer, Date, Time, JSON
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Boolean, Text, Integer, Date, Time, JSON, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -46,7 +46,11 @@ class BookingPage(Base):
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
 
     # Page Configuration
-    page_slug = Column(String(100), unique=True, nullable=False, index=True)  # URL slug
+    # page_slug is unique PER PRACTICE (public URLs are
+    # /book/{practice_slug}/{page_slug}, so two practices may use the same
+    # page slug). The composite unique constraint below is the authoritative
+    # guard; the index serves lookups.
+    page_slug = Column(String(100), nullable=False, index=True)  # URL slug
     page_title = Column(String(255), nullable=False)
     welcome_message = Column(Text)
 
@@ -107,6 +111,13 @@ class BookingPage(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    __table_args__ = (
+        # Two practices may use the same page slug; one practice may not.
+        UniqueConstraint(
+            "practice_id", "page_slug", name="uq_booking_pages_practice_page_slug"
+        ),
+    )
+
     # Relationships
     practice = relationship("Practice", back_populates="booking_pages")
     bookings = relationship("OnlineBooking", back_populates="booking_page", cascade="all, delete-orphan")
@@ -164,7 +175,13 @@ class OnlineBooking(Base):
 
     # Verification
     email_verified = Column(Boolean, default=False)
+    # M-10 FIX: the plaintext token column is retained for the migration
+    # window (so we can hash legacy rows in a data migration) but is no
+    # longer written by the application. All new tokens go into
+    # ``email_verification_token_hash``; the comparison in
+    # ``verify_email`` uses ``hmac.compare_digest`` on the hash.
     email_verification_token = Column(String(100))
+    email_verification_token_hash = Column(String(128), index=True)
     phone_verified = Column(Boolean, default=False)
     phone_verification_code = Column(String(6))
 

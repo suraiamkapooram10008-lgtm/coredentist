@@ -6,21 +6,36 @@ CRUD operations for patients
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import selectinload
 from sqlalchemy import select, or_
+from sqlalchemy.exc import IntegrityError
 from uuid import UUID
+from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 
 from app.core.database import get_db
 from app.models.user import User, UserRole
-from app.models.patient import Patient
+from app.models.patient import Patient, PatientStatus
 from app.schemas.patient import PatientCreate, PatientUpdate, PatientResponse, PatientListItem
 from app.schemas.common import PaginatedResponse
 from app.api.deps import get_current_user, get_current_practice_id, Pagination, verify_csrf, require_role
 from app.core.audit import log_audit_event
 from app.core.sanitization import sanitize_search_query
-from app.core.search_index import hmac_index
+from app.core.search_index import hmac_index, update_patient_search_indexes
 from app.core.rate_limit import user_rate_limit
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from typing import List
+
+from app.models.clinical import ClinicalNote
+from app.schemas.clinical import ClinicalNoteResponse
+from app.api.v1.endpoints.clinical_notes import (
+    CLINICAL_ROLES,
+    _to_response,
+    _get_patient_or_404,
+)
+from app.schemas.reference import PatientSearchRef
+from app.schemas.patient_export import PatientExportResponse
+from app.services.plan_quota import enforce_plan_quota
 router = APIRouter()
 
 
@@ -44,12 +59,16 @@ async def list_patients(
     )
     await db.commit()
 
-    # Build base query with eager loading to prevent N+1 for visit stats
-    base_stmt = (
-        select(Patient)
-        .where(Patient.practice_id == practice_id)
-        .options(selectinload(Patient.appointments))
-    )
+    # Build base query.
+    # L13 FIX: dropped the selectinload(Patient.appointments) eager load —
+    # PatientListItem.last_visit/next_appointment have no backing model
+    # attributes (always None), so the join loaded each patient's entire
+    # appointment history for zero benefit.
+    # M15 FIX: soft-deleted (inactive) patients are hidden unless the
+    # caller explicitly filters for them.
+    base_stmt = select(Patient).where(Patient.practice_id == practice_id)
+    if not status_filter:
+        base_stmt = base_stmt.where(Patient.status != PatientStatus.INACTIVE)
 
     # Apply search - two-phase approach for encrypted fields:
     # Phase 1: HMAC exact match (fast path, O(1))
@@ -75,11 +94,16 @@ async def list_patients(
                 exact_patients = exact_result.scalars().all()
 
                 if not exact_patients:
-                    # Phase 2: Load all practice patients, filter in-memory
+                    # Phase 2: Load practice patients, filter in-memory
                     # on decrypted values.  Dental practices typically <5k
                     # patients so this is acceptable.
                     use_in_memory_fallback = True
-                    base_stmt = base_stmt.order_by(Patient.updated_at.desc())
+                    # L14 FIX: cap raised from 1000 — with the old cap the
+                    # reported `total` silently understated and later pages
+                    # became unreachable for larger practices. 5000 covers
+                    # the realistic dental-practice range; the totals remain
+                    # a lower bound beyond the cap.
+                    base_stmt = base_stmt.order_by(Patient.updated_at.desc()).limit(5000)
                 else:
                     base_stmt = exact_stmt
             else:
@@ -154,11 +178,15 @@ async def create_patient(
     patient_in: PatientCreate,
     practice_id: UUID = Depends(get_current_practice_id),
     current_user: User = Depends(get_current_user),
+    _quota: None = Depends(enforce_plan_quota("patients")),
     _csrf: bool = Depends(verify_csrf),  # SECURITY FIX: CSRF protection
     db: AsyncSession = Depends(get_db),
 ) -> PatientResponse:
     """
     Create new patient (includes integrity check for duplicates)
+
+    QUOTA: ``enforce_plan_quota("patients")`` rejects creation once the
+    practice's active plan has hit its ``limits.patients`` ceiling.
     """
     # Expert Integrity: Check for duplicate patient in the same practice
     # Use HMAC index columns since email/phone are encrypted at rest
@@ -172,10 +200,18 @@ async def create_patient(
     if dup_filters:
         duplicate_query = select(Patient).where(
             Patient.practice_id == practice_id,
+            # B8 policy alignment: match the partial unique index predicate —
+            # uniqueness is enforced among non-inactive rows only, so an
+            # inactive historical record must not block re-use of a contact.
+            Patient.status.isnot(None),
+            Patient.status != PatientStatus.INACTIVE,
             or_(*dup_filters)
         )
         result = await db.execute(duplicate_query)
-        if result.scalar_one_or_none():
+        # M16 FIX: .first() — scalar_one_or_none() raised
+        # MultipleResultsFound (unhandled 500) on every create once a
+        # duplicate pair existed.
+        if result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A patient with this email or phone already exists in this practice. Please verify the record."
@@ -198,7 +234,16 @@ async def create_patient(
     patient.search_index_last_name = hmac_index(patient_in.last_name)
 
     db.add(patient)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # M16 FIX: concurrent create racing the duplicate check — the
+        # unique (practice, hmac) index makes the DB the final arbiter.
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A patient with this email or phone already exists in this practice. Please verify the record."
+        )
     await db.refresh(patient)
 
     # HIPAA: Log creation
@@ -210,45 +255,75 @@ async def create_patient(
     return patient
 
 
-@router.get("/{patient_id}", response_model=PatientResponse)
-async def get_patient(
+@router.get("/search", response_model=List[PatientSearchRef])
+async def search_patients(
     request: Request,
-    patient_id: UUID,
+    query: str = Query(..., min_length=1, description="Search by name, email, or phone"),
     practice_id: UUID = Depends(get_current_practice_id),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> PatientResponse:
-    """
-    Get patient by ID
-    """
-    result = await db.execute(
-        select(Patient).where(
-            Patient.id == patient_id,
-            Patient.practice_id == practice_id,
-        )
-    )
-    patient = result.scalar_one_or_none()
+) -> List[PatientSearchRef]:
+    """Type-ahead patient lookup for the scheduling UI (tenant-scoped)."""
+    q = sanitize_search_query(query)
+    if not q:
+        return []
 
-    if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Patient not found",
-        )
+    active_filter = Patient.status != PatientStatus.INACTIVE
 
-    # HIPAA: Log PHI read access
-    await log_audit_event(
-        db, current_user, "patient_viewed", "patient", patient.id, request
+    search_hmac = hmac_index(q)
+    filters = []
+    if search_hmac:
+        filters.append(Patient.search_index_email == search_hmac)
+        filters.append(Patient.search_index_last_name == search_hmac)
+    filters.append(Patient.first_name == q)
+    filters.append(Patient.last_name == q)
+    stmt = (
+        select(Patient)
+        .where(Patient.practice_id == practice_id, active_filter, or_(*filters))
+        .order_by(Patient.updated_at.desc())
+        .limit(10)
     )
+    result = await db.execute(stmt)
+    matches = result.scalars().all()
+
+    # Bounded in-memory substring fallback for type-ahead. The patient
+    # name and email columns are encrypted at rest (Fernet), so we cannot
+    # push the substring match into SQL. The cap here is the practical
+    # size at which the in-memory filter is still cheap for a single
+    # clinician's session; it does NOT scale to multi-thousand-patient
+    # practices. Migration to a Postgres trigram index (pg_trgm) over
+    # the HMAC search-index columns is tracked in the audit log as a
+    # known follow-up. M-3 FIX: 200 rows was 1000 before; the new cap
+    # bounds latency on large practices while still comfortably
+    # covering the typical type-ahead UX.
+    if not matches and len(q) >= 2:
+        all_result = await db.execute(
+            select(Patient)
+            .where(Patient.practice_id == practice_id, active_filter)
+            .limit(200)
+        )
+        ql = q.lower()
+        matches = [
+            p for p in all_result.scalars().all()
+            if ql in (p.first_name or "").lower()
+            or ql in (p.last_name or "").lower()
+            or ql in (p.email or "").lower()
+            or ql in f"{(p.first_name or '').lower()} {(p.last_name or '').lower()}"
+        ][:10]
+
+    # HIPAA: Log search access
+    await log_audit_event(db, current_user, "patient_searched", "patient", None, request)
     await db.commit()
 
-    # EXPERT HARDENING: Adaptive PHI Visibility (Least Privilege)
-    # Front-Desk and Hygienists don't need access to specific insurance IDs/keys unless authorized.
-    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN, UserRole.DENTIST]:
-        # Redact the JSON content of insurance_info if present
-        if patient.insurance_info:
-             patient.insurance_info = {"status": "present", "redacted": True, "note": "Contact Admin for details"}
-
-    return patient
+    return [
+        PatientSearchRef(
+            id=patient.id,
+            name=f"{patient.first_name or ''} {patient.last_name or ''}".strip(),
+            phone=patient.phone or "",
+            email=patient.email,
+        )
+        for patient in matches
+    ]
 
 
 @router.put("/{patient_id}", response_model=PatientResponse)
@@ -281,10 +356,60 @@ async def update_patient(
 
     # Update fields
     update_data = patient_in.model_dump(exclude_unset=True)
+    # F15 FIX: Strip search_index_* fields defensively (create_patient does
+    # this too). If these ever enter the update schema, they could poison
+    # the HMAC search indexes.
+    for f in ("search_index_email", "search_index_phone", "search_index_last_name"):
+        update_data.pop(f, None)
+
+    # M16 FIX: an update used to be able to edit email/phone into a
+    # collision with another record, silently defeating the create-time
+    # duplicate guarantee.
+    changed_contact = [f for f in ("email", "phone") if f in update_data and update_data[f]]
+    if changed_contact:
+        dup_filters = []
+        if "email" in changed_contact:
+            email_hmac = hmac_index(update_data["email"])
+            if email_hmac:
+                dup_filters.append(Patient.search_index_email == email_hmac)
+        if "phone" in changed_contact:
+            phone_hmac = hmac_index(update_data["phone"])
+            if phone_hmac:
+                dup_filters.append(Patient.search_index_phone == phone_hmac)
+        if dup_filters:
+            dup_result = await db.execute(
+                select(Patient.id).where(
+                    Patient.practice_id == practice_id,
+                    Patient.id != patient_id,
+                    Patient.status.isnot(None),
+                    Patient.status != PatientStatus.INACTIVE,
+                    or_(*dup_filters),
+                )
+            )
+            if dup_result.scalars().first():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Another patient with this email or phone already exists in this practice.",
+                )
+
     for field, value in update_data.items():
         setattr(patient, field, value)
+    changed_index_fields = tuple(
+        field for field in ("email", "phone", "last_name") if field in update_data
+    )
+    update_patient_search_indexes(patient, *changed_index_fields)
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # B8 FIX: a concurrent create/update could claim the same contact
+        # between the precheck above and this commit; surface the unique
+        # index violation as a 409 instead of an unhandled 500.
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Another patient with this email or phone already exists in this practice.",
+        )
     await db.refresh(patient)
 
     # HIPAA: Log patient update
@@ -325,10 +450,581 @@ async def delete_patient(
 
     # Soft delete
     patient.status = "inactive"
+
+    # M15 FIX: cancelling the patient must also cancel future appointments
+    # (they used to stay on the calendar and in reminder pipelines).
+    from app.models.appointment import Appointment, AppointmentStatus
+    future_appts = await db.execute(
+        select(Appointment).where(
+            Appointment.patient_id == patient_id,
+            Appointment.practice_id == practice_id,
+            Appointment.start_time >= datetime.now(timezone.utc),
+            Appointment.status.notin_([
+                AppointmentStatus.CANCELLED,
+                AppointmentStatus.COMPLETED,
+                AppointmentStatus.NO_SHOW,
+            ]),
+        )
+    )
+    cancelled_appointments: list = []
+    for apt in future_appts.scalars().all():
+        apt.status = AppointmentStatus.CANCELLED
+        cancelled_appointments.append(apt.id)
+        # M-2 FIX: write one audit row per affected appointment so a
+        # review of a single appointment row can be correlated with the
+        # cancellation. The aggregate count is also included in the
+        # ``patient_deleted`` row's ``changes`` payload below.
+        await log_audit_event(
+            db,
+            current_user,
+            "appointment_cancelled_patient_inactive",
+            "appointment",
+            apt.id,
+            request,
+            {"patient_id": str(patient.id), "reason": "patient_marked_inactive"},
+        )
+
     await db.commit()
 
-    # HIPAA: Log patient deletion (soft delete)
+    # HIPAA: Log patient deletion (soft delete) along with the count of
+    # affected future appointments so an operator can spot-check the
+    # audit log when reconciling the schedule.
     await log_audit_event(
-        db, current_user, "patient_deleted", "patient", patient.id, request
+        db,
+        current_user,
+        "patient_deleted",
+        "patient",
+        patient.id,
+        request,
+        {"future_appointments_cancelled": len(cancelled_appointments)},
     )
     await db.commit()
+
+
+@router.get("/{patient_id}/export", response_model=PatientExportResponse)
+async def export_patient_data(
+    request: Request,
+    patient_id: UUID,
+    practice_id: UUID = Depends(get_current_practice_id),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> PatientExportResponse:
+    """
+    GDPR Right to Data Portability / HIPAA Patient Export.
+    Exports all personal data and PHI related to the patient in a structured format.
+    """
+    from app.models import (
+        Appointment,
+        ClinicalNote,
+        TreatmentPlan,
+        Invoice,
+        Payment,
+        PatientInsurance,
+        InsuranceClaim,
+        PatientImage,
+        Document,
+    )
+
+    # 1. Fetch patient
+    result = await db.execute(
+        select(Patient).where(
+            Patient.id == patient_id,
+            Patient.practice_id == practice_id,
+        )
+    )
+    patient = result.scalar_one_or_none()
+
+    if not patient:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient not found",
+        )
+
+    # 2. Fetch related data.
+    #
+    # H-06 FIX: every child query now carries its own practice predicate.
+    # Previously they filtered on patient_id alone, trusting that a
+    # practice-scoped patient implies practice-scoped children. That is an
+    # assumption about data consistency, not an enforced invariant -- and this
+    # endpoint emits a complete PHI export, so any cross-tenant or orphaned
+    # child row attached to that patient id would be disclosed.
+    #
+    # Models carrying practice_id are filtered directly. ClinicalNote,
+    # PatientInsurance and Payment have no practice_id column, so they are
+    # joined to their practice-scoped parent instead (patient / invoice).
+    appointments_result = await db.execute(
+        select(Appointment).where(
+            Appointment.patient_id == patient_id,
+            Appointment.practice_id == practice_id,
+        )
+    )
+    appointments = appointments_result.scalars().all()
+
+    notes_result = await db.execute(
+        select(ClinicalNote)
+        .join(Patient, Patient.id == ClinicalNote.patient_id)
+        .where(
+            ClinicalNote.patient_id == patient_id,
+            Patient.practice_id == practice_id,
+        )
+    )
+    notes = notes_result.scalars().all()
+
+    plans_result = await db.execute(
+        select(TreatmentPlan).where(
+            TreatmentPlan.patient_id == patient_id,
+            TreatmentPlan.practice_id == practice_id,
+        )
+    )
+    plans = plans_result.scalars().all()
+
+    invoices_result = await db.execute(
+        select(Invoice).where(
+            Invoice.patient_id == patient_id,
+            Invoice.practice_id == practice_id,
+        )
+    )
+    invoices = invoices_result.scalars().all()
+
+    payments_result = await db.execute(
+        select(Payment)
+        .join(Invoice, Invoice.id == Payment.invoice_id)
+        .where(
+            Payment.patient_id == patient_id,
+            Invoice.practice_id == practice_id,
+        )
+    )
+    payments = payments_result.scalars().all()
+
+    insurance_result = await db.execute(
+        select(PatientInsurance)
+        .join(Patient, Patient.id == PatientInsurance.patient_id)
+        .where(
+            PatientInsurance.patient_id == patient_id,
+            Patient.practice_id == practice_id,
+        )
+    )
+    insurances = insurance_result.scalars().all()
+
+    claims_result = await db.execute(
+        select(InsuranceClaim).where(
+            InsuranceClaim.patient_id == patient_id,
+            InsuranceClaim.practice_id == practice_id,
+        )
+    )
+    claims = claims_result.scalars().all()
+
+    images_result = await db.execute(
+        select(PatientImage).where(
+            PatientImage.patient_id == patient_id,
+            PatientImage.practice_id == practice_id,
+        )
+    )
+    images = images_result.scalars().all()
+
+    docs_result = await db.execute(
+        select(Document).where(
+            Document.patient_id == patient_id,
+            Document.practice_id == practice_id,
+        )
+    )
+    docs = docs_result.scalars().all()
+
+    # 3. Log HIPAA Audit Event
+    await log_audit_event(
+        db, current_user, "patient_data_exported", "patient", patient.id, request
+    )
+    await db.commit()
+
+    # 4. Construct JSON payload
+    def model_to_dict(model_obj) -> dict:
+        if not model_obj:
+            return {}
+        res = {}
+        for col in model_obj.__table__.columns:
+            if col.name.startswith("search_index_") or col.name.startswith("portal_"):
+                continue
+            val = getattr(model_obj, col.name)
+            if isinstance(val, UUID):
+                res[col.name] = str(val)
+            elif isinstance(val, (date, datetime)):
+                res[col.name] = val.isoformat()
+            elif hasattr(val, 'value'): # Enum
+                res[col.name] = val.value
+            else:
+                res[col.name] = val
+        return res
+
+    exported_by_name = (
+        current_user.full_name
+        if hasattr(current_user, 'full_name')
+        else f"{current_user.first_name or ''} {current_user.last_name or ''}".strip()
+    )
+
+    return {
+        "exported_at": datetime.now(timezone.utc),
+        "exported_by": {
+            "id": str(current_user.id),
+            "name": exported_by_name,
+            "role": current_user.role.value if hasattr(current_user.role, 'value') else current_user.role,
+        },
+        "patient_demographics": model_to_dict(patient),
+        "appointments": [model_to_dict(apt) for apt in appointments],
+        "clinical_notes": [model_to_dict(note) for note in notes],
+        "treatment_plans": [model_to_dict(plan) for plan in plans],
+        "invoices": [model_to_dict(inv) for inv in invoices],
+        "payments": [model_to_dict(pay) for pay in payments],
+        "insurances": [model_to_dict(ins) for ins in insurances],
+        "insurance_claims": [model_to_dict(claim) for claim in claims],
+        "patient_images": [model_to_dict(img) for img in images],
+        "documents": [model_to_dict(doc) for doc in docs],
+    }
+
+@router.get("/{patient_id}", response_model=PatientResponse)
+async def get_patient(
+    request: Request,
+    patient_id: UUID,
+    practice_id: UUID = Depends(get_current_practice_id),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PatientResponse:
+    """
+    Get patient by ID
+    """
+    result = await db.execute(
+        select(Patient).where(
+            Patient.id == patient_id,
+            Patient.practice_id == practice_id,
+        )
+    )
+    patient = result.scalar_one_or_none()
+
+    if not patient:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient not found",
+        )
+
+    # HIPAA: Log PHI read access
+    await log_audit_event(
+        db, current_user, "patient_viewed", "patient", patient.id, request
+    )
+    await db.commit()
+
+    # EXPERT HARDENING: Adaptive PHI Visibility (Least Privilege)
+    # Front-Desk and Hygienists don't need access to specific insurance IDs/keys unless authorized.
+    # F16 FIX: Redact on a serialized copy, NOT on the ORM instance.
+    # Mutating the ORM instance risks persisting the redacted blob if the
+    # session ever flushes. We build the response dict and redact there.
+    if current_user.role not in [UserRole.OWNER, UserRole.ADMIN, UserRole.DENTIST]:
+        # Return a shallow copy with insurance_info redacted
+        # PatientResponse is a Pydantic model; we can't easily copy it,
+        # so we expunge the instance from the session before mutating
+        # to guarantee the redacted value is never flushed to the DB.
+        db.expunge(patient)
+        if patient.insurance_info:
+             patient.insurance_info = {"status": "present", "redacted": True, "note": "Contact Admin for details"}
+
+    return patient
+
+
+@router.get("/{patient_id}/notes", response_model=List[ClinicalNoteResponse])
+async def list_patient_notes(
+    patient_id: UUID,
+    request: Request,
+    current_user: User = Depends(require_role(*CLINICAL_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> List[ClinicalNoteResponse]:
+    """List clinical notes for a patient (tenant-scoped, newest first).
+
+    Consistent with the /notes router: reading clinical-note PHI requires a
+    clinical role; front-desk/admin-only accounts get 403.
+    """
+    await _get_patient_or_404(db, patient_id, current_user)
+    result = await db.execute(
+        select(ClinicalNote)
+        .options(selectinload(ClinicalNote.provider))
+        .where(ClinicalNote.patient_id == patient_id)
+        .order_by(ClinicalNote.created_at.desc())
+    )
+    notes = result.scalars().all()
+    await log_audit_event(
+        db, current_user, "clinical_notes_listed", "clinical_note", patient_id, request
+    )
+    await db.commit()
+    return [_to_response(n) for n in notes]
+
+
+# ── Dental Charting Endpoints ──────────────────────────────────────────
+
+TOOTH_NAMES = {
+    1: "Upper Right 3rd Molar (Wisdom)",
+    2: "Upper Right 2nd Molar",
+    3: "Upper Right 1st Molar",
+    4: "Upper Right 2nd Premolar",
+    5: "Upper Right 1st Premolar",
+    6: "Upper Right Canine",
+    7: "Upper Right Lateral Incisor",
+    8: "Upper Right Central Incisor",
+    9: "Upper Left Central Incisor",
+    10: "Upper Left Lateral Incisor",
+    11: "Upper Left Canine",
+    12: "Upper Left 1st Premolar",
+    13: "Upper Left 2nd Premolar",
+    14: "Upper Left 1st Molar",
+    15: "Upper Left 2nd Molar",
+    16: "Upper Left 3rd Molar (Wisdom)",
+    17: "Lower Left 3rd Molar (Wisdom)",
+    18: "Lower Left 2nd Molar",
+    19: "Lower Left 1st Molar",
+    20: "Lower Left 2nd Premolar",
+    21: "Lower Left 1st Premolar",
+    22: "Lower Left Canine",
+    23: "Lower Left Lateral Incisor",
+    24: "Lower Left Central Incisor",
+    25: "Lower Right Central Incisor",
+    26: "Lower Right Lateral Incisor",
+    27: "Lower Right Canine",
+    28: "Lower Right 1st Premolar",
+    29: "Lower Right 2nd Premolar",
+    30: "Lower Right 1st Molar",
+    31: "Lower Right 2nd Molar",
+    32: "Lower Right 3rd Molar (Wisdom)",
+}
+
+
+async def _lock_patient_for_chart_write(
+    db: AsyncSession, patient_id: UUID, current_user: User
+) -> Patient:
+    """Load the patient row under ``SELECT ... FOR UPDATE`` for chart writes.
+
+    CONCURRENCY: the whole dental chart lives in the single ``dental_history``
+    JSON column, so every tooth write is a read-modify-write of the *entire*
+    blob. Without a row lock, two clinicians editing two different teeth at the
+    same time both read the same history, each adds their own tooth, and the
+    second commit silently discards the first one's clinical entry. Locking the
+    row serialises the read-modify-write so edits merge instead of racing.
+
+    ``FOR UPDATE`` is a no-op on SQLite (the dialect omits the clause), which is
+    acceptable: SQLite is dev/test only and is single-writer anyway.
+    """
+    result = await db.execute(
+        select(Patient)
+        .where(
+            Patient.id == patient_id,
+            Patient.practice_id == current_user.practice_id,
+        )
+        .with_for_update()
+    )
+    patient = result.scalar_one_or_none()
+    if not patient:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient not found or access denied",
+        )
+    return patient
+
+
+def _build_default_chart(patient: Patient) -> dict:
+    history = patient.dental_history or {}
+    teeth_dict = history.get("teeth", {}) if isinstance(history, dict) else {}
+    teeth = []
+    for num in range(1, 33):
+        t_data = teeth_dict.get(str(num), {})
+        teeth.append({
+            "number": num,
+            "name": TOOTH_NAMES.get(num, f"Tooth {num}"),
+            "condition": t_data.get("condition", "sound"),
+            "surfaces": t_data.get("surfaces", []),
+            "procedures": t_data.get("procedures", []),
+        })
+    return {
+        "id": f"chart_{patient.id}",
+        "patientId": str(patient.id),
+        "patientName": f"{patient.first_name} {patient.last_name}",
+        "teeth": teeth,
+        "updatedAt": history.get("updated_at", datetime.now(timezone.utc).isoformat()) if isinstance(history, dict) else datetime.now(timezone.utc).isoformat(),
+        "lastUpdated": history.get("updated_at", datetime.now(timezone.utc).isoformat()) if isinstance(history, dict) else datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/{patient_id}/chart")
+async def get_patient_dental_chart(
+    patient_id: UUID,
+    request: Request = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get dental chart for a patient"""
+    patient = await _get_patient_or_404(db, patient_id, current_user)
+    await log_audit_event(db, current_user, "dental_chart_viewed", "dental_chart", patient.id, request)
+    await db.commit()
+    return _build_default_chart(patient)
+
+
+@router.put("/{patient_id}/chart/teeth/{tooth_number}/condition")
+async def update_tooth_condition(
+    patient_id: UUID,
+    tooth_number: int,
+    payload: dict,
+    request: Request = None,
+    current_user: User = Depends(require_role(UserRole.DENTIST, UserRole.HYGIENIST, UserRole.OWNER)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> dict:
+    """Update condition for a specific tooth"""
+    if tooth_number < 1 or tooth_number > 32:
+        raise HTTPException(status_code=400, detail="Tooth number must be between 1 and 32")
+
+    patient = await _lock_patient_for_chart_write(db, patient_id, current_user)
+    history = dict(patient.dental_history or {}) if isinstance(patient.dental_history, dict) else {}
+    teeth = dict(history.get("teeth", {}))
+    tooth = dict(teeth.get(str(tooth_number), {}))
+    tooth["condition"] = payload.get("condition", "sound")
+    if "surfaces" in payload:
+        tooth["surfaces"] = payload["surfaces"]
+    teeth[str(tooth_number)] = tooth
+    history["teeth"] = teeth
+    history["updated_at"] = datetime.now(timezone.utc).isoformat()
+    patient.dental_history = history
+
+    await log_audit_event(
+        db, current_user, "update_tooth_condition", "dental_chart", patient.id, request,
+        {"tooth": tooth_number, "condition": payload.get("condition")}
+    )
+    await db.commit()
+    return _build_default_chart(patient)
+
+
+@router.post("/{patient_id}/chart/teeth/{tooth_number}/procedures")
+async def add_tooth_procedure(
+    patient_id: UUID,
+    tooth_number: int,
+    procedure_data: dict,
+    request: Request = None,
+    current_user: User = Depends(require_role(UserRole.DENTIST, UserRole.HYGIENIST, UserRole.OWNER)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> dict:
+    """Add procedure to a tooth"""
+    if tooth_number < 1 or tooth_number > 32:
+        raise HTTPException(status_code=400, detail="Tooth number must be between 1 and 32")
+
+    from uuid import uuid4
+    patient = await _lock_patient_for_chart_write(db, patient_id, current_user)
+    history = dict(patient.dental_history or {}) if isinstance(patient.dental_history, dict) else {}
+    teeth = dict(history.get("teeth", {}))
+    tooth = dict(teeth.get(str(tooth_number), {}))
+    procedures = list(tooth.get("procedures", []))
+
+    raw_cost = procedure_data.get("cost", 0.0)
+    try:
+        cost_decimal = Decimal(str(raw_cost if raw_cost is not None else 0)).quantize(Decimal("0.01"))
+    except (InvalidOperation, TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid procedure cost",
+        )
+    if cost_decimal < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Procedure cost cannot be negative",
+        )
+
+    new_proc = {
+        "id": str(uuid4()),
+        "code": procedure_data.get("code", "D0150"),
+        "description": procedure_data.get("description", "Procedure"),
+        "surface": procedure_data.get("surface"),
+        # L-3 FIX: persist money as quantized decimal string, not binary
+        # float — float(cost) drifts on re-read (Decimal(str(float))).
+        "cost": str(cost_decimal),
+        "status": procedure_data.get("status", "planned"),
+        "date": procedure_data.get("date", datetime.now(timezone.utc).date().isoformat()),
+        "notes": procedure_data.get("notes"),
+    }
+    procedures.append(new_proc)
+    tooth["procedures"] = procedures
+    teeth[str(tooth_number)] = tooth
+    history["teeth"] = teeth
+    history["updated_at"] = datetime.now(timezone.utc).isoformat()
+    patient.dental_history = history
+
+    await log_audit_event(
+        db, current_user, "add_tooth_procedure", "dental_chart", patient.id, request,
+        {"tooth": tooth_number, "procedure": new_proc}
+    )
+    await db.commit()
+    return new_proc
+
+
+@router.put("/{patient_id}/chart/teeth/{tooth_number}/procedures/{procedure_id}/status")
+async def update_tooth_procedure_status(
+    patient_id: UUID,
+    tooth_number: int,
+    procedure_id: str,
+    status_data: dict,
+    request: Request = None,
+    current_user: User = Depends(require_role(UserRole.DENTIST, UserRole.HYGIENIST, UserRole.OWNER)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> dict:
+    """Update status of a tooth procedure"""
+    patient = await _lock_patient_for_chart_write(db, patient_id, current_user)
+    history = dict(patient.dental_history or {}) if isinstance(patient.dental_history, dict) else {}
+    teeth = dict(history.get("teeth", {}))
+    tooth = dict(teeth.get(str(tooth_number), {}))
+    procedures = list(tooth.get("procedures", []))
+
+    found = False
+    for p in procedures:
+        if p.get("id") == procedure_id:
+            p["status"] = status_data.get("status", "completed")
+            found = True
+            break
+
+    if not found:
+        raise HTTPException(status_code=404, detail="Procedure not found on tooth")
+
+    tooth["procedures"] = procedures
+    teeth[str(tooth_number)] = tooth
+    history["teeth"] = teeth
+    history["updated_at"] = datetime.now(timezone.utc).isoformat()
+    patient.dental_history = history
+
+    await log_audit_event(
+        db, current_user, "update_tooth_procedure_status", "dental_chart", patient.id, request,
+        {"tooth": tooth_number, "procedure_id": procedure_id, "status": status_data.get("status")}
+    )
+    await db.commit()
+    return {"status": "success"}
+
+
+@router.delete("/{patient_id}/chart/teeth/{tooth_number}/procedures/{procedure_id}")
+async def delete_tooth_procedure(
+    patient_id: UUID,
+    tooth_number: int,
+    procedure_id: str,
+    request: Request = None,
+    current_user: User = Depends(require_role(UserRole.DENTIST, UserRole.HYGIENIST, UserRole.OWNER)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> dict:
+    """Delete a tooth procedure"""
+    patient = await _lock_patient_for_chart_write(db, patient_id, current_user)
+    history = dict(patient.dental_history or {}) if isinstance(patient.dental_history, dict) else {}
+    teeth = dict(history.get("teeth", {}))
+    tooth = dict(teeth.get(str(tooth_number), {}))
+    procedures = [p for p in tooth.get("procedures", []) if p.get("id") != procedure_id]
+    tooth["procedures"] = procedures
+    teeth[str(tooth_number)] = tooth
+    history["teeth"] = teeth
+    history["updated_at"] = datetime.now(timezone.utc).isoformat()
+    patient.dental_history = history
+
+    await log_audit_event(
+        db, current_user, "delete_tooth_procedure", "dental_chart", patient.id, request,
+        {"tooth": tooth_number, "procedure_id": procedure_id}
+    )
+    await db.commit()
+    return {"status": "success"}

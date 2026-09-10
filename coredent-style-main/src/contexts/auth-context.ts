@@ -16,9 +16,11 @@ export interface AuthContextValue {
   isAuthenticated: boolean;
   isLoading: boolean;
   role: UserRole | null;
+  mustChangePassword: boolean;
   login: (credentials: LoginCredentials) => Promise<boolean>;
   register: (data: RegisterData) => Promise<boolean>;
   logout: () => Promise<void>;
+  clearMustChangePassword: () => void;
   hasRole: (...roles: UserRole[]) => boolean;
 }
 

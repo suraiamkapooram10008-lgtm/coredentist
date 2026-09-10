@@ -25,6 +25,7 @@ import {
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { staffApi } from '@/services/staffApi';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/auth-context';
 import type { StaffInvitation, InviteStaffRequest } from '@/types/staff';
 import type { UserRole } from '@/types/api';
 
@@ -42,8 +43,20 @@ const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: 'owner', label: 'Practice Owner (Full Access)' },
 ];
 
+/**
+ * Roles the current user is allowed to grant. Only an existing owner may
+ * invite another owner — offering it to admins is the UI half of a tenant
+ * takeover (paired with backend H1).
+ */
+const invitableRoles = (currentUserRole?: UserRole | null): { value: UserRole; label: string }[] => {
+  if (currentUserRole === 'owner') return ROLE_OPTIONS;
+  return ROLE_OPTIONS.filter((option) => option.value !== 'owner');
+};
+
 export function InviteStaffDialog({ open, onOpenChange, onSuccess }: InviteStaffDialogProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const availableRoles = invitableRoles(user?.role);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -62,6 +75,16 @@ export function InviteStaffDialog({ open, onOpenChange, onSuccess }: InviteStaff
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Defense in depth: never send an owner invite unless the current user is
+    // the owner, even if the option somehow got selected.
+    if (role === 'owner' && user?.role !== 'owner') {
+      toast({
+        title: 'Error',
+        description: 'Only the practice owner can grant the owner role.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setIsSubmitting(true);
     try {
       const payload: InviteStaffRequest = { email, firstName, lastName, role };
@@ -156,7 +179,7 @@ export function InviteStaffDialog({ open, onOpenChange, onSuccess }: InviteStaff
                 <SelectValue placeholder="Select system role" />
               </SelectTrigger>
               <SelectContent>
-                {ROLE_OPTIONS.map((opt) => (
+                {availableRoles.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </SelectItem>

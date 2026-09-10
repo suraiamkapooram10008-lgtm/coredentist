@@ -4,7 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import Marketing from "../Marketing";
 
 describe("Marketing Page", () => {
-  it("renders the page heading and new campaign button", () => {
+  it("renders the page heading and a 'Not available' badge", () => {
     render(
       <BrowserRouter>
         <Marketing />
@@ -13,28 +13,37 @@ describe("Marketing Page", () => {
     expect(
       screen.getByRole("heading", { level: 1, name: /marketing/i }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /new campaign/i })).toBeInTheDocument();
+    expect(screen.getByText(/not available/i)).toBeInTheDocument();
   });
 
-  it("renders campaign data in the default tab table", () => {
+  it("honestly states that marketing is not implemented", () => {
     render(
       <BrowserRouter>
         <Marketing />
       </BrowserRouter>,
     );
-    // Default tab is "campaigns"
-    expect(screen.getByText(/spring cleaning special/i)).toBeInTheDocument();
-    expect(screen.getByText(/new patient welcome/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /marketing is not implemented/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/no campaign, subscriber, patient-segment, engagement, or revenue data is available/i),
+    ).toBeInTheDocument();
   });
 
-  it("shows tab navigation", () => {
+  it("lists planned areas as unavailable rather than showing fabricated data", () => {
     render(
       <BrowserRouter>
         <Marketing />
       </BrowserRouter>,
     );
-    expect(screen.getByRole("tab", { name: /campaigns/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /patient segments/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /analytics/i })).toBeInTheDocument();
+    // Planned areas are enumerated as coming features, without fabricated stats.
+    for (const name of ["Campaigns", "Patient segments", "Templates", "Analytics"]) {
+      expect(screen.getByRole("heading", { level: 2, name })).toBeInTheDocument();
+    }
+    // The old fabricated UI is gone.
+    expect(screen.queryByRole("button", { name: /new campaign/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/spring cleaning special/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/new patient welcome/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /campaigns/i })).not.toBeInTheDocument();
   });
 });

@@ -14,9 +14,7 @@ from app.models.insurance import (
     InsuranceCarrier,
     PatientInsurance,
     InsuranceClaim,
-    InsuranceType,
     ClaimStatus,
-    RelationshipToSubscriber,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -80,9 +78,10 @@ class TestInsuranceCarrierCRUD:
         assert data["id"] == str(carrier.id)
         assert data["name"] == "MetLife Dental"
 
-    async def test_update_carrier(self, client: AsyncClient, auth_headers, db_session):
+    async def test_update_carrier(self, client: AsyncClient, auth_headers, db_session, test_practice):
         """Update carrier details."""
         carrier = InsuranceCarrier(
+            practice_id=test_practice.id,
             name="Old Name",
             phone="555-0500",
             payer_id="ON-001",
@@ -101,21 +100,94 @@ class TestInsuranceCarrierCRUD:
         assert data["name"] == "Updated Name"
 
 
+class TestPatientInsuranceCRUD:
+    """Patient policy routes expose only canonical PatientInsurance fields."""
+
+    async def test_policy_lifecycle_and_null_safe_update(
+        self,
+        client: AsyncClient,
+        auth_headers,
+        db_session: AsyncSession,
+        test_patient,
+        test_practice,
+    ):
+        carrier = InsuranceCarrier(
+            practice_id=test_practice.id,
+            name="Policy Carrier",
+            payer_id="POLICY-001",
+            is_active=True,
+        )
+        db_session.add(carrier)
+        await db_session.commit()
+
+        create_response = await client.post(
+            f"/api/v1/insurance/patients/{test_patient.id}/policies",
+            headers=auth_headers,
+            json={
+                "carrier_id": str(carrier.id),
+                "subscriber_id": "SUB-POLICY-001",
+                "relationship_to_subscriber": "self",
+                "is_primary": True,
+                "annual_maximum": "1500.00",
+            },
+        )
+        assert create_response.status_code == 200
+        created = create_response.json()
+        assert created["patient_id"] == str(test_patient.id)
+        assert created["subscriber_id"] == "SUB-POLICY-001"
+        assert created["annual_maximum"] == "1500.00"
+        assert "insurance_type" not in created
+        assert "policy_number" not in created
+
+        policy_id = created["id"]
+        list_response = await client.get(
+            f"/api/v1/insurance/patients/{test_patient.id}/policies",
+            headers=auth_headers,
+        )
+        assert list_response.status_code == 200
+        assert list_response.json()["insurances"][0]["id"] == policy_id
+
+        null_response = await client.put(
+            f"/api/v1/insurance/policies/{policy_id}",
+            headers=auth_headers,
+            json={"subscriber_id": None},
+        )
+        assert null_response.status_code == 422
+
+        update_response = await client.put(
+            f"/api/v1/insurance/policies/{policy_id}",
+            headers=auth_headers,
+            json={"group_number": "GROUP-UPDATED", "is_primary": False},
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["group_number"] == "GROUP-UPDATED"
+        assert update_response.json()["is_primary"] is False
+
+        delete_response = await client.delete(
+            f"/api/v1/insurance/policies/{policy_id}",
+            headers=auth_headers,
+        )
+        assert delete_response.status_code == 200
+        assert delete_response.json() == {
+            "message": "Insurance policy deleted successfully"
+        }
+
+
 class TestInsuranceClaimCRUD:
     """Authenticated insurance claim lifecycle tests."""
 
     async def test_list_claims(self, client: AsyncClient, auth_headers, db_session, test_patient, test_practice):
         """List claims should include practice-scoped claims."""
-        carrier = InsuranceCarrier(name="Claim Carrier", is_active=True)
+        carrier = InsuranceCarrier(name="Claim Carrier", is_active=True, practice_id=test_practice.id)
         db_session.add(carrier)
         await db_session.flush()
 
         policy = PatientInsurance(
             patient_id=test_patient.id,
             carrier_id=carrier.id,
-            insurance_type=InsuranceType.PRIMARY,
+            is_primary=True,
             subscriber_id="SUB-001",
-            relationship_to_subscriber=RelationshipToSubscriber.SELF,
+            relationship_to_subscriber="self",
             is_active=True,
         )
         db_session.add(policy)
@@ -143,16 +215,16 @@ class TestInsuranceClaimCRUD:
 
     async def test_create_claim(self, client: AsyncClient, auth_headers, db_session, test_patient, test_practice):
         """Create an insurance claim via API."""
-        carrier = InsuranceCarrier(name="API Carrier", is_active=True)
+        carrier = InsuranceCarrier(name="API Carrier", is_active=True, practice_id=test_practice.id)
         db_session.add(carrier)
         await db_session.flush()
 
         policy = PatientInsurance(
             patient_id=test_patient.id,
             carrier_id=carrier.id,
-            insurance_type=InsuranceType.PRIMARY,
+            is_primary=True,
             subscriber_id="SUB-API-001",
-            relationship_to_subscriber=RelationshipToSubscriber.SELF,
+            relationship_to_subscriber="self",
             is_active=True,
         )
         db_session.add(policy)
@@ -181,16 +253,16 @@ class TestInsuranceClaimCRUD:
 
     async def test_update_claim(self, client: AsyncClient, auth_headers, db_session, test_patient, test_practice):
         """Update an existing claim."""
-        carrier = InsuranceCarrier(name="Update Carrier", is_active=True)
+        carrier = InsuranceCarrier(name="Update Carrier", is_active=True, practice_id=test_practice.id)
         db_session.add(carrier)
         await db_session.flush()
 
         policy = PatientInsurance(
             patient_id=test_patient.id,
             carrier_id=carrier.id,
-            insurance_type=InsuranceType.PRIMARY,
+            is_primary=True,
             subscriber_id="SUB-UPD-001",
-            relationship_to_subscriber=RelationshipToSubscriber.SELF,
+            relationship_to_subscriber="self",
             is_active=True,
         )
         db_session.add(policy)
@@ -247,6 +319,7 @@ class TestInsuranceClaimSubmission:
         from app.api.v1.endpoints.insurance import httpx, settings
 
         carrier = InsuranceCarrier(
+            practice_id=test_practice.id,
             name="EDI Confirmed Carrier",
             payer_id="PAYER-001",
             edi_enabled=True,
@@ -257,9 +330,9 @@ class TestInsuranceClaimSubmission:
         policy = PatientInsurance(
             patient_id=test_patient.id,
             carrier_id=carrier.id,
-            insurance_type=InsuranceType.PRIMARY,
+            is_primary=True,
             subscriber_id="SUB-CONFIRM-001",
-            relationship_to_subscriber=RelationshipToSubscriber.SELF,
+            relationship_to_subscriber="self",
             is_active=True,
         )
         db_session.add(policy)

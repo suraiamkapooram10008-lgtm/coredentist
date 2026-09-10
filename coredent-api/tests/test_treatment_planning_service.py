@@ -2,7 +2,6 @@
 import pytest
 from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import date
 
 from app.services.treatment_planning import TreatmentPlanningService
 from app.services.treatment_service import TreatmentService
@@ -183,6 +182,8 @@ class TestTreatmentService:
     async def test_create_treatment_plan(self):
         mock_db = AsyncMock()
         mock_db.add = MagicMock()
+        mock_db.execute.return_value = MagicMock()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
         plan = MagicMock(id=uuid4())
 
         with patch("app.services.treatment_service.TreatmentPlan", return_value=plan):
@@ -208,17 +209,72 @@ class TestTreatmentService:
         plan = MagicMock()
         plan.presented_date = None
         plan.accepted_date = None
+        plan.status = TreatmentPlanStatus.DRAFT
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = plan
 
         mock_db = AsyncMock()
         mock_db.execute.return_value = mock_result
 
+        practice_id = uuid4()
         result = await TreatmentService.update_treatment_plan(
-            mock_db, uuid4(), status=TreatmentPlanStatus.PRESENTED
+            mock_db, uuid4(), practice_id, status=TreatmentPlanStatus.PRESENTED
         )
         assert result is plan
         assert plan.presented_date is not None
+
+    async def test_update_treatment_plan_rejects_invalid_transition(self):
+        """M-11: a terminal plan cannot be reopened."""
+        plan = MagicMock()
+        plan.status = TreatmentPlanStatus.COMPLETED
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = plan
+
+        mock_db = AsyncMock()
+        mock_db.execute.return_value = mock_result
+
+        with pytest.raises(ValueError, match="Cannot change treatment plan status"):
+            await TreatmentService.update_treatment_plan(
+                mock_db, uuid4(), uuid4(), status=TreatmentPlanStatus.IN_PROGRESS
+            )
+
+    async def test_update_treatment_plan_ignores_identity_fields(self):
+        """M-11: patient_id is not client-writable through the generic update.
+
+        practice_id cannot even be passed: it is a required positional
+        parameter, so the signature itself prevents a caller from smuggling a
+        different tenant in through **kwargs.
+        """
+        plan = MagicMock()
+        plan.status = TreatmentPlanStatus.DRAFT
+        original_practice = uuid4()
+        original_patient = uuid4()
+        plan.practice_id = original_practice
+        plan.patient_id = original_patient
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = plan
+
+        mock_db = AsyncMock()
+        mock_db.execute.return_value = mock_result
+
+        await TreatmentService.update_treatment_plan(
+            mock_db,
+            uuid4(),
+            original_practice,
+            patient_id=uuid4(),
+            plan_name="New name",
+        )
+        assert plan.patient_id == original_patient
+        assert plan.practice_id == original_practice
+        assert plan.plan_name == "New name"
+
+        with pytest.raises(TypeError):
+            await TreatmentService.update_treatment_plan(
+                mock_db,
+                uuid4(),
+                original_practice,
+                practice_id=uuid4(),
+            )
 
     async def test_list_treatment_plans_filters(self):
         p1 = MagicMock()

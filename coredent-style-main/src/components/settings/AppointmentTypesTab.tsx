@@ -8,6 +8,7 @@ import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -236,6 +237,9 @@ export function AppointmentTypesTab({ appointmentTypes, onUpdate }: AppointmentT
               <DialogTitle className="text-xl font-black text-slate-800 tracking-tight">
                 {editingType ? 'Edit Appointment Type' : 'Add Appointment Type'}
               </DialogTitle>
+              <DialogDescription className="text-xs font-medium text-slate-400">
+                Configure the appointment name, duration, booking visibility, and calendar color.
+              </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleFormSubmit} className="space-y-4 py-3">
               <div className="space-y-2">

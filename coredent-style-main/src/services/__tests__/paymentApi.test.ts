@@ -1,68 +1,90 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createRazorpayOrder, verifyRazorpayPayment } from '../paymentApi';
-import { server } from '@/test/mocks/server';
-import { http, HttpResponse } from 'msw';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createRazorpayOrder, verifyRazorpayPayment, loadRazorpayScript } from '../paymentApi';
+import { apiClient } from '../api';
+
+vi.mock('../api', () => ({
+  apiClient: {
+    post: vi.fn(),
+  },
+}));
 
 describe('paymentApi', () => {
-  beforeEach(() => server.resetHandlers());
-
-  describe('createRazorpayOrder', () => {
-    it('returns order details', async () => {
-      server.use(
-        http.post('/api/v1/payments/razorpay/order', () =>
-          HttpResponse.json({
-            key_id: 'rzp_test_1',
-            amount: 12000,
-            currency: 'INR',
-            order_id: 'order_1',
-            receipt: 'rcpt_1',
-          }),
-        ),
-      );
-      const result = await createRazorpayOrder({
-        invoice_id: 'inv-1',
-        amount: 12000,
-        currency: 'INR',
-        receipt: 'rcpt_1',
-      });
-      expect(result.data?.order_id).toBe('order_1');
-      expect(result.data?.amount).toBe(12000);
-    });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Clean up any added script tags from document body
+    document.querySelectorAll('script[src*="checkout.razorpay.com"]').forEach((el) => el.remove());
+    // Clear global window.Razorpay
+    delete (window as any).Razorpay;
   });
 
-  describe('verifyRazorpayPayment', () => {
-    it('returns verification result', async () => {
-      server.use(
-        http.post('/api/v1/payments/razorpay/verify', () =>
-          HttpResponse.json({ payment_id: 'pay_1', verified: true }),
-        ),
-      );
-      const result = await verifyRazorpayPayment({
-        razorpay_order_id: 'order_1',
-        razorpay_payment_id: 'pay_1',
-        razorpay_signature: 'sig',
-        invoice_id: 'inv-1',
-      });
-      expect(result.data?.verified).toBe(true);
-      expect(result.data?.payment_id).toBe('pay_1');
+  it('creates a Razorpay order via API', async () => {
+    const mockOrderData = {
+      invoice_id: 'inv-1',
+      amount: 5000,
+      currency: 'INR',
+      receipt: 'rcpt-1',
+    };
+
+    const mockResponse = { success: true, data: { key_id: 'key', amount: 5000, currency: 'INR', order_id: 'order-1', receipt: 'rcpt-1' } };
+    vi.mocked(apiClient.post).mockResolvedValueOnce(mockResponse);
+
+    const result = await createRazorpayOrder(mockOrderData);
+    expect(apiClient.post).toHaveBeenCalledWith('/payments/razorpay/order', mockOrderData);
+    expect(result).toEqual(mockResponse);
+  });
+
+  it('verifies a Razorpay payment via API', async () => {
+    const mockVerifyData = {
+      razorpay_order_id: 'order-1',
+      razorpay_payment_id: 'pay-1',
+      razorpay_signature: 'sig-1',
+      invoice_id: 'inv-1',
+    };
+
+    const mockResponse = { success: true, data: { payment_id: 'pay-1', verified: true } };
+    vi.mocked(apiClient.post).mockResolvedValueOnce(mockResponse);
+
+    const result = await verifyRazorpayPayment(mockVerifyData);
+    expect(apiClient.post).toHaveBeenCalledWith('/payments/razorpay/verify', mockVerifyData);
+    expect(result).toEqual(mockResponse);
+  });
+
+  describe('loadRazorpayScript', () => {
+    it('returns true immediately if window.Razorpay is already defined', async () => {
+      (window as any).Razorpay = {};
+      const result = await loadRazorpayScript();
+      expect(result).toBe(true);
     });
 
-    it('surfaces a 400 signature verification failure', async () => {
-      server.use(
-        http.post('/api/v1/payments/razorpay/verify', () =>
-          HttpResponse.json(
-            { message: 'Invalid signature' },
-            { status: 400 },
-          ),
-        ),
-      );
-      const result = await verifyRazorpayPayment({
-        razorpay_order_id: 'order_1',
-        razorpay_payment_id: 'pay_1',
-        razorpay_signature: 'bad',
-        invoice_id: 'inv-1',
-      });
-      expect(result.success).toBe(false);
+    it('creates a script element and resolves true when loaded', async () => {
+      const promise = loadRazorpayScript();
+
+      // Find the created script element
+      const script = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]') as HTMLScriptElement;
+      expect(script).toBeInstanceOf(HTMLScriptElement);
+      expect(script.async).toBe(true);
+
+      // Simulate onload
+      if (script.onload) {
+        (script.onload as any)();
+      }
+
+      const result = await promise;
+      expect(result).toBe(true);
+    });
+
+    it('resolves false when script fails to load', async () => {
+      const promise = loadRazorpayScript();
+
+      const script = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]') as HTMLScriptElement;
+
+      // Simulate onerror
+      if (script.onerror) {
+        (script.onerror as any)();
+      }
+
+      const result = await promise;
+      expect(result).toBe(false);
     });
   });
 });

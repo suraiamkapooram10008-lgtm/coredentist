@@ -2,7 +2,6 @@
 import pytest
 from sqlalchemy import select
 
-pytestmark = pytest.mark.asyncio
 
 
 class TestAuditLogging:
@@ -13,6 +12,29 @@ class TestAuditLogging:
         )
         logs = result.scalars().all()
         assert isinstance(logs, list)
+
+    async def test_audit_log_write_once(self, db_session):
+        from app.models.audit import AuditLog
+        # Create a log entry
+        log = AuditLog(action="test_action", entity_type="patient")
+        db_session.add(log)
+        await db_session.commit()
+
+        # Attempt update
+        log.action = "updated_action"
+        with pytest.raises(RuntimeError, match="Audit logs are write-once"):
+            await db_session.commit()
+
+        # Rollback the failed transaction
+        await db_session.rollback()
+
+        # Attempt delete
+        await db_session.delete(log)
+        with pytest.raises(RuntimeError, match="Audit logs are write-once"):
+            await db_session.commit()
+
+        # Rollback
+        await db_session.rollback()
 
 
 class TestSessionModel:

@@ -2,44 +2,43 @@
 Test configuration and fixtures for CoreDent API tests
 """
 import os
-import sys
+from pathlib import Path
 from cryptography.fernet import Fernet
 
 # Generate valid Fernet key for testing
 test_encryption_key = Fernet.generate_key().decode()
 
 # Set required env vars BEFORE importing app (must use direct assignment, not setdefault)
-test_database_url = os.getenv("TEST_DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+test_database_path = Path(__file__).resolve().parents[1] / f".test-db-{os.getpid()}.sqlite"
+test_database_url = os.getenv(
+    "TEST_DATABASE_URL", f"sqlite+aiosqlite:///{test_database_path.as_posix()}"
+)
 os.environ["DATABASE_URL"] = test_database_url
 os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only-12345"
 os.environ["ENCRYPTION_KEY"] = test_encryption_key
 os.environ["DEBUG"] = "True"
 os.environ["ENVIRONMENT"] = "test"
 
-import pytest
-import asyncio
-import datetime
-import uuid as uuid_lib
-from typing import AsyncGenerator, Generator
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.orm import configure_mappers
+import pytest  # noqa: E402
+import datetime  # noqa: E402
+import uuid as uuid_lib  # noqa: E402
+from typing import AsyncGenerator  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
+from sqlalchemy.orm import configure_mappers  # noqa: E402
 
 # Import all models to ensure they're registered with SQLAlchemy
-from app.core.database import Base
-from app.core.config_simple import settings
-from app.core.security import get_password_hash
-from app.main import app as fastapi_app
-from app.api.deps import get_db, verify_csrf, verify_csrf_no_auth
+import app.models  # noqa: E402,F401
+from app.core.base import Base  # noqa: E402
+from app.core.security import get_password_hash  # noqa: E402
+from app.main import app as fastapi_app  # noqa: E402
+from app.api.deps import get_db  # noqa: E402
 
-# Import all models to register them with SQLAlchemy
-import app.models
-from app.models.practice import Practice, PracticeGroup
-from app.models.user import User
-from app.models.patient import Patient
-from app.models.appointment import Appointment
-from app.models.referral import Referral, ReferralSource1
+from app.models.practice import Practice  # noqa: E402
+from app.models.user import User  # noqa: E402
+from app.models.patient import Patient  # noqa: E402
+from app.models.appointment import Appointment  # noqa: E402
 
 # Configure all mappers before creating tables
 configure_mappers()
@@ -77,33 +76,53 @@ async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
 fastapi_app.dependency_overrides[get_db] = override_get_db
 
 
-# Bypass CSRF verification in tests. The httpx AsyncClient does not manage
-# CSRF cookies, and the production CSRF flow is covered by dedicated tests
-# in test_security.py. Production behavior is unchanged.
-async def _bypass_csrf() -> bool:
-    return True
+@pytest.fixture(scope="session", autouse=True)
+def migrate_test_database():
+    """Build the default test schema through Alembic, not only create_all.
+
+    A per-process file-backed SQLite database lets Alembic's synchronous
+    migration runner and the async test engine share the same schema. Callers
+    that explicitly provide TEST_DATABASE_URL retain their own database setup.
+    """
+    if test_database_url == os.getenv("TEST_DATABASE_URL"):
+        yield
+        return
+
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    sync_url = test_database_url.replace("+aiosqlite", "")
+    config.set_main_option("sqlalchemy.url", sync_url)
+    command.upgrade(config, "head")
+    yield
 
 
-fastapi_app.dependency_overrides[verify_csrf] = _bypass_csrf
-fastapi_app.dependency_overrides[verify_csrf_no_auth] = _bypass_csrf
+@pytest.fixture(scope="session", autouse=True)
+async def create_test_schema(migrate_test_database):
+    """Create any test/legacy model tables once per test process.
 
-
-# Disable slowapi rate limiting in tests. Each test fixture performs a
-# login, and @limiter.limit("5/minute") on /auth/login otherwise rejects
-# the 6th login in the suite with HTTP 429 (surfacing as 401 downstream).
-# Production limits are unaffected.
-from app.core.limiter import limiter as _limiter
-
-_limiter.enabled = False
+    Alembic is the schema authority and already produced the baseline above;
+    ``create_all`` is retained only as an additive compatibility step for
+    legacy test models not yet represented by a migration. Because it is
+    idempotent and expensive, it runs exactly once per test process rather
+    than once per test function.
+    """
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
 @pytest.fixture(scope="function")
-async def setup_database():
-    """Create database tables before tests"""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+async def setup_database(create_test_schema):
+    """Reset data between tests without rebuilding the schema.
+
+    The migrated schema plus any additive test tables are created once by the
+    session-scoped ``create_test_schema`` fixture. Here we only truncate the
+    tables at teardown to isolate each test, which is far cheaper than running
+    ``create_all`` per test.
+    """
     yield
-    # Don't drop tables - just truncate for speed
+    # Don't drop tables - truncate for speed while retaining the migrated schema.
     async with TestingSessionLocal() as session:
         for table in reversed(Base.metadata.sorted_tables):
             await session.execute(table.delete())
@@ -126,7 +145,10 @@ async def client(setup_database) -> AsyncGenerator[AsyncClient, None]:
     with a trailing slash by requesting /path (FastAPI otherwise returns
     307 and httpx doesn't follow redirects by default).
     """
-    transport = ASGITransport(app=fastapi_app)
+    transport = ASGITransport(
+        app=fastapi_app,
+        client=(f"test-{uuid_lib.uuid4().hex}", 0),
+    )
     async with AsyncClient(
         transport=transport, base_url="http://test", follow_redirects=True
     ) as ac:
@@ -146,6 +168,7 @@ async def test_practice(db_session: AsyncSession) -> Practice:
     practice = Practice(
         id=uuid_lib.uuid4(),
         name="Test Practice",
+        public_slug=f"test-practice-{uuid_lib.uuid4().hex[:6]}",
         email="test@practice.com",
         phone="555-0100",
         address_street="123 Test St",
@@ -226,6 +249,8 @@ async def test_appointment(
     test_user: User
 ) -> Appointment:
     """Create test appointment"""
+    start_time = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
+    end_time = start_time + datetime.timedelta(hours=1)
     appointment = Appointment(
         id=uuid_lib.uuid4(),
         practice_id=test_practice.id,
@@ -233,8 +258,8 @@ async def test_appointment(
         provider_id=test_user.id,
         appointment_type="cleaning",
         status="scheduled",
-        start_time=datetime.datetime(2026, 3, 17, 10, 0, 0),
-        end_time=datetime.datetime(2026, 3, 17, 11, 0, 0),
+        start_time=start_time,
+        end_time=end_time,
         duration=60,
         notes="Regular cleaning appointment",
     )
@@ -252,11 +277,15 @@ async def auth_headers(client: AsyncClient, test_user: User) -> dict:
         "password": "testpassword123"
     }
     response = await client.post("/api/v1/auth/login", json=login_data)
-    if response.status_code != 200:
-        # If login fails, return a dummy token for tests that don't require valid auth
-        return {"Authorization": "Bearer dummy-token"}
+    assert response.status_code == 200, f"Login failed for {test_user.email}: {response.text}"
     token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+    csrf_response = await client.get("/api/v1/auth/csrf")
+    assert csrf_response.status_code == 200, csrf_response.text
+    csrf_token = csrf_response.json()["csrf_token"]
+    return {
+        "Authorization": f"Bearer {token}",
+        "X-CSRF-Token": csrf_token,
+    }
 
 
 @pytest.fixture
@@ -265,6 +294,7 @@ async def other_practice(db_session: AsyncSession) -> Practice:
     practice = Practice(
         id=uuid_lib.uuid4(),
         name="Other Practice",
+        public_slug=f"other-practice-{uuid_lib.uuid4().hex[:6]}",
         email="other@practice.com",
         phone="555-0200",
         address_street="456 Other St",
@@ -362,10 +392,15 @@ async def other_auth_headers(client: AsyncClient, other_user: User) -> dict:
         "password": "otherpassword123"
     }
     response = await client.post("/api/v1/auth/login", json=login_data)
-    if response.status_code != 200:
-        return {"Authorization": "Bearer dummy-token"}
+    assert response.status_code == 200, f"Login failed for {other_user.email}: {response.text}"
     token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+    csrf_response = await client.get("/api/v1/auth/csrf")
+    assert csrf_response.status_code == 200, csrf_response.text
+    csrf_token = csrf_response.json()["csrf_token"]
+    return {
+        "Authorization": f"Bearer {token}",
+        "X-CSRF-Token": csrf_token,
+    }
 
 
 @pytest.fixture

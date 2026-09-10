@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
+import { formatCurrency as formatCurrencyUtil } from '@/lib/utils';
 import {
   useSubscriptionPlans,
   useSubscriptions,
@@ -43,9 +44,11 @@ import {
 
 // ==================== Utility Functions ====================
 
+// Platform (CoreDent) subscription pricing is always billed in USD; route
+// through the shared money-formatting util so currency stays a parameter.
 const formatCurrency = (amount: number | string) => {
   const num = typeof amount === 'string' ? parseFloat(amount) : amount;
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
+  return formatCurrencyUtil(num, 'USD');
 };
 
 const formatInterval = (interval: string) => {

@@ -1,6 +1,5 @@
 """Tests for clinical endpoints"""
 import pytest
-import uuid
 pytestmark = pytest.mark.asyncio
 
 class TestPerioChart:

@@ -50,11 +50,11 @@ describe("operational API services", () => {
     expect(mockedGet).not.toHaveBeenCalled();
   });
 
-  it("does not report zero insurance activity when summary loading fails", async () => {
+  it("does not report an empty claims page when insurance loading fails", async () => {
     mockedGet.mockResolvedValue({ success: false });
 
-    await expect(insuranceApi.getSummary()).rejects.toThrow(
-      "Failed to load insurance summary",
+    await expect(insuranceApi.getClaims()).rejects.toThrow(
+      "Failed to load insurance claims",
     );
   });
 

@@ -1,0 +1,21 @@
+--- alembic stdout ---
+
+--- alembic stderr ---
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> bb372b5f2d4a, baseline_schema
+INFO  [alembic.runtime.migration] Running upgrade bb372b5f2d4a -> c4a1f9e2b007, audit_logs.entity_id nullable
+INFO  [alembic.runtime.migration] Running upgrade c4a1f9e2b007 -> 68d3f2d3ac00, add_audit_log_write_once_trigger
+INFO  [alembic.runtime.migration] Running upgrade 68d3f2d3ac00 -> 7f3c8a1d2e4b, add patient encrypted-field search indexes
+INFO  [alembic.runtime.migration] Running upgrade 7f3c8a1d2e4b -> a3c4e5f60718, add clinical-note SOAP columns and note-type enum members
+INFO  [alembic.runtime.migration] Running upgrade a3c4e5f60718 -> b7d2e9c1a410, email verification expiry + enforcement grandfathering
+INFO  [alembic.runtime.migration] Running upgrade b7d2e9c1a410 -> c8f1a6d3b527, billing ledger hardening: invoice tax_rate, payment refunds, unique txn
+INFO  [alembic.runtime.migration] Running upgrade c8f1a6d3b527 -> d9a3b7e2c618, unique per-practice patient contact indexes (dedup race guard)
+INFO  [alembic.runtime.migration] Running upgrade d9a3b7e2c618 -> e1b4c8d5a926, staff onboarding: must_change_password flag + staff_invitations table
+INFO  [alembic.runtime.migration] Running upgrade e1b4c8d5a926 -> f2c5d7e8b930, tenant scoped unique constraints and carrier/referral fields
+INFO  [alembic.runtime.migration] Running upgrade f2c5d7e8b930 -> abcd1234aa01, referral_sources soft-delete columns
+INFO  [alembic.runtime.migration] Running upgrade abcd1234aa01 -> b8e4f6a2c9d7, reminder uniqueness + image share expiry
+INFO  [alembic.runtime.migration] Running upgrade b8e4f6a2c9d7 -> c7d8e9f0a1b2, schema sync: additive drift repair (models vs migrated DB)
+INFO  [alembic.runtime.migration] Running upgrade c7d8e9f0a1b2 -> d9e0f1a2b3c4, index coverage: add missing FK indexes
+
+returncode = 4294967295

@@ -5,6 +5,11 @@ import { BrowserRouter } from "react-router-dom";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import Patients from "../patients/PatientList";
 
+// The list reads the practice country (for the create dialog) from auth
+vi.mock("@/contexts/auth-context", () => ({
+  useAuth: () => ({ user: null }),
+}));
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: false },

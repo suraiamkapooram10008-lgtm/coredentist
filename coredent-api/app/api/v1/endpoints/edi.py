@@ -3,23 +3,30 @@ Insurance EDI Endpoints
 DentalXChange integration for eligibility and claims
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from uuid import UUID
-from datetime import datetime, timedelta, timezone
-import requests
+import asyncio
+import hashlib
 import json
+import logging
+import requests
 import secrets
 import string
+from datetime import date, datetime, timezone
+from typing import Any, Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.config_simple import settings
-from app.models.user import User
-from app.models.insurance import PatientInsurance, InsuranceClaim, ClaimStatus
+from app.models.user import User, UserRole
+from app.models.insurance import InsuranceClaim, ClaimStatus
 from app.models.patient import Patient
 from app.core.audit import log_audit_event
-from app.api.deps import get_current_user, verify_csrf
+from app.api.deps import require_role, verify_csrf
+from app.services.tenant_refs import require_patient_insurance
 from app.schemas.edi import (
     EligibilityCheckRequest,
     EligibilityCheckResponse,
@@ -27,6 +34,8 @@ from app.schemas.edi import (
     ClaimSubmitResponse,
     ClaimStatusResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -44,11 +53,90 @@ def _get_dxc_headers() -> dict:
     }
 
 
+def _response_fingerprint(body: Optional[str]) -> str:
+    """Stable, non-reversible identifier for a clearinghouse response body.
+
+    M-22: clearinghouse rejections echo subscriber ids, names and dates of
+    birth. Logging the body puts PHI in application logs, outside the
+    centralized redaction in ``app.main``. A digest still lets us correlate
+    with the clearinghouse's own records and spot repeated identical
+    rejections, without carrying the content.
+    """
+    if not body:
+        return "empty"
+    return hashlib.sha256(body.encode("utf-8", errors="replace")).hexdigest()[:32]
+
+
+def _derive_claim_idempotency_key(
+    *,
+    patient_id: UUID,
+    patient_insurance_id: UUID,
+    service_date: date,
+    procedures: list[dict[str, Any]],
+    total_amount: float,
+) -> str:
+    """Content-addressed idempotency key for one logical claim submission.
+
+    H-03: two requests describing the same claim must collapse to one external
+    submission, and two genuinely different claims for the same patient on the
+    same day must not collide. Hashing the identifying content gives both,
+    unlike the old "any claim for this patient in the last five minutes" rule.
+    """
+    canonical = json.dumps(
+        {
+            "patient_id": str(patient_id),
+            "patient_insurance_id": str(patient_insurance_id),
+            "service_date": service_date.isoformat(),
+            "total_amount": f"{float(total_amount):.2f}",
+            "procedures": sorted(
+                (
+                    str(p.get("procedureCode") or ""),
+                    str(p.get("tooth") or ""),
+                    str(p.get("surface") or ""),
+                    f"{float(p.get('fee') or 0):.2f}",
+                    str(p.get("dateOfService") or ""),
+                )
+                for p in procedures
+            ),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "auto_" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _claim_replay_response(claim: InsuranceClaim) -> ClaimSubmitResponse:
+    """Response for a repeated submission of an already-reserved claim."""
+    if claim.status == ClaimStatus.SUBMITTING:
+        message = (
+            "This claim is already being submitted. Its outcome with the "
+            "clearinghouse is not yet confirmed; no duplicate was created."
+        )
+    elif claim.status == ClaimStatus.SUBMISSION_FAILED:
+        message = (
+            "This claim was already attempted and rejected by the "
+            "clearinghouse. Correct the claim details to submit a new one."
+        )
+    else:
+        message = "This claim was already submitted; returning the existing claim."
+    return ClaimSubmitResponse(
+        claim_id=str(claim.id),
+        external_claim_id=(
+            claim.claim_number
+            if claim.status == ClaimStatus.SUBMITTED
+            else claim.confirmation_number or ""
+        ),
+        status=claim.status.value if claim.status else "unknown",
+        message=message,
+        submitted_at=claim.submission_date.isoformat() if claim.submission_date else "",
+    )
+
+
 @router.post("/eligibility/check", response_model=EligibilityCheckResponse)
 async def check_eligibility(
     request: Request,
     eligibility_data: EligibilityCheckRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> EligibilityCheckResponse:
@@ -66,20 +154,16 @@ async def check_eligibility(
             detail="Insurance verification service not configured",
         )
 
-    # Verify patient insurance exists
-    result = await db.execute(
-        select(PatientInsurance).where(
-            PatientInsurance.id == eligibility_data.patient_insurance_id,
-            PatientInsurance.patient_id == eligibility_data.patient_id,
-        )
+    # H-02 FIX: prove the policy belongs to this patient AND that the patient
+    # is in the caller's practice, in one predicate. The old query checked the
+    # policy/patient pairing but never the practice, relying on a separate
+    # patient lookup below to catch tenant crossing.
+    insurance = await require_patient_insurance(
+        db,
+        eligibility_data.patient_insurance_id,
+        current_user.practice_id,
+        patient_id=eligibility_data.patient_id,
     )
-    insurance = result.scalar_one_or_none()
-
-    if not insurance:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Patient insurance not found",
-        )
 
     # Get patient details
     result = await db.execute(
@@ -96,11 +180,20 @@ async def check_eligibility(
             detail="Patient not found",
         )
 
+    # SECURITY: A clearinghouse submission without a real provider NPI would
+    # send a fabricated identifier into a PHI-bearing request. Fail loudly
+    # instead of silently defaulting.
+    if not current_user.npi:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The submitting provider has no NPI on file. Add the provider's NPI before checking eligibility.",
+        )
+
     # Build eligibility request payload
     payload = {
         "payerId": insurance.payer_id,
         "subscriberId": insurance.subscriber_id,
-        "providerNpi": current_user.npi or "1234567890",
+        "providerNpi": current_user.npi,
         "serviceDate": eligibility_data.service_date.isoformat() if eligibility_data.service_date else "",
         "serviceTypeCodes": ["30"],  # Health benefit plan coverage
         "patient": {
@@ -112,7 +205,8 @@ async def check_eligibility(
     }
 
     try:
-        response = requests.post(
+        response = await asyncio.to_thread(
+            requests.post,
             f"{settings.DXC_BASE_URL}/eligibility",
             json=payload,
             headers=_get_dxc_headers(),
@@ -121,7 +215,7 @@ async def check_eligibility(
 
         if response.status_code == 200:
             data = response.json()
-            return EligibilityCheckResponse(
+            eligibility_response = EligibilityCheckResponse(
                 eligible=data.get("eligible", False),
                 coverage_status=data.get("coverageStatus", "Unknown"),
                 plan_name=data.get("planName", ""),
@@ -136,34 +230,58 @@ async def check_eligibility(
                 message=data.get("message", ""),
             )
         else:
+            # M-22 FIX: do not log the clearinghouse response body. A 271
+            # eligibility response carries subscriber names, dates of birth and
+            # plan identifiers; logging it puts PHI outside the centralized
+            # redaction path. Log a digest instead.
+            logger.warning(
+                "Eligibility check rejected by clearinghouse: status=%s body_sha256=%s len=%d",
+                response.status_code,
+                _response_fingerprint(response.text),
+                len(response.text or ""),
+            )
+            await log_audit_event(
+                db,
+                current_user,
+                "check_eligibility_rejected",
+                "patient",
+                patient.id,
+                request,
+                {"status_code": response.status_code},
+            )
+            await db.commit()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Eligibility check failed: {response.text}",
+                detail="Eligibility check was rejected by the insurance clearinghouse.",
             )
 
     except requests.RequestException as e:
-        # HIPAA: Log failed eligibility check (still an access attempt)
+        # HIPAA: Log failed eligibility check (still an access attempt).
+        # M-22: record the exception type, not str(e) — request exceptions
+        # embed the full URL and can embed response fragments.
         await log_audit_event(
-            db, current_user, "check_eligibility_failed", "patient", patient.id, request, {"error": str(e)}
+            db, current_user, "check_eligibility_failed", "patient", patient.id, request,
+            {"error_type": type(e).__name__},
         )
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Unable to verify eligibility: {str(e)}",
+            detail="Unable to reach the insurance verification service. Please retry.",
         )
 
-    # HIPAA: Log successful eligibility check
+    # HIPAA: Persist the successful PHI access audit before returning.
     await log_audit_event(
         db, current_user, "check_eligibility_success", "patient", patient.id, request
     )
     await db.commit()
+    return eligibility_response
 
 
 @router.post("/claims/submit", response_model=ClaimSubmitResponse)
 async def submit_claim(
     request: Request,
     claim_data: ClaimSubmitRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> ClaimSubmitResponse:
@@ -180,38 +298,16 @@ async def submit_claim(
             detail="Claims submission service not configured",
         )
 
-    # Expert Hardening: Strictly verify insurance ownership to prevent 'Pivot ID Injection'
-    result = await db.execute(
-        select(PatientInsurance).join(Patient).where(
-            PatientInsurance.id == claim_data.patient_insurance_id,
-            Patient.practice_id == current_user.practice_id,
-        )
+    # H-02 FIX: the insurance policy must belong to *this* patient, not merely
+    # to some patient in this practice. Without the patient match, a caller
+    # could pair patient A with patient B's subscriber id and payer, sending
+    # one patient's claim under another's policy.
+    insurance = await require_patient_insurance(
+        db,
+        claim_data.patient_insurance_id,
+        current_user.practice_id,
+        patient_id=claim_data.patient_id,
     )
-    insurance = result.scalar_one_or_none()
-
-    if not insurance:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Valid patient insurance not found for your practice",
-        )
-
-    # Expert Hardening: Anti-Fraud Idempotency (Prevent Duplicate Submission)
-    # Check if we submitted this exact procedure list for this patient in last 5 mins
-    idempotency_window = datetime.now(timezone.utc) - timedelta(minutes=5)
-    result = await db.execute(
-        select(InsuranceClaim).where(
-            InsuranceClaim.patient_id == claim_data.patient_id,
-            InsuranceClaim.practice_id == current_user.practice_id,
-            InsuranceClaim.created_at >= idempotency_window,
-        )
-    )
-    recent_claims = result.scalars().all()
-    # (Simplified procedure check: just check for ANY claim for this patient in last 5 min)
-    if recent_claims:
-         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A claim for this patient was recently submitted. Please wait 5 minutes to prevent duplicate billing."
-        )
 
     # Get patient
     result = await db.execute(
@@ -239,6 +335,88 @@ async def submit_claim(
             "dateOfService": proc.date_of_service.isoformat(),
         })
 
+    # SECURITY: Refuse to fabricate an NPI for a real claim. A claim carrying
+    # a placeholder NPI would be rejected (or worse, misattributed) by the
+    # payer.
+    if not current_user.npi:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The submitting provider has no NPI on file. Add the provider's NPI before submitting claims.",
+        )
+
+    # H-03 FIX: durable idempotency. The old guard rejected *any* claim for the
+    # patient within five minutes, which blocked legitimate second claims and
+    # still allowed duplicates after the window. We now derive (or accept) a
+    # stable key and reserve the claim row locally BEFORE calling the
+    # clearinghouse, committing that reservation. A retry then finds the
+    # reservation instead of submitting to the payer a second time.
+    idempotency_key = claim_data.idempotency_key or _derive_claim_idempotency_key(
+        patient_id=claim_data.patient_id,
+        patient_insurance_id=claim_data.patient_insurance_id,
+        service_date=claim_data.service_date,
+        procedures=procedures,
+        total_amount=claim_data.total_amount,
+    )
+
+    existing = (
+        await db.execute(
+            select(InsuranceClaim).where(
+                InsuranceClaim.practice_id == current_user.practice_id,
+                InsuranceClaim.submission_idempotency_key == idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing is not None:
+        return _claim_replay_response(existing)
+
+    # Phase 1: reserve the claim locally and COMMIT before any external call.
+    claim = InsuranceClaim(
+        practice_id=current_user.practice_id,
+        patient_id=patient.id,
+        patient_insurance_id=insurance.id,
+        carrier_id=insurance.carrier_id,
+        claim_number=f"PENDING-{generate_confirmation_code()}",
+        status=ClaimStatus.SUBMITTING,
+        billed_amount=claim_data.total_amount,
+        service_date=claim_data.service_date,
+        diagnosis_codes=json.dumps(claim_data.diagnosis_codes) if claim_data.diagnosis_codes else "[]",
+        procedure_codes=json.dumps(procedures),
+        submission_idempotency_key=idempotency_key,
+        submission_attempts=1,
+    )
+    db.add(claim)
+    try:
+        await db.flush()
+        await log_audit_event(
+            db,
+            current_user,
+            "submit_claim_reserved",
+            "insurance_claim",
+            claim.id,
+            request,
+        )
+        await db.commit()
+    except IntegrityError:
+        # Concurrent request reserved the same key first.
+        await db.rollback()
+        winner = (
+            await db.execute(
+                select(InsuranceClaim).where(
+                    InsuranceClaim.practice_id == current_user.practice_id,
+                    InsuranceClaim.submission_idempotency_key == idempotency_key,
+                )
+            )
+        ).scalar_one_or_none()
+        if winner is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Claim submission conflicted; please retry.",
+            )
+        return _claim_replay_response(winner)
+
+    await db.refresh(claim)
+
     payload = {
         "claim": {
             "patientFirstName": patient.first_name,
@@ -246,17 +424,20 @@ async def submit_claim(
             "patientDateOfBirth": patient.date_of_birth.isoformat() if patient.date_of_birth else "",
             "subscriberId": insurance.subscriber_id,
             "payerId": insurance.payer_id,
-            "providerNpi": current_user.npi or "1234567890",
+            "providerNpi": current_user.npi,
             "providerName": f"{current_user.first_name} {current_user.last_name}",
             "serviceFacilityNpi": current_user.practice.npi if current_user.practice else "",
             "procedures": procedures,
             "totalAmount": claim_data.total_amount,
             "diagnosisCodes": claim_data.diagnosis_codes or [],
+            # Pass our key through so the clearinghouse can dedupe too.
+            "clientClaimId": str(claim.id),
         }
     }
 
     try:
-        response = requests.post(
+        response = await asyncio.to_thread(
+            requests.post,
             f"{settings.DXC_BASE_URL}/claims",
             json=payload,
             headers=_get_dxc_headers(),
@@ -266,50 +447,89 @@ async def submit_claim(
         if response.status_code in (200, 201):
             data = response.json()
 
-            claim = InsuranceClaim(
-                practice_id=current_user.practice_id,
-                patient_id=patient.id,
-                patient_insurance_id=insurance.id,
-                carrier_id=insurance.carrier_id,
-                claim_number=data.get("claimId", generate_confirmation_code()),
-                status=ClaimStatus.SUBMITTED,
-                billed_amount=claim_data.total_amount,
-                service_date=claim_data.service_date,
-                diagnosis_codes=json.dumps(claim_data.diagnosis_codes) if claim_data.diagnosis_codes else "[]",
-                procedure_codes=json.dumps(procedures),
+            # Phase 2: record the external outcome against the reserved row.
+            external_id = data.get("claimId") or ""
+            claim.claim_number = external_id or claim.claim_number.replace(
+                "PENDING-", "", 1
             )
-            db.add(claim)
-            await db.commit()
-            await db.refresh(claim)
+            claim.status = ClaimStatus.SUBMITTED
+            claim.confirmation_number = data.get("confirmationNumber") or external_id or None
+            claim.submission_date = datetime.now(timezone.utc).date()
+            claim.submission_error = None
 
-            # HIPAA: Log successful claim submission
+            # Persist the clearinghouse outcome and its HIPAA audit atomically.
             await log_audit_event(
                 db, current_user, "submit_claim_success", "insurance_claim", claim.id, request
             )
             await db.commit()
+            await db.refresh(claim)
 
             return ClaimSubmitResponse(
                 claim_id=str(claim.id),
-                external_claim_id=data.get("claimId", ""),
+                external_claim_id=external_id,
                 status="submitted",
                 message="Claim submitted successfully",
                 submitted_at=data.get("submittedAt", ""),
             )
         else:
+            # M-22 FIX: never log the clearinghouse response body. A 837D/277
+            # rejection echoes back subscriber ids, names and dates of birth,
+            # which put PHI into application logs outside the centralized
+            # redaction path. Status code and a hashed body fingerprint are
+            # enough to correlate with the clearinghouse's own logs.
+            logger.warning(
+                "Claim submission rejected by clearinghouse: claim=%s status=%s body_sha256=%s len=%d",
+                claim.id,
+                response.status_code,
+                _response_fingerprint(response.text),
+                len(response.text or ""),
+            )
+            claim.status = ClaimStatus.SUBMISSION_FAILED
+            claim.submission_error = (
+                f"Clearinghouse rejected the claim (HTTP {response.status_code})."
+            )
+            await log_audit_event(
+                db,
+                current_user,
+                "submit_claim_rejected",
+                "insurance_claim",
+                claim.id,
+                request,
+                {"status_code": response.status_code},
+            )
+            await db.commit()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Claim submission failed: {response.text}",
+                detail="Claim submission was rejected by the insurance clearinghouse.",
             )
 
     except requests.RequestException as e:
-        # HIPAA: Log failed claim submission
+        # H-03: the reservation stays SUBMITTING because we genuinely do not
+        # know whether the payer received it. A retry with the same
+        # idempotency key returns this row instead of re-submitting; an
+        # operator (or the status poller) resolves it against the
+        # clearinghouse. Never silently roll the reservation back.
+        claim.submission_error = f"Transport failure: {type(e).__name__}"
+        # HIPAA: Persist the ambiguous transport outcome and audit atomically.
+        # M-22: record the exception type, never the exception text.
         await log_audit_event(
-            db, current_user, "submit_claim_failed", "patient", patient.id, request, {"error": str(e)}
+            db, current_user, "submit_claim_failed", "insurance_claim", claim.id, request,
+            {"error_type": type(e).__name__},
         )
         await db.commit()
+        logger.error(
+            "Claim %s submission transport failure (%s); left in SUBMITTING for "
+            "reconciliation",
+            claim.id,
+            type(e).__name__,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Unable to submit claim: {str(e)}",
+            detail=(
+                "Unable to reach the insurance clearinghouse. The claim is "
+                "recorded as in-flight; retrying with the same details will "
+                "not create a duplicate."
+            ),
         )
 
 
@@ -317,7 +537,7 @@ async def submit_claim(
 async def get_claim_status(
     request: Request,
     claim_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> ClaimStatusResponse:
     """
@@ -329,10 +549,14 @@ async def get_claim_status(
             detail="Claims service not configured",
         )
 
-    # Get claim from database
+    # Scoped-first lookup: join through Patient so a foreign-practice id
+    # 404s instead of loading a foreign row then 403ing (existence oracle).
     result = await db.execute(
-        select(InsuranceClaim).where(
+        select(InsuranceClaim)
+        .join(Patient, Patient.id == InsuranceClaim.patient_id)
+        .where(
             InsuranceClaim.id == UUID(claim_id),
+            Patient.practice_id == current_user.practice_id,
         )
     )
     claim = result.scalar_one_or_none()
@@ -343,19 +567,6 @@ async def get_claim_status(
             detail="Claim not found",
         )
 
-    # Verify ownership
-    result = await db.execute(
-        select(Patient).where(
-            Patient.id == claim.patient_id,
-            Patient.practice_id == current_user.practice_id,
-        )
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized",
-        )
-
     # HIPAA: Log claim status read (PHI read)
     await log_audit_event(
         db, current_user, "view_claim_status", "insurance_claim", claim.id, request
@@ -364,7 +575,8 @@ async def get_claim_status(
 
     # Query DentalXChange for status
     try:
-        response = requests.get(
+        response = await asyncio.to_thread(
+            requests.get,
             f"{settings.DXC_BASE_URL}/claims/{claim.claim_number}/status",
             headers=_get_dxc_headers(),
             timeout=30,

@@ -1,80 +1,117 @@
-"""
-Celery Configuration for CoreDent
-Handles automated tasks like sending reminders
-"""
+"""Celery configuration for CoreDent background work."""
 
-from celery import Celery
 from datetime import timedelta
 import logging
+
+from celery import Celery
 
 from app.core.config_simple import settings
 
 logger = logging.getLogger(__name__)
 
-# Celery configuration
+broker_url = settings.CELERY_BROKER_URL or settings.REDIS_URL or "redis://localhost:6379/0"
+result_backend = settings.CELERY_RESULT_BACKEND or settings.REDIS_URL or broker_url
+
 celery_app = Celery(
-    'coredent',
-    broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL,
+    "coredent",
+    broker=broker_url,
+    backend=result_backend,
     include=[
-        'app.core.tasks',
-        'app.core.reminder_tasks',
-        'app.core.email_tasks',
-    ]
+        "app.core.tasks",
+        "app.core.email_tasks",
+        "app.core.communication_tasks",
+        # Retained only to consume already-published legacy task names; it
+        # delegates into communication_tasks and no longer sends directly.
+        "app.core.communication_queue",
+    ],
 )
 
-# Celery configuration
 celery_app.conf.update(
-    task_serializer='json',
-    accept_content=['json'],
-    result_serializer='json',
-    timezone='UTC',
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=300,  # 5 minute timeout
+    task_time_limit=300,
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
+    # Delivery claims are committed before provider I/O. Late ACK + reject on
+    # worker loss lets the broker redeliver interrupted work; the database
+    # lease prevents a redelivery from concurrently transmitting the same row.
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    task_publish_retry=True,
+    task_publish_retry_policy={
+        "max_retries": 3,
+        "interval_start": 0,
+        "interval_step": 0.2,
+        "interval_max": 1,
+    },
 )
 
-# Scheduled tasks (Celery Beat)
+# Beat FIX: every schedule carries expires < period so a late worker never
+# fires out-of-window work (claim/lease makes it safe but noisy).
 celery_app.conf.beat_schedule = {
-    # Send appointment reminders every 15 minutes
-    'send-appointment-reminders': {
-        'task': 'app.core.tasks.send_appointment_reminders',
-        'schedule': timedelta(minutes=15),
+    "send-appointment-reminders": {
+        "task": "app.core.tasks.send_appointment_reminders",
+        "schedule": timedelta(minutes=15),
+        "options": {"expires": 800},
     },
-    # Send daily summary
-    'send-daily-summary': {
-        'task': 'app.core.tasks.send_daily_summary',
-        'schedule': timedelta(hours=24),
-        'options': {'expires': 3600}
+    "send-daily-summary": {
+        "task": "app.core.tasks.send_daily_summary",
+        "schedule": timedelta(hours=24),
+        "options": {"expires": 3600},
     },
-    # Process scheduled reminders
-    'process-scheduled-reminders': {
-        'task': 'app.core.tasks.process_scheduled_reminders',
-        'schedule': timedelta(minutes=5),
+    "process-scheduled-reminders": {
+        "task": "app.core.tasks.process_scheduled_reminders",
+        "schedule": timedelta(minutes=5),
+        "options": {"expires": 280},
     },
-    # Clean up old notifications
-    'cleanup_old_notifications': {
-        'task': 'app.core.tasks.cleanup_old_notifications',
-        'schedule': timedelta(hours=1),
+    "cleanup-old-notifications": {
+        "task": "app.core.tasks.cleanup_old_notifications",
+        "schedule": timedelta(hours=1),
+        "options": {"expires": 3000},
     },
-    # Process scheduled messages every minute
-    'process-scheduled-messages': {
-        'task': 'app.core.communication_tasks.process_scheduled_messages_task',
-        'schedule': timedelta(minutes=1),
+    "mark-overdue-invoices": {
+        "task": "app.core.tasks.mark_overdue_invoices",
+        "schedule": timedelta(hours=1),
+        "options": {"expires": 3000},
     },
-    # Retry failed messages every 5 minutes
-    'retry-failed-messages': {
-        'task': 'app.core.communication_tasks.retry_failed_messages_task',
-        'schedule': timedelta(minutes=5),
+    "process-dunning": {
+        "task": "app.core.tasks.process_dunning_task",
+        "schedule": timedelta(hours=1),
+        "options": {"expires": 3000},
+    },
+    "process-automated-recalls": {
+        "task": "app.core.communication_tasks.process_automated_recalls_task",
+        "schedule": timedelta(hours=24),
+        "options": {"queue": "communications", "expires": 3600},
+    },
+    "process-scheduled-messages": {
+        "task": "app.core.communication_tasks.process_scheduled_messages_task",
+        "schedule": timedelta(minutes=1),
+        "options": {"expires": 50},
+    },
+    "retry-failed-messages": {
+        "task": "app.core.communication_tasks.retry_failed_messages_task",
+        "schedule": timedelta(minutes=5),
+        "options": {"expires": 280},
+    },
+    "cleanup-old-messages": {
+        "task": "app.core.communication_tasks.cleanup_old_messages_task",
+        "schedule": timedelta(hours=24),
+        "options": {"queue": "communications", "expires": 3600},
     },
 }
 
 celery_app.conf.task_routes = {
-    'app.core.tasks.*': {'queue': 'default'},
-    'app.core.communication_tasks.*': {'queue': 'communications'},
-    'app.core.reminder_tasks.*': {'queue': 'reminders'},
+    "app.core.tasks.send_appointment_reminders": {"queue": "reminders"},
+    "app.core.tasks.process_scheduled_reminders": {"queue": "reminders"},
+    "app.core.tasks.*": {"queue": "default"},
+    "app.core.communication_tasks.*": {"queue": "communications"},
+    "app.core.communication_queue.*": {"queue": "communications"},
+    "app.core.email_tasks.*": {"queue": "emails"},
 }
 
-logger.info("Celery app initialized with scheduled tasks")
+logger.info("Celery app initialized with durable delivery settings")

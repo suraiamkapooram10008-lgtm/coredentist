@@ -4,7 +4,7 @@ Prevents abuse from specific IPs
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict
 from fastapi import Request, HTTPException, status
 from collections import defaultdict
@@ -40,15 +40,14 @@ class IPRateLimiter:
         self.endpoint = endpoint
 
     def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP from request"""
-        # Check X-Forwarded-For header (for proxies/load balancers)
-        forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
-            # Take the first IP (original client)
-            return forwarded_for.split(",")[0].strip()
+        """Extract client IP from request.
 
-        # Fallback to direct client IP
-        return request.client.host if request.client else "unknown"
+        M-23: delegates to the trusted-proxy-aware resolver so this limiter and
+        the per-user limiter bucket on the same identity.
+        """
+        from app.core.client_ip import get_client_ip
+
+        return get_client_ip(request)
 
     async def check_rate_limit(self, request: Request) -> bool:
         """
@@ -64,7 +63,7 @@ class IPRateLimiter:
             HTTPException: If rate limit exceeded
         """
         client_ip = self._get_client_ip(request)
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         window_start = now - timedelta(hours=self.window_hours)
 
         async with rate_limit_lock:
@@ -107,7 +106,7 @@ class IPRateLimiter:
 
     async def cleanup_old_entries(self):
         """Clean up old rate limit entries (call periodically)"""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         window_start = now - timedelta(hours=self.window_hours * 2)  # Keep 2x window for safety
 
         async with rate_limit_lock:

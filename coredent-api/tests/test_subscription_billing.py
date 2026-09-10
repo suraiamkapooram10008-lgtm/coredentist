@@ -3,7 +3,7 @@ import pytest
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from app.services.subscription_billing import SubscriptionBillingService
 from app.models.subscription import SubscriptionStatus
@@ -121,3 +121,62 @@ class TestGetSubscriptionStats:
         assert "churn_rate" in result
         assert "mrr_growth_percent" in result
         assert "trial_conversion_rate" in result
+
+
+@pytest.mark.asyncio
+class TestProcessDunningEligibility:
+    """The sweep must see every due past-due subscription.
+
+    The stripe.py status-sync path flips subscriptions PAST_DUE without
+    scheduling a retry instant, and ``NULL <= now`` never matches in SQL,
+    so those rows used to be invisible to dunning.
+    """
+
+    async def _create_past_due_subscription(self, db_session, practice, next_retry_at):
+        from app.models.subscription import Subscription, SubscriptionInterval, SubscriptionPlan
+
+        plan = SubscriptionPlan(
+            practice_id=practice.id,
+            name="Dunning Test Plan",
+            amount=Decimal("99.00"),
+            interval=SubscriptionInterval.MONTHLY,
+        )
+        db_session.add(plan)
+        await db_session.flush()
+
+        subscription = Subscription(
+            practice_id=practice.id,
+            plan_id=plan.id,
+            status=SubscriptionStatus.PAST_DUE,
+            interval=SubscriptionInterval.MONTHLY,
+            dunning_retry_count=0,
+            dunning_max_retries=4,
+            next_retry_at=next_retry_at,
+        )
+        db_session.add(subscription)
+        await db_session.flush()
+        return subscription
+
+    async def test_null_next_retry_at_is_due(self, db_session, test_practice):
+        await self._create_past_due_subscription(db_session, test_practice, None)
+
+        result = await SubscriptionBillingService.process_dunning(
+            db_session, MagicMock()
+        )
+
+        assert result["total"] == 1
+        assert result["processed"] == 0
+        assert result["failed"] == 0
+
+    async def test_future_next_retry_at_is_not_due(self, db_session, test_practice):
+        await self._create_past_due_subscription(
+            db_session,
+            test_practice,
+            datetime.now(timezone.utc) + timedelta(days=3),
+        )
+
+        result = await SubscriptionBillingService.process_dunning(
+            db_session, MagicMock()
+        )
+
+        assert result["total"] == 0

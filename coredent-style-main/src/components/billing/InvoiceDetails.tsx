@@ -6,6 +6,7 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
+import { useCurrencyFormatter } from '@/hooks/useCurrencyFormatter';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { 
@@ -39,34 +40,29 @@ export function InvoiceDetails({
   onDownload,
   onSend,
 }: InvoiceDetailsProps) {
+  const { formatCurrency } = useCurrencyFormatter();
+
   if (!invoice) return null;
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'paid':
         return 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 border-emerald-500/20';
-      case 'partial':
+      case 'partially_paid':
         return 'bg-sky-500/10 text-sky-500 hover:bg-sky-500/20 border-sky-500/20';
-      case 'sent':
+      case 'pending':
         return 'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 border-amber-500/20';
       case 'overdue':
         return 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 border-rose-500/20';
-      case 'void':
+      case 'cancelled':
         return 'bg-neutral-500/10 text-neutral-500 hover:bg-neutral-500/20 border-neutral-500/20';
       default:
         return 'bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 border-blue-500/20'; // draft
     }
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(amount);
-  };
-
-  const isPaid = invoice.status === 'paid';
   const isDraft = invoice.status === 'draft';
+  const isPayable = ['pending', 'partially_paid', 'overdue'].includes(invoice.status);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -78,7 +74,7 @@ export function InvoiceDetails({
                 {invoice.invoiceNumber}
               </span>
               <Badge variant="outline" className={`${getStatusColor(invoice.status)} capitalize border px-2.5 py-0.5`}>
-                {invoice.status}
+                {invoice.status.replace('_', ' ')}
               </Badge>
             </div>
             <SheetTitle className="text-2xl font-bold flex items-center gap-2">
@@ -110,7 +106,7 @@ export function InvoiceDetails({
                     <Calendar className="h-3 w-3" /> Issued: {invoice.issueDate}
                   </div>
                   <div className="flex items-center sm:justify-end gap-1 font-medium text-rose-500">
-                    <Calendar className="h-3 w-3" /> Due: {invoice.dueDate}
+                    <Calendar className="h-3 w-3" /> Due: {invoice.dueDate || 'Not set'}
                   </div>
                 </div>
               </div>
@@ -142,7 +138,7 @@ export function InvoiceDetails({
               <table className="w-full text-sm text-left border-collapse">
                 <thead className="bg-accent/40 text-[10px] uppercase font-bold text-muted-foreground tracking-wider border-b border-border">
                   <tr>
-                    <th className="py-2 px-3">Item / Code</th>
+                    <th className="py-2 px-3">Description</th>
                     <th className="py-2 px-3 text-center">Qty</th>
                     <th className="py-2 px-3 text-right">Price</th>
                     <th className="py-2 px-3 text-right">Total</th>
@@ -150,22 +146,13 @@ export function InvoiceDetails({
                 </thead>
                 <tbody className="divide-y divide-border/55">
                   {invoice.lineItems.map((item) => (
-                    <tr key={item.id} className="hover:bg-accent/15 transition-colors">
+                    <tr key={`${item.description}-${item.quantity}-${item.unitPrice}`} className="hover:bg-accent/15 transition-colors">
                       <td className="py-2.5 px-3">
-                        <span className="font-mono text-xs font-semibold text-foreground">{item.procedureCode}</span>
-                        <div className="text-xs text-muted-foreground font-normal line-clamp-1">{item.description}</div>
-                        {item.toothNumber && (
-                          <span className="inline-block mt-0.5 text-[10px] bg-primary/10 text-primary px-1.5 rounded-md font-medium">
-                            Tooth #{item.toothNumber}
-                          </span>
-                        )}
+                        <div className="text-xs text-foreground font-medium line-clamp-1">{item.description}</div>
                       </td>
                       <td className="py-2.5 px-3 text-center font-mono text-xs">{item.quantity}</td>
                       <td className="py-2.5 px-3 text-right font-mono text-xs">
                         {formatCurrency(item.unitPrice)}
-                        {item.discount > 0 && (
-                          <div className="text-[10px] text-emerald-500 font-medium">-{formatCurrency(item.discount)}</div>
-                        )}
                       </td>
                       <td className="py-2.5 px-3 text-right font-semibold font-mono text-xs">
                         {formatCurrency(item.total)}
@@ -193,12 +180,6 @@ export function InvoiceDetails({
                 <span>Subtotal:</span>
                 <span className="font-mono">{formatCurrency(invoice.subtotal)}</span>
               </div>
-              {invoice.discountTotal > 0 && (
-                <div className="flex justify-between text-emerald-500 font-medium">
-                  <span>Discounts:</span>
-                  <span className="font-mono">-{formatCurrency(invoice.discountTotal)}</span>
-                </div>
-              )}
               {invoice.taxAmount > 0 && (
                 <div className="flex justify-between text-muted-foreground">
                   <span>Tax ({invoice.taxRate}%):</span>
@@ -287,7 +268,7 @@ export function InvoiceDetails({
               </Button>
             )}
           </div>
-          {!isPaid && (
+          {isPayable && (
             <Button
               className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold py-5 text-sm"
               onClick={() => {

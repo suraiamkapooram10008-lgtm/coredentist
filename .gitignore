@@ -5,6 +5,7 @@ node_modules/
 
 # Testing
 coverage/
+htmlcov/
 .coverage
 .coverage.*
 coverage.xml
@@ -73,3 +74,18 @@ deleted_backend_files.txt
 debug*.txt
 out.txt
 out_utf8.txt
+
+# Local test-run logs (agent/session generated)
+backend_test_run*.log
+*_test_run.log
+*_test_run.err.log
+
+# SQLite test databases and journals (per-process names)
+*.sqlite
+*.sqlite-journal
+.test-db-*.sqlite
+
+# Editor / AI-agent tool scratch dirs (local state, not project files)
+.commandcode/
+.kilo/
+.tmp-test/

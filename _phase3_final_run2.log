@@ -1,0 +1,10 @@
+﻿
+no tests ran in 0.00s
+python : ERROR: file or directory not found: tests
+At line:4 char:1
++ python -m pytest tests --tb=line -q -p no:cacheprovider --no-cov 2>&1 ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (ERROR: file or ...ot found: tests:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+

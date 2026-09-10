@@ -6,22 +6,23 @@ Stripe payment request/response models
 from pydantic import BaseModel, Field
 from typing import Optional
 from uuid import UUID
+from decimal import Decimal
 
 
 class PaymentIntentCreate(BaseModel):
-    """Request to create a Stripe PaymentIntent"""
+    """Request to create a Stripe PaymentIntent (money as Decimal)."""
     invoice_id: UUID
-    amount: Optional[float] = Field(
+    amount: Optional[Decimal] = Field(
         None,
         description="Amount to charge. If not provided, uses invoice balance."
     )
 
 
 class PaymentIntentResponse(BaseModel):
-    """Response from creating a PaymentIntent"""
+    """Response from creating a PaymentIntent (money as Decimal)."""
     client_secret: str
     payment_intent_id: str
-    amount: float
+    amount: Decimal
     currency: str
 
 
@@ -42,9 +43,9 @@ class PaymentWebhookEvent(BaseModel):
 # ============================================
 
 class RazorpayOrderCreate(BaseModel):
-    """Request to create a Razorpay Order"""
+    """Request to create a Razorpay Order (money as Decimal)."""
     invoice_id: UUID
-    amount: Optional[float] = Field(
+    amount: Optional[Decimal] = Field(
         None,
         description="Amount in INR. If not provided, uses invoice balance."
     )
@@ -71,25 +72,25 @@ class RazorpayPaymentVerify(BaseModel):
 
 
 class RazorpayPaymentResponse(BaseModel):
-    """Response from verifying a Razorpay Payment"""
+    """Response from verifying a Razorpay Payment (money as Decimal)."""
     payment_id: str
     order_id: str
-    amount: float
+    amount: Decimal
     currency: str
     status: str
     method: str  # upi, card, netbanking, wallet
 
 
 class RazorpayRefundRequest(BaseModel):
-    """Request to refund a Razorpay Payment"""
+    """Request to refund a Razorpay Payment (money as Decimal)."""
     payment_id: str
-    amount: Optional[float] = Field(None, description="Partial refund amount. If not provided, full refund.")
+    amount: Optional[Decimal] = Field(None, description="Partial refund amount. If not provided, full refund.")
 
 
 class RazorpayRefundResponse(BaseModel):
-    """Response from processing a Razorpay Refund"""
+    """Response from processing a Razorpay Refund (money as Decimal)."""
     refund_id: str
-    amount: float
+    amount: Decimal
     status: str
 
 

@@ -7,7 +7,7 @@ Checks response times and alerts if too slow
 import sys
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 
 # Configuration
@@ -53,7 +53,8 @@ def send_alert(message):
     try:
         payload = {
             "text": f"⚠️ CoreDent Performance Alert: {message}",
-            "timestamp": datetime.utcnow().isoformat()
+            # Timezone FIX: aware UTC (utcnow is naive/deprecated).
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         requests.post(ALERT_WEBHOOK, json=payload, timeout=5)
     except Exception as e:
@@ -62,7 +63,7 @@ def send_alert(message):
 def main():
     """Run performance checks"""
     print(f"\n{'='*50}")
-    print(f"CoreDent Performance Check - {datetime.now()}")
+    print(f"CoreDent Performance Check - {datetime.now(timezone.utc)}")
     print(f"{'='*50}\n")
     
     # Endpoints to check
@@ -80,20 +81,20 @@ def main():
     
     print(f"\n{'='*50}")
     if failed:
-        print(f"❌ Performance check FAILED")
+        print("❌ Performance check FAILED")
         print(f"Failed endpoints: {len(failed)}/{len(results)}")
         for r in failed:
             print(f"  - {r['endpoint']}: {r.get('error', 'Slow response')}")
         send_alert(f"{len(failed)} endpoints failed performance check")
         sys.exit(1)
     elif slow:
-        print(f"⚠️  Some endpoints are slow")
+        print("⚠️  Some endpoints are slow")
         for r in slow:
             print(f"  - {r['endpoint']}: {r['duration']:.3f}s")
         send_alert(f"{len(slow)} endpoints are slow")
         sys.exit(0)
     else:
-        print(f"✅ All endpoints performing well")
+        print("✅ All endpoints performing well")
         sys.exit(0)
 
 if __name__ == "__main__":

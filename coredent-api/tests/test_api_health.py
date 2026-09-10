@@ -1,6 +1,4 @@
 """Tests for API health and root endpoints"""
-import pytest
-pytestmark = pytest.mark.asyncio
 
 class TestHealthEndpoint:
     async def test_health_check(self, async_client):

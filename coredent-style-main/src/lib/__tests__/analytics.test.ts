@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   analytics,
   trackSignup,
@@ -13,102 +13,169 @@ import {
   trackPerformance,
 } from '../analytics';
 
-describe('analytics (PostHog wrapper)', () => {
-  let posthog: {
-    identify: ReturnType<typeof vi.fn>;
-    capture: ReturnType<typeof vi.fn>;
-    reset: ReturnType<typeof vi.fn>;
-    people: { set: ReturnType<typeof vi.fn> };
+describe('Analytics Service', () => {
+  const mockPosthog = {
+    identify: vi.fn(),
+    capture: vi.fn(),
+    reset: vi.fn(),
+    people: {
+      set: vi.fn(),
+    },
   };
 
   beforeEach(() => {
-    posthog = {
-      identify: vi.fn(),
-      capture: vi.fn(),
-      reset: vi.fn(),
-      people: { set: vi.fn() },
-    };
-    (window as unknown as { posthog: typeof posthog }).posthog = posthog;
+    vi.clearAllMocks();
+    (window as any).posthog = mockPosthog;
   });
 
   afterEach(() => {
-    delete (window as unknown as { posthog?: unknown }).posthog;
+    delete (window as any).posthog;
+    vi.restoreAllMocks();
   });
 
-  it('identify calls PostHog.identify', () => {
-    analytics.identify('u-1', { email: 'a@b.com' });
-    // In test env (DEV=true) the singleton is disabled; verify the no-op path
-    // is safe and that no PostHog call is attempted. We do not assert on the
-    // call itself because the singleton is constructed at module load time.
-    // The real-world path (DEV=false) is exercised in the convenience tests below.
-    expect(posthog.identify).not.toHaveBeenCalled();
+  describe('disabled in development mode', () => {
+    it('does not call posthog identify, capture, reset, or set properties', () => {
+      // In dev mode (default test environment), analytics is disabled
+      analytics.identify('user-1', { role: 'admin' });
+      expect(mockPosthog.identify).not.toHaveBeenCalled();
+
+      analytics.track('some_event', { x: 1 });
+      expect(mockPosthog.capture).not.toHaveBeenCalled();
+
+      analytics.setUserProperties({ email: 'test@example.com' });
+      expect(mockPosthog.people.set).not.toHaveBeenCalled();
+
+      analytics.reset();
+      expect(mockPosthog.reset).toHaveBeenCalled();
+    });
   });
 
-  it('track does not throw when analytics is disabled', () => {
-    expect(() => analytics.track('Test Event', { foo: 'bar' })).not.toThrow();
+  describe('enabled in production mode', () => {
+    beforeEach(() => {
+      vi.stubEnv('DEV', false as any);
+      vi.stubEnv('PROD', true as any);
+      vi.stubEnv('VITE_ANALYTICS_ENABLED', 'true' as any);
+    });
+
+    it('identifies and tracks events', async () => {
+      vi.resetModules();
+      const { analytics: prodAnalytics } = await import('../analytics');
+
+      prodAnalytics.identify('user-1', { role: 'admin' });
+      expect(mockPosthog.identify).toHaveBeenCalledWith('user-1', { role: 'admin' });
+
+      prodAnalytics.track('some_event', { x: 1 });
+      expect(mockPosthog.capture).toHaveBeenCalledWith('some_event', expect.objectContaining({
+        x: 1,
+        userId: 'user-1',
+        timestamp: expect.any(String),
+      }));
+    });
+
+    it('sets user properties', async () => {
+      vi.resetModules();
+      const { analytics: prodAnalytics } = await import('../analytics');
+
+      prodAnalytics.setUserProperties({ role: 'admin' });
+      expect(mockPosthog.people.set).toHaveBeenCalledWith({ role: 'admin' });
+    });
+
+    it('redacts PHI keys from identify, track, and setUserProperties payloads', async () => {
+      // L-2 FIX: PHI must never reach PostHog even if a future caller
+      // accidentally includes a ``patientEmail`` or ``phone`` field.
+      vi.resetModules();
+      const { analytics: prodAnalytics } = await import('../analytics');
+
+      prodAnalytics.identify('user-1', {
+        role: 'admin',
+        email: 'leak@example.com',          // should be stripped
+        practiceName: 'Bright Smile',         // should be stripped
+        patientId: 'p-1',                    // should pass through
+        patientEmail: 'leak2@example.com',   // should be stripped
+      });
+      expect(mockPosthog.identify).toHaveBeenCalledWith('user-1', {
+        role: 'admin',
+        patientId: 'p-1',
+      });
+
+      prodAnalytics.track('Patient Viewed', {
+        patientId: 'p-1',
+        patientEmail: 'leak3@example.com',
+        firstName: 'John',
+        appointmentId: 'a-1',
+      });
+      const trackCall = mockPosthog.capture.mock.calls.find(
+        (call) => call[0] === 'Patient Viewed',
+      );
+      expect(trackCall).toBeDefined();
+      expect(trackCall![1]).toEqual(
+        expect.objectContaining({
+          patientId: 'p-1',
+          appointmentId: 'a-1',
+        }),
+      );
+      expect(trackCall![1]).not.toHaveProperty('patientEmail');
+      expect(trackCall![1]).not.toHaveProperty('firstName');
+
+      prodAnalytics.setUserProperties({
+        role: 'admin',
+        email: 'should-be-stripped@example.com',
+        phone: '555-1234',
+      });
+      expect(mockPosthog.people.set).toHaveBeenLastCalledWith({ role: 'admin' });
+    });
+
+    it('resets user session', async () => {
+      vi.resetModules();
+      const { analytics: prodAnalytics } = await import('../analytics');
+
+      prodAnalytics.reset();
+      expect(mockPosthog.reset).toHaveBeenCalled();
+    });
   });
 
-  it('page does not throw when analytics is disabled', () => {
-    expect(() => analytics.page('Dashboard', { tab: 'overview' })).not.toThrow();
-  });
+  describe('common tracking helper functions', () => {
+    // We can test the helper functions by spying on the main analytics.track method
+    it('triggers appropriate track calls for helpers', () => {
+      const trackSpy = vi.spyOn(analytics, 'track').mockImplementation(() => {});
+      const resetSpy = vi.spyOn(analytics, 'reset').mockImplementation(() => {});
+      const trackFeatureSpy = vi.spyOn(analytics, 'trackFeature').mockImplementation(() => {});
 
-  it('reset does not throw when analytics is disabled', () => {
-    expect(() => analytics.reset()).not.toThrow();
-  });
+      trackSignup('u1', 'email');
+      expect(trackSpy).toHaveBeenCalledWith('User Signed Up', { method: 'email' });
 
-  it('setUserProperties does not throw when analytics is disabled', () => {
-    expect(() => analytics.setUserProperties({ email: 'x@y.com' })).not.toThrow();
-  });
+      trackLogin('u1', 'google');
+      expect(trackSpy).toHaveBeenCalledWith('User Logged In', { method: 'google' });
 
-  it('trackFeature does not throw when analytics is disabled', () => {
-    expect(() => analytics.trackFeature('Search', 'clicked')).not.toThrow();
-  });
-});
+      trackLogout();
+      expect(trackSpy).toHaveBeenCalledWith('User Logged Out', {});
+      expect(resetSpy).toHaveBeenCalled();
 
-describe('analytics convenience functions (no-op in test env)', () => {
-  it('trackSignup does not throw', () => {
-    expect(() => trackSignup('u-1', 'google')).not.toThrow();
-  });
+      trackPatientCreated('p1');
+      expect(trackSpy).toHaveBeenCalledWith('Patient Created', { patientId: 'p1' });
 
-  it('trackLogin does not throw', () => {
-    expect(() => trackLogin('u-1', 'email')).not.toThrow();
-  });
+      trackAppointmentBooked('a1', 'Exam');
+      expect(trackSpy).toHaveBeenCalledWith('Appointment Booked', { appointmentId: 'a1', type: 'Exam' });
 
-  it('trackLogout does not throw', () => {
-    expect(() => trackLogout()).not.toThrow();
-  });
+      trackInvoiceCreated('inv1', 150);
+      expect(trackSpy).toHaveBeenCalledWith('Invoice Created', { invoiceId: 'inv1', amount: 150 });
 
-  it('trackPatientCreated does not throw', () => {
-    expect(() => trackPatientCreated('p-1')).not.toThrow();
-  });
+      trackPaymentReceived('pay1', 50, 'cash');
+      expect(trackSpy).toHaveBeenCalledWith('Payment Received', { paymentId: 'pay1', amount: 50, method: 'cash' });
 
-  it('trackAppointmentBooked does not throw', () => {
-    expect(() => trackAppointmentBooked('a-1', 'cleaning')).not.toThrow();
-  });
+      trackFeatureUsed('charting', 'select_tooth');
+      expect(trackFeatureSpy).toHaveBeenCalledWith('charting', 'select_tooth');
 
-  it('trackInvoiceCreated does not throw', () => {
-    expect(() => trackInvoiceCreated('inv-1', 120)).not.toThrow();
-  });
+      const err = new Error('boom');
+      trackError(err, { component: 'App' });
+      expect(trackSpy).toHaveBeenCalledWith('Error Occurred', expect.objectContaining({
+        error: 'boom',
+        stack: err.stack,
+        component: 'App',
+      }));
 
-  it('trackPaymentReceived does not throw', () => {
-    expect(() => trackPaymentReceived('pay-1', 50, 'cash')).not.toThrow();
-  });
-
-  it('trackFeatureUsed does not throw', () => {
-    expect(() => trackFeatureUsed('Charts', 'rendered')).not.toThrow();
-  });
-
-  it('trackError does not throw', () => {
-    const err = new TypeError('Boom');
-    expect(() => trackError(err)).not.toThrow();
-  });
-
-  it('trackPerformance does not throw', () => {
-    expect(() => trackPerformance('load', 120)).not.toThrow();
-  });
-
-  it('handles the case where window.posthog is missing', () => {
-    delete (window as unknown as { posthog?: unknown }).posthog;
-    expect(() => trackPatientCreated('p-1')).not.toThrow();
+      trackPerformance('render_latency', 15);
+      expect(trackSpy).toHaveBeenCalledWith('Performance Metric', { metric: 'render_latency', value: 15 });
+    });
   });
 });

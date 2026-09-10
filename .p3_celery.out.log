@@ -1,0 +1,12 @@
+Beat schedule entries:
+  send-appointment-reminders: app.core.tasks.send_appointment_reminders
+  send-daily-summary: app.core.tasks.send_daily_summary
+  process-scheduled-reminders: app.core.tasks.process_scheduled_reminders
+  cleanup-old-notifications: app.core.tasks.cleanup_old_notifications
+  mark-overdue-invoices: app.core.tasks.mark_overdue_invoices
+  process-dunning: app.core.tasks.process_dunning_task
+  process-automated-recalls: app.core.communication_tasks.process_automated_recalls_task
+  process-scheduled-messages: app.core.communication_tasks.process_scheduled_messages_task
+  retry-failed-messages: app.core.communication_tasks.retry_failed_messages_task
+  cleanup-old-messages: app.core.communication_tasks.cleanup_old_messages_task
+MISSING TASKS: none

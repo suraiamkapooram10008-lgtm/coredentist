@@ -1,6 +1,10 @@
 /**
  * AppointmentForm Component
  * Form for creating/editing appointments
+ *
+ * This is the single canonical appointment form. The Appointments page and
+ * any scheduling dialog reuse it so status casing, duration handling, and
+ * field behavior cannot drift between copies.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -31,6 +35,15 @@ interface AppointmentFormProps {
 }
 
 /**
+ * Strip display suffixes (e.g. "30 min") so the number input holds a
+ * numeric value the browser will accept for form validation.
+ */
+const toNumericDuration = (value?: string | number): string => {
+  const raw = String(value ?? '').replace(/\D/g, '');
+  return raw ? raw : '30';
+};
+
+/**
  * Form for creating and editing appointments
  */
 export const AppointmentForm = React.memo(function AppointmentForm({
@@ -40,29 +53,41 @@ export const AppointmentForm = React.memo(function AppointmentForm({
   onCancel,
 }: AppointmentFormProps) {
   const [formData, setFormData] = useState<Partial<Appointment>>(
-    appointment || {
-      patient: '',
-      patientName: '',
-      time: '',
-      duration: '30',
-      type: '',
-      dentist: '',
-      status: 'Pending',
-    }
+    appointment
+      ? { ...appointment, duration: toNumericDuration(appointment.duration) }
+      : {
+          patient: '',
+          patientName: '',
+          time: '',
+          duration: '30',
+          type: '',
+          dentist: '',
+          status: 'scheduled',
+          patientId: '',
+          providerId: '',
+          operatoryId: '',
+        }
   );
 
   // Reset form when appointment changes
   useEffect(() => {
     if (appointment) {
-      setFormData(appointment);
+      setFormData({
+        ...appointment,
+        duration: toNumericDuration(appointment.duration),
+      });
     }
   }, [appointment]);
 
   const handleChange = (field: keyof Appointment, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+    setFormData((prev) => {
+      const next = { ...prev, [field]: value };
+      // Keep the display name and the wire name in sync so the API adapter
+      // (which resolves patients by `patientName`) always sees the same value.
+      if (field === 'patient') next.patientName = value;
+      if (field === 'patientName') next.patient = value;
+      return next;
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -71,7 +96,7 @@ export const AppointmentForm = React.memo(function AppointmentForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} data-testid="appointment-form" className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="patient">Patient Name</Label>
         <Input
@@ -138,19 +163,50 @@ export const AppointmentForm = React.memo(function AppointmentForm({
       <div className="space-y-2">
         <Label htmlFor="status">Status</Label>
         <Select
-          value={formData.status || 'Pending'}
+          value={formData.status || 'scheduled'}
           onValueChange={(value) => handleChange('status', value)}
         >
           <SelectTrigger>
             <SelectValue placeholder="Select status" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="Pending">Pending</SelectItem>
-            <SelectItem value="Confirmed">Confirmed</SelectItem>
-            <SelectItem value="Completed">Completed</SelectItem>
-            <SelectItem value="Cancelled">Cancelled</SelectItem>
+            {/* Values are the backend enum (lowercase); labels are human-friendly. */}
+            <SelectItem value="scheduled">Pending</SelectItem>
+            <SelectItem value="confirmed">Confirmed</SelectItem>
+            <SelectItem value="completed">Completed</SelectItem>
+            <SelectItem value="cancelled">Cancelled</SelectItem>
           </SelectContent>
         </Select>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="patientId">Patient ID</Label>
+        <Input
+          id="patientId"
+          value={formData.patientId || ''}
+          onChange={(e) => handleChange('patientId', e.target.value)}
+          placeholder="Patient UUID (optional — resolved by name otherwise)"
+        />
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="providerId">Provider ID</Label>
+        <Input
+          id="providerId"
+          value={formData.providerId || ''}
+          onChange={(e) => handleChange('providerId', e.target.value)}
+          placeholder="Provider UUID (optional)"
+        />
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="operatoryId">Operatory ID</Label>
+        <Input
+          id="operatoryId"
+          value={formData.operatoryId || ''}
+          onChange={(e) => handleChange('operatoryId', e.target.value)}
+          placeholder="Operatory/chair UUID (optional)"
+        />
       </div>
 
       <DialogFooter>

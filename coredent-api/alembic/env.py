@@ -3,7 +3,6 @@ Alembic Environment Configuration
 """
 
 from logging.config import fileConfig
-import asyncio
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy import create_engine
@@ -57,7 +56,15 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    # render_as_batch is required for SQLite (dev/test): without it any future
+    # ALTER/drop_column migration fails outright, because SQLite cannot alter
+    # columns in place and Alembic must recreate the table instead.
+    is_sqlite = connection.dialect.name == "sqlite"
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        render_as_batch=is_sqlite,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { logger } from '@/lib/logger';
+import { apiClient } from '@/services/api';
 
 interface UseApiResult<T> {
   loading: boolean;
@@ -7,8 +8,6 @@ interface UseApiResult<T> {
   error: Error | null;
   refetch: () => void;
 }
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
 export function useApi<T = unknown>(endpoint: string): UseApiResult<T> {
   const [loading, setLoading] = useState(true);
@@ -21,20 +20,16 @@ export function useApi<T = unknown>(endpoint: string): UseApiResult<T> {
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      const response = await apiClient.get<T>(endpoint);
+      if (response.success && response.data !== undefined) {
+        setData(response.data);
+      } else {
+        throw new Error(response.error?.message ?? 'No response data was returned.');
       }
-
-      const result = (await response.json()) as T;
-      setData(result);
     } catch (err) {
-      const fetchError = err instanceof Error ? err : new Error(String(err));
-      setError(fetchError);
-      logger.error(`useApi fetch failed: ${endpoint}`, fetchError);
+      const requestError = err instanceof Error ? err : new Error(String(err));
+      setError(requestError);
+      logger.error(`useApi request failed: ${endpoint}`, requestError);
     } finally {
       setLoading(false);
     }

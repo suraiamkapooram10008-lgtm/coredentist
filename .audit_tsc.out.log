@@ -1,0 +1,4 @@
+
+> coredent-pms@1.0.0 typecheck
+> tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit
+

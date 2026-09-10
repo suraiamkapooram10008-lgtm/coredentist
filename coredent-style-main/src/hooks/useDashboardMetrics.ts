@@ -4,6 +4,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { reportsApi } from '@/services/reportsApi';
 import type { DashboardMetrics } from '@/types/reports';
 
@@ -39,8 +40,11 @@ export function useDashboardMetrics(
 
   // Default to a sensible range when callers omit the bounds so the query
   // function always receives concrete Date values (reportsApi requires them).
-  const safeFrom = from ?? new Date();
-  const safeTo = to ?? new Date();
+  // The fallback is memoized: a fresh `new Date()` per render would change
+  // the queryKey on every render and refetch forever.
+  const [fallbackBound] = useState(() => new Date());
+  const safeFrom = from ?? fallbackBound;
+  const safeTo = to ?? fallbackBound;
 
   const { data: response, isLoading, isError, error } = useQuery({
     queryKey: ['dashboard', 'metrics', safeFrom.toISOString(), safeTo.toISOString()],

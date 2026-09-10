@@ -21,6 +21,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -33,6 +34,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Search,
   Plus,
@@ -45,8 +47,10 @@ import {
   Trash2,
   Edit,
   Loader2,
+  AlertCircle,
 } from "lucide-react";
 import { useCommunications } from "@/hooks/useCommunications";
+import { useToast } from "@/hooks/use-toast";
 import type {
   MessageTemplateCreate,
   ReminderScheduleCreate,
@@ -92,9 +96,15 @@ export default function Communications() {
   });
 
   // Form states for settings
+  // PRODUCT DECISION (safe default): per-practice SMS/email provider
+  // credentials have no backend persistence yet (CommunicationSettings model
+  // exists but has no table/endpoint; GET /communications/settings returns
+  // stats only). Do NOT accept secrets in this UI until persistence + KMS
+  // envelope encryption exist. Toggles below are display-only.
   const [smsEnabled, setSmsEnabled] = useState(false);
   const [emailEnabled, setEmailEnabled] = useState(false);
   const [autoRemindersEnabled, setAutoRemindersEnabled] = useState(false);
+  const { toast } = useToast();
 
   const {
     templates,
@@ -118,14 +128,17 @@ export default function Communications() {
     summary,
     summaryLoading,
     fetchSummary,
+    error,
   } = useCommunications();
 
   // Load data on mount
   useEffect(() => {
-    fetchTemplates();
-    fetchReminders();
-    fetchConversations();
-    fetchSummary();
+    void Promise.allSettled([
+      fetchTemplates(),
+      fetchReminders(),
+      fetchConversations(),
+      fetchSummary(),
+    ]);
   }, [fetchTemplates, fetchReminders, fetchConversations, fetchSummary]);
 
   // Filter conversations by search term
@@ -143,9 +156,17 @@ export default function Communications() {
       content: newMessage.trim(),
     };
 
-    const result = await sendConversationMessage(selectedConversation, messageData);
-    if (result) {
-      setNewMessage("");
+    try {
+      const result = await sendConversationMessage(selectedConversation, messageData);
+      if (result) {
+        setNewMessage("");
+      }
+    } catch {
+      toast({
+        title: "Message not sent",
+        description: "Could not send the message. It was preserved in the input; please retry.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -164,14 +185,24 @@ export default function Communications() {
       isDefault: newTemplate.isDefault!,
     };
 
-    if (editingTemplate) {
-      await updateTemplate(editingTemplate, templateData);
-    } else {
-      await createTemplate(templateData);
-    }
+    try {
+      if (editingTemplate) {
+        await updateTemplate(editingTemplate, templateData);
+        toast({ title: "Message template updated" });
+      } else {
+        await createTemplate(templateData);
+        toast({ title: "Message template created" });
+      }
 
-    setShowTemplateDialog(false);
-    resetTemplateForm();
+      setShowTemplateDialog(false);
+      resetTemplateForm();
+    } catch {
+      toast({
+        title: "Template not saved",
+        description: "Could not save the template. Your edits are preserved; please retry.",
+        variant: "destructive",
+      });
+    }
   };
 
   // Handle creating/updating reminder
@@ -191,14 +222,63 @@ export default function Communications() {
       templateId: newReminder.templateId,
     };
 
-    if (editingReminder) {
-      await updateReminder(editingReminder, reminderData);
-    } else {
-      await createReminder(reminderData);
-    }
+    try {
+      if (editingReminder) {
+        await updateReminder(editingReminder, reminderData);
+        toast({ title: "Reminder schedule updated" });
+      } else {
+        await createReminder(reminderData);
+        toast({ title: "Reminder schedule created" });
+      }
 
-    setShowReminderDialog(false);
-    resetReminderForm();
+      setShowReminderDialog(false);
+      resetReminderForm();
+    } catch {
+      toast({
+        title: "Reminder not saved",
+        description: "Could not save the reminder. Your edits are preserved; please retry.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteTemplate = async (id: string) => {
+    try {
+      await deleteTemplate(id);
+      toast({ title: "Message template deleted" });
+    } catch {
+      toast({
+        title: "Delete failed",
+        description: "Could not delete the template. Please retry.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteReminder = async (id: string) => {
+    try {
+      await deleteReminder(id);
+      toast({ title: "Reminder schedule deleted" });
+    } catch {
+      toast({
+        title: "Delete failed",
+        description: "Could not delete the reminder. Please retry.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSelectConversation = async (id: string) => {
+    setSelectedConversation(id);
+    try {
+      await selectConversation(id);
+    } catch {
+      toast({
+        title: "Could not load messages",
+        description: "Conversation list is preserved; please retry.",
+        variant: "destructive",
+      });
+    }
   };
 
   const resetTemplateForm = () => {
@@ -284,6 +364,16 @@ export default function Communications() {
           New Message
         </Button>
       </div>
+
+      {error && (
+        <Alert variant="destructive" role="alert">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Communication data unavailable</AlertTitle>
+          <AlertDescription>
+            {error.message}. Existing data is preserved; retry after the service recovers.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -375,9 +465,8 @@ export default function Communications() {
                         className={`p-4 cursor-pointer hover:bg-muted/50 ${
                           selectedConversation === conv.id ? "bg-muted" : ""
                         }`}
-                        onClick={async () => {
-                          setSelectedConversation(conv.id);
-                          await selectConversation(conv.id);
+                        onClick={() => {
+                          void handleSelectConversation(conv.id);
                         }}
                       >
                         <div className="flex justify-between items-start">
@@ -459,11 +548,11 @@ export default function Communications() {
                         onKeyDown={(e) => {
                           if (e.key === "Enter" && !e.shiftKey) {
                             e.preventDefault();
-                            handleSendMessage();
+                            void handleSendMessage();
                           }
                         }}
                       />
-                      <Button className="self-end" onClick={handleSendMessage}>
+                      <Button className="self-end" onClick={() => void handleSendMessage()}>
                         <Send className="h-4 w-4" />
                       </Button>
                     </div>
@@ -535,7 +624,7 @@ export default function Communications() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => deleteReminder(reminder.id)}
+                              onClick={() => void handleDeleteReminder(reminder.id)}
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
@@ -606,7 +695,7 @@ export default function Communications() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => deleteTemplate(template.id)}
+                            onClick={() => void handleDeleteTemplate(template.id)}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -709,7 +798,22 @@ export default function Communications() {
                 )}
               </div>
 
-              <Button className="w-full">Save Settings</Button>
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Provider settings are managed by your administrator</AlertTitle>
+                <AlertDescription>
+                  SMS/email delivery is configured server-side (Twilio/SendGrid). Per-practice
+                  credential storage is not available in this build, so these toggles are
+                  display-only and nothing here is persisted.
+                </AlertDescription>
+              </Alert>
+              <Button
+                className="w-full"
+                disabled
+                title="Per-practice provider settings are not yet persisted by the API"
+              >
+                Save Settings (unavailable)
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -720,6 +824,9 @@ export default function Communications() {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editingTemplate ? "Edit Template" : "Create Template"}</DialogTitle>
+            <DialogDescription>
+              Configure reusable SMS or email content for patient communication workflows.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -807,7 +914,7 @@ export default function Communications() {
               <Button variant="outline" onClick={() => setShowTemplateDialog(false)}>
                 Cancel
               </Button>
-              <Button onClick={handleSaveTemplate} disabled={templatesLoading}>
+              <Button onClick={() => void handleSaveTemplate()} disabled={templatesLoading}>
                 {templatesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Template"}
               </Button>
             </div>
@@ -820,6 +927,9 @@ export default function Communications() {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editingReminder ? "Edit Reminder" : "Create Reminder Schedule"}</DialogTitle>
+            <DialogDescription>
+              Choose when automated patient reminders are sent and which template they use.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -930,7 +1040,7 @@ export default function Communications() {
               <Button variant="outline" onClick={() => setShowReminderDialog(false)}>
                 Cancel
               </Button>
-              <Button onClick={handleSaveReminder} disabled={remindersLoading}>
+              <Button onClick={() => void handleSaveReminder()} disabled={remindersLoading}>
                 {remindersLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Reminder"}
               </Button>
             </div>

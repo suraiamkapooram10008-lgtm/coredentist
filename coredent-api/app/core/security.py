@@ -41,18 +41,35 @@ from app.core.config_simple import settings
 # effective.  This is the same pattern recommended by the bcrypt author
 # (https://github.com/pyca/bcrypt#security).
 import hashlib
+import base64
 
 
 def _bcrypt_input(password: str) -> bytes:
     """Hash a password with SHA-256 before bcrypt (handles long passwords
-    safely, deterministic per password)."""
-    return hashlib.sha256(password.encode("utf-8")).digest()
+    safely, deterministic per password).
+
+    NOTE: the digest is base64-encoded, not raw. Raw SHA-256 output can
+    contain NUL (0x00) bytes (~11.8% of digests), which bcrypt rejects
+    with ValueError — previously locking those users out of login.
+    """
+    return base64.b64encode(hashlib.sha256(password.encode("utf-8")).digest())
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its bcrypt hash."""
+    """Verify a password against its bcrypt hash.
+
+    Tries the current base64(SHA-256) pre-hash first, then falls back to
+    the legacy raw-digest pre-hash so existing password hashes remain
+    valid until the user next resets their password.
+    """
+    hashed = hashed_password.encode("utf-8")
     try:
-        return bcrypt.checkpw(_bcrypt_input(plain_password), hashed_password.encode("utf-8"))
+        if bcrypt.checkpw(_bcrypt_input(plain_password), hashed):
+            return True
+        # Legacy format: raw SHA-256 digest (may itself contain NUL bytes,
+        # which is why it was replaced).
+        legacy = hashlib.sha256(plain_password.encode("utf-8")).digest()
+        return bcrypt.checkpw(legacy, hashed)
     except (ValueError, TypeError):
         # Malformed hash (e.g. legacy non-bcrypt row): fail closed.
         return False
@@ -69,8 +86,11 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     Validate password meets HIPAA-compliant requirements.
     Returns: (is_valid, error_message)
     """
-    if len(password) < settings.PASSWORD_MIN_LENGTH:
-        return False, f"Password must be at least {settings.PASSWORD_MIN_LENGTH} characters"
+    # F-2 FIX: floor the env-configurable minimum at 8 so an operator cannot
+    # silently weaken the policy to PASSWORD_MIN_LENGTH=1 via env.
+    effective_min = max(int(settings.PASSWORD_MIN_LENGTH or 0), 8)
+    if len(password) < effective_min:
+        return False, f"Password must be at least {effective_min} characters"
 
     if settings.PASSWORD_REQUIRE_UPPERCASE and not re.search(r"[A-Z]", password):
         return False, "Password must contain at least one uppercase letter"
@@ -184,8 +204,3 @@ def hash_token(token: str) -> str:
     security here and only hurts UX (login latency).
     """
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def generate_invitation_token() -> str:
-    """Generate a secure staff invitation token."""
-    return secrets.token_urlsafe(32)

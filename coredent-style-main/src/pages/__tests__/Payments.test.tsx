@@ -15,6 +15,11 @@ vi.mock("@/hooks/usePayments", () => ({
   useTerminals: vi.fn(),
 }));
 
+// Payments formats money via useCurrencyFormatter, which reads the auth user.
+vi.mock("@/contexts/auth-context", () => ({
+  useAuth: () => ({ user: null }),
+}));
+
 const mockedStats = vi.mocked(usePaymentStats);
 const mockedTransactions = vi.mocked(useTransactions);
 const mockedRecurring = vi.mocked(useRecurringPlans);

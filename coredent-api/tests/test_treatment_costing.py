@@ -19,10 +19,11 @@ async def test_calculate_treatment_cost_totals():
     mock_db.execute.return_value = mock_result
 
     result = await TreatmentCostingService.calculate_treatment_cost(mock_db, uuid4())
+    # The service returns cent-quantized money strings (Decimal-safe), not floats.
     assert result == {
-        "total_fee": 150.0,
-        "total_insurance_estimate": 80.0,
-        "total_patient_responsibility": 70.0,
+        "total_fee": "150.00",
+        "total_insurance_estimate": "80.00",
+        "total_patient_responsibility": "70.00",
     }
 
 
@@ -34,7 +35,7 @@ async def test_estimate_insurance_coverage_missing_insurance():
     mock_db.execute.return_value = mock_result
 
     result = await TreatmentCostingService.estimate_insurance_coverage(mock_db, uuid4(), [])
-    assert result["total_fee"] == 0
+    assert result["total_fee"] == "0.0"
     assert result["procedure_estimates"] == []
 
 
@@ -62,9 +63,9 @@ async def test_estimate_insurance_coverage_with_procedures():
     ]
 
     result = await TreatmentCostingService.estimate_insurance_coverage(mock_db, uuid4(), procedures)
-    assert result["total_fee"] == 300.0
-    assert result["total_insurance_estimate"] == 100.0 + 160.0
-    assert result["total_patient_responsibility"] == 300.0 - (100.0 + 160.0)
+    assert result["total_fee"] == "300.00"
+    assert result["total_insurance_estimate"] == "260.00"
+    assert result["total_patient_responsibility"] == "40.00"
     assert len(result["procedure_estimates"]) == 2
 
 
@@ -78,9 +79,9 @@ async def test_calculate_patient_responsibility_no_procs():
 
     result = await TreatmentCostingService.calculate_patient_responsibility(mock_db, uuid4())
     assert result == {
-        "total_fee": 0,
-        "insurance_coverage": 0,
-        "patient_responsibility": 0,
+        "total_fee": "0.0",
+        "insurance_coverage": "0.0",
+        "patient_responsibility": "0.0",
     }
 
 
@@ -119,7 +120,7 @@ async def test_get_cost_breakdown_groups_by_type():
     mock_db.execute.return_value = mock_result
 
     result = await TreatmentCostingService.get_cost_breakdown(mock_db, uuid4())
-    assert result["total_fee"] == 300.0
+    assert result["total_fee"] == "300.00"
     assert result["breakdown_by_type"][ProcedureType.PREVENTIVE]["count"] == 1
-    assert result["breakdown_by_type"][ProcedureType.RESTORATIVE]["total_fee"] == 200.0
+    assert result["breakdown_by_type"][ProcedureType.RESTORATIVE]["total_fee"] == "200.00"
     assert result["procedure_count"] == 2

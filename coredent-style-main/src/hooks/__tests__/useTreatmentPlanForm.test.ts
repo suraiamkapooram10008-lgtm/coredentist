@@ -11,12 +11,16 @@ function makePlan(overrides: Partial<TreatmentPlan> = {}): TreatmentPlan {
   return {
     id: '1',
     title: 'Root Canal',
-    description: 'Complex root canal treatment',
+    treatmentGoals: 'Complex root canal treatment',
     patientId: 'p1',
+    providerId: 'provider-1',
     patientName: 'John Doe',
-    status: 'proposed',
+    status: 'draft',
+    totalEstimatedCost: 0,
+    totalInsuranceEstimate: 0,
+    totalPatientResponsibility: 0,
     procedures: [],
-    createdBy: 'dentist-1',
+    phases: [],
     notes: 'Follow up after 2 weeks',
     ...overrides,
   };
@@ -27,7 +31,7 @@ describe('useTreatmentPlanForm', () => {
     const { result } = renderHook(() => useTreatmentPlanForm());
 
     expect(result.current.formData.title).toBe('');
-    expect(result.current.formData.description).toBe('');
+    expect(result.current.formData.treatmentGoals).toBe('');
     expect(result.current.formData.patientName).toBe('');
     expect(result.current.formData.notes).toBe('');
     expect(result.current.errors).toEqual({});
@@ -39,7 +43,7 @@ describe('useTreatmentPlanForm', () => {
     const { result } = renderHook(() => useTreatmentPlanForm(plan));
 
     expect(result.current.formData.title).toBe('Root Canal');
-    expect(result.current.formData.description).toBe('Complex root canal treatment');
+    expect(result.current.formData.treatmentGoals).toBe('Complex root canal treatment');
     expect(result.current.formData.patientName).toBe('John Doe');
     expect(result.current.formData.notes).toBe('Follow up after 2 weeks');
   });
@@ -86,7 +90,7 @@ describe('useTreatmentPlanForm', () => {
     const { result } = renderHook(() => useTreatmentPlanForm());
 
     act(() => {
-      result.current.updateField('title', 'a'.repeat(101));
+      result.current.updateField('title', 'a'.repeat(256));
       const isValid = result.current.validate();
       expect(isValid).toBe(false);
     });
@@ -94,18 +98,18 @@ describe('useTreatmentPlanForm', () => {
     expect(result.current.errors.title).toBeDefined();
   });
 
-  it('should validate description length', () => {
+  it('should validate treatmentGoals length', () => {
     const { result } = renderHook(() => useTreatmentPlanForm());
 
     act(() => {
       result.current.updateField('title', 'Valid Title');
       result.current.updateField('patientName', 'John Doe');
-      result.current.updateField('description', 'a'.repeat(501));
+      result.current.updateField('treatmentGoals', 'a'.repeat(2001));
       const isValid = result.current.validate();
       expect(isValid).toBe(false);
     });
 
-    expect(result.current.errors.description).toBeDefined();
+    expect(result.current.errors.treatmentGoals).toBeDefined();
   });
 
   it('should validate notes length', () => {
@@ -114,7 +118,7 @@ describe('useTreatmentPlanForm', () => {
     act(() => {
       result.current.updateField('title', 'Valid Title');
       result.current.updateField('patientName', 'John Doe');
-      result.current.updateField('notes', 'a'.repeat(1001));
+      result.current.updateField('notes', 'a'.repeat(2001));
       const isValid = result.current.validate();
       expect(isValid).toBe(false);
     });
@@ -128,7 +132,7 @@ describe('useTreatmentPlanForm', () => {
     act(() => {
       result.current.updateField('title', 'Root Canal');
       result.current.updateField('patientName', 'John Doe');
-      result.current.updateField('description', 'Complex treatment');
+      result.current.updateField('treatmentGoals', 'Complex treatment');
       result.current.updateField('notes', 'Follow up required');
       const isValid = result.current.validate();
       expect(isValid).toBe(true);
@@ -154,7 +158,7 @@ describe('useTreatmentPlanForm', () => {
   it('should handle plan updates', () => {
     const initialPlan = makePlan({
       title: 'Initial Title',
-      description: 'Initial description',
+      treatmentGoals: 'Initial treatmentGoals',
       notes: 'Initial notes',
     });
 

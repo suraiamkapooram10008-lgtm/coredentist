@@ -181,22 +181,25 @@ export function debounceAsync<T extends (...args: any[]) => Promise<any>>(
   delay: number
 ): (...args: Parameters<T>) => Promise<ReturnType<T>> {
   let timeoutId: NodeJS.Timeout;
-  let latestResolve: (value: any) => void;
-  let latestReject: (error: any) => void;
+  // Track ALL pending callers, not just the latest — previously only the
+  // most recent resolve/reject were stored, so earlier callers' promises
+  // never settled and their `await` hung forever.
+  let pending: Array<{ resolve: (value: any) => void; reject: (error: any) => void }> = [];
 
   return (...args: Parameters<T>): Promise<ReturnType<T>> => {
     clearTimeout(timeoutId);
 
     return new Promise((resolve, reject) => {
-      latestResolve = resolve;
-      latestReject = reject;
+      pending.push({ resolve, reject });
 
       timeoutId = setTimeout(async () => {
+        const callers = pending;
+        pending = [];
         try {
           const result = await fn(...args);
-          latestResolve(result);
+          callers.forEach((c) => c.resolve(result));
         } catch (error) {
-          latestReject(error);
+          callers.forEach((c) => c.reject(error));
         }
       }, delay);
     });

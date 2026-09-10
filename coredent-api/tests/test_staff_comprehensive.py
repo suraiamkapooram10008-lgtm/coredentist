@@ -6,7 +6,6 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User, UserRole
 
@@ -90,7 +89,7 @@ class TestStaffCRUD:
         response = await client.put(
             f"/api/v1/staff/{staff.id}",
             headers=auth_headers,
-            json={"first_name": "Updated", "phone": "555-9999"},
+            json={"first_name": "Updated"},
         )
         assert response.status_code == 200
         data = response.json()

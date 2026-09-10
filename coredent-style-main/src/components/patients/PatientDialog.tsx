@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/contexts/auth-context';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Calendar } from '@/components/ui/calendar';
@@ -33,6 +34,8 @@ import {
 import { cn } from '@/lib/utils';
 import { patientApi } from '@/services/patientApi';
 import { triggerAutomation } from '@/services/automationApi';
+import { useToast } from '@/hooks/use-toast';
+import { logger } from '@/lib/logger';
 import type { PatientRecord, PatientFormData } from '@/types/patient';
 import { defaultMedicalHistory, defaultDentalHistory } from '@/types/patient';
 import { US_STATES } from '@/types/clinic';
@@ -70,6 +73,9 @@ export function PatientDialog({
   onSave,
   region,
 }: PatientDialogProps) {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const clinicName = user?.practiceName?.trim() || 'Your dental clinic';
   const [activeTab, setActiveTab] = useState('basic');
   const [isSaving, setIsSaving] = useState(false);
   const [medicalAlerts, setMedicalAlerts] = useState<string[]>([]);
@@ -176,18 +182,32 @@ export function PatientDialog({
         await patientApi.updatePatient(patient.id, patientData);
       } else {
         const newPatient = await patientApi.createPatient(patientData);
-        // Trigger patient_registered automation
-        triggerAutomation('patient_registered', {
+        // Trigger patient_registered automation (fire-and-forget: the save
+        // already succeeded, a webhook failure must not reject the save)
+        Promise.resolve(triggerAutomation('patient_registered', {
           patientId: newPatient?.id || '',
           patientName: `${data.firstName} ${data.lastName}`,
           patientPhone: data.phone,
           patientEmail: data.email,
-          clinicName: 'CoreDent Clinic',
+          clinicName,
+        })).catch((automationError) => {
+          logger.warn('patient_registered automation failed', {
+            error: automationError instanceof Error ? automationError.message : String(automationError),
+          });
         });
       }
       onSave();
-    } catch {
-      // Save failed - user can retry
+    } catch (error) {
+      // Surface the failure — silently swallowing it left the user with no
+      // idea their changes were not persisted.
+      toast({
+        title: 'Error',
+        description:
+          error instanceof Error
+            ? error.message
+            : `Failed to ${isEditing ? 'update' : 'create'} patient. Please try again.`,
+        variant: 'destructive',
+      });
     } finally {
       setIsSaving(false);
     }
@@ -318,30 +338,6 @@ export function PatientDialog({
                       placeholder={region === 'IN' ? '+91 XXXX-XXXXXX' : '(555) 123-4567'}
                     />
                   </div>
-                </div>
-
-                <div className="space-y-4 pt-4 border-t">
-                  <h4 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Regional Identifiers</h4>
-                  {region === 'US' ? (
-                     <div className="space-y-2">
-                        <Label htmlFor="ssnLastFour">SSN (Last 4 Digits) *</Label>
-                        <Input
-                          id="ssnLastFour"
-                          maxLength={4}
-                          placeholder="1234"
-                        />
-                        <p className="text-xs text-muted-foreground">Required for US HIPAA clinical records.</p>
-                     </div>
-                  ) : (
-                     <div className="space-y-2">
-                        <Label htmlFor="abhaId">ABHA ID (India Health ID) *</Label>
-                        <Input
-                          id="abhaId"
-                          placeholder="XX-XXXX-XXXX-XXXX"
-                        />
-                        <p className="text-xs text-muted-foreground">National Digital Health Mission (ABDM) identifier.</p>
-                     </div>
-                  )}
                 </div>
               </TabsContent>
 

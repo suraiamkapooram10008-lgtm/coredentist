@@ -1,9 +1,12 @@
 /**
- * Documents Page
- * Document templates, e-signatures, and management
+ * Documents Page (DEV-ONLY: /documents serves ProductAvailability; this file
+ * is not user-facing via routes/config.tsx).
+ * E-signature/DocuSign actions are not wired (backend has list/create only)
+ * — buttons are disabled with explicit titles so nothing looks actionable.
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,23 +32,43 @@ import {
   Send,
   Trash2
 } from "lucide-react";
+import { documentsApi, type DocumentSummary, type DocumentTemplateSummary } from "@/services/documentsApi";
+
+import { requireApiData } from "@/services/apiResponse";
 
 export default function Documents() {
   const [searchTerm, setSearchTerm] = useState("");
 
-  const templates = [
-    { id: "1", name: "Patient Consent Form", type: "Consent", lastUpdated: "Jan 15, 2026", usage: 145 },
-    { id: "2", name: "HIPAA Privacy Notice", type: "Legal", lastUpdated: "Dec 1, 2025", usage: 89 },
-    { id: "3", name: "Treatment Plan Agreement", type: "Financial", lastUpdated: "Feb 5, 2026", usage: 67 },
-    { id: "4", name: "Financial Policy", type: "Financial", lastUpdated: "Jan 20, 2026", usage: 112 },
-  ];
+  const { data: templates = [], isLoading: templatesLoading } = useQuery<DocumentTemplateSummary[]>({
+    queryKey: ["document-templates"],
+    queryFn: async () => requireApiData(await documentsApi.listTemplates(), "load document templates"),
+  });
 
-  const documents = [
-    { id: "1", name: "Consent Form - John Smith", patient: "John Smith", type: "Consent", status: "Signed", date: "Feb 10, 2026" },
-    { id: "2", name: "Treatment Plan - Jane Doe", patient: "Jane Doe", type: "Treatment", status: "Pending Signature", date: "Feb 12, 2026" },
-    { id: "3", name: "HIPAA - Bob Johnson", patient: "Bob Johnson", type: "Legal", status: "Sent", date: "Feb 11, 2026" },
-    { id: "4", name: "Financial Policy - Mary Wilson", patient: "Mary Wilson", type: "Financial", status: "Signed", date: "Feb 8, 2026" },
-  ];
+  const { data: documents = [], isLoading: documentsLoading } = useQuery<DocumentSummary[]>({
+    queryKey: ["documents"],
+    queryFn: async () => requireApiData(await documentsApi.listDocuments(), "load documents"),
+  });
+
+  // Derived counters for the summary cards (L-5 fix: no more hardcoded
+  // numbers; the values come from the same data source as the tables).
+  // The backend returns ``date`` in "Mon DD, YYYY" format (e.g. "Feb 10,
+  // 2026"); we compare it to today's local-string equivalent.
+  const todayString = new Date().toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const signedToday = useMemo(
+    () =>
+      documents.filter(
+        (d) => d.status === "Signed" && d.date === todayString,
+      ).length,
+    [documents, todayString],
+  );
+  const pendingSignatures = useMemo(
+    () => documents.filter((d) => d.status === "Pending Signature").length,
+    [documents],
+  );
 
   return (
     <div className="container mx-auto py-6 space-y-6">
@@ -55,12 +78,10 @@ export default function Documents() {
           <p className="text-muted-foreground">Templates, e-signatures, and patient documents</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline">
-            <Plus className="mr-2 h-4 w-4" />
+          <Button variant="outline" disabled title="Not wired in this build">`r`n            <Plus className="mr-2 h-4 w-4" />
             New Template
           </Button>
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
+          <Button disabled title="Not wired in this build">`r`n            <Plus className="mr-2 h-4 w-4" />
             Create Document
           </Button>
         </div>
@@ -74,7 +95,7 @@ export default function Documents() {
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">12</div>
+            <div className="text-2xl font-bold">{templates.length}</div>
             <p className="text-xs text-muted-foreground">available</p>
           </CardContent>
         </Card>
@@ -84,7 +105,7 @@ export default function Documents() {
             <Clock className="h-4 w-4 text-yellow-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-yellow-500">5</div>
+            <div className="text-2xl font-bold text-yellow-500">{pendingSignatures}</div>
             <p className="text-xs text-muted-foreground">awaiting completion</p>
           </CardContent>
         </Card>
@@ -94,18 +115,18 @@ export default function Documents() {
             <FileSignature className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-500">8</div>
+            <div className="text-2xl font-bold text-green-500">{signedToday}</div>
             <p className="text-xs text-muted-foreground">documents completed</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">This Month</CardTitle>
+            <CardTitle className="text-sm font-medium">Total</CardTitle>
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">45</div>
-            <p className="text-xs text-muted-foreground">total signed</p>
+            <div className="text-2xl font-bold">{documents.length}</div>
+            <p className="text-xs text-muted-foreground">documents</p>
           </CardContent>
         </Card>
       </div>
@@ -147,37 +168,51 @@ export default function Documents() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {documents.map((doc) => (
-                    <TableRow key={doc.id}>
-                      <TableCell className="font-medium">{doc.name}</TableCell>
-                      <TableCell>{doc.patient}</TableCell>
-                      <TableCell><Badge variant="outline">{doc.type}</Badge></TableCell>
-                      <TableCell>
-                        <Badge className={
-                          doc.status === 'Signed' ? 'bg-green-500' : 
-                          doc.status === 'Pending Signature' ? 'bg-yellow-500' : 'bg-blue-500'
-                        }>
-                          {doc.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{doc.date}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="ghost">
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost">
-                            <Download className="h-4 w-4" />
-                          </Button>
-                          {doc.status !== 'Signed' && (
-                            <Button size="sm" variant="ghost">
-                              <Send className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
+                  {documentsLoading ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-muted-foreground">
+                        Loading documents…
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : documents.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-muted-foreground">
+                        No documents yet. Assign a template to a patient to get started.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    documents.map((doc) => (
+                      <TableRow key={doc.id}>
+                        <TableCell className="font-medium">{doc.name}</TableCell>
+                        <TableCell>{doc.patient}</TableCell>
+                        <TableCell><Badge variant="outline">{doc.type}</Badge></TableCell>
+                        <TableCell>
+                          <Badge className={
+                            doc.status === 'Signed' ? 'bg-green-500' :
+                            doc.status === 'Pending Signature' ? 'bg-yellow-500' : 'bg-blue-500'
+                          }>
+                            {doc.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{doc.date}</TableCell>
+                        <TableCell>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="ghost">
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button size="sm" variant="ghost">
+                              <Download className="h-4 w-4" />
+                            </Button>
+                            {doc.status !== 'Signed' && (
+                              <Button size="sm" variant="ghost">
+                                <Send className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
@@ -201,27 +236,41 @@ export default function Documents() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {templates.map((template) => (
-                    <TableRow key={template.id}>
-                      <TableCell className="font-medium">{template.name}</TableCell>
-                      <TableCell><Badge variant="outline">{template.type}</Badge></TableCell>
-                      <TableCell>{template.lastUpdated}</TableCell>
-                      <TableCell>{template.usage}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="ghost">
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost">
-                            <Download className="h-4 w-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost">
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
-                        </div>
+                  {templatesLoading ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                        Loading templates…
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : templates.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                        No templates yet. Create one from Settings to get started.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    templates.map((template) => (
+                      <TableRow key={template.id}>
+                        <TableCell className="font-medium">{template.name}</TableCell>
+                        <TableCell><Badge variant="outline">{template.type}</Badge></TableCell>
+                        <TableCell>{template.lastUpdated ?? "—"}</TableCell>
+                        <TableCell>{template.usage}</TableCell>
+                        <TableCell>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="ghost">
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button size="sm" variant="ghost">
+                              <Download className="h-4 w-4" />
+                            </Button>
+                            <Button size="sm" variant="ghost">
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>

@@ -5,7 +5,7 @@ Pydantic models for online booking API
 
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime, time
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
 import uuid as uuid_lib
 
 from app.models.booking import (
@@ -106,24 +106,52 @@ class BookingPageResponse(BookingPageBase):
     """Schema for booking page response"""
     id: uuid_lib.UUID
     practice_id: uuid_lib.UUID
+    practice_public_slug: str
     total_bookings: int
     total_views: int
     conversion_rate: int
     created_at: datetime
     updated_at: datetime
 
+    @model_validator(mode="before")
+    @classmethod
+    def _load_practice_slug(cls, data):
+        """Inject practice_public_slug from the loaded practice relationship."""
+        practice = getattr(data, "practice", None)
+        slug = getattr(practice, "public_slug", None) if practice else None
+        d = dict(data.__dict__) if hasattr(data, "__dict__") else dict(data)
+        d["practice_public_slug"] = slug
+        return d
+
     class Config:
         from_attributes = True
 
 
 class BookingPageListResponse(BaseModel):
-    """Schema for listing booking pages"""
+    """Schema for a bounded page of booking pages."""
     pages: List[BookingPageResponse]
     count: int
+    total: Optional[int] = None
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+    next_offset: Optional[int] = None
+
+
+class AppointmentTypePublicInfo(BaseModel):
+    id: uuid_lib.UUID
+    name: str
+    duration_minutes: int = 30
+    description: Optional[str] = None
+    color: Optional[str] = None
+    icon: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
 class BookingPagePublicResponse(BaseModel):
     """Public-facing booking page response (no sensitive data)"""
+    practice_public_slug: str
     page_slug: str
     page_title: str
     welcome_message: Optional[str]
@@ -136,11 +164,14 @@ class BookingPagePublicResponse(BaseModel):
     require_email_verification: bool
     booking_window_days: int
     min_notice_hours: int
+    practice_timezone: str
     business_hours: Dict[str, BusinessHours]
     blocked_dates: List[date]
     intake_form_fields: List[IntakeFormField]
     require_insurance_info: bool
     require_medical_history: bool
+    allowed_appointment_types: List[str] = Field(default_factory=list)
+    appointment_types: List[AppointmentTypePublicInfo] = Field(default_factory=list)
 
 
 # Online Booking Schemas
@@ -149,8 +180,17 @@ class OnlineBookingBase(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
-    phone: str = Field(..., min_length=10, max_length=20)
+    phone: str = Field(..., min_length=10, max_length=32)
     date_of_birth: Optional[date] = None
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, value: str) -> str:
+        raw = value.strip()
+        digits = "".join(character for character in raw if character.isdigit())
+        if not 10 <= len(digits) <= 15:
+            raise ValueError("phone must contain between 10 and 15 digits")
+        return f"+{digits}" if raw.startswith("+") else digits
     is_new_patient: bool = True
     appointment_type_id: Optional[uuid_lib.UUID] = None
     provider_id: Optional[uuid_lib.UUID] = None
@@ -172,14 +212,18 @@ class OnlineBookingBase(BaseModel):
 
 
 class OnlineBookingCreate(OnlineBookingBase):
-    """Schema for creating an online booking"""
-    pass
+    """Schema for creating a complete, confirmable online booking."""
+    appointment_type_id: uuid_lib.UUID
+    date_of_birth: date
+    honeypot: Optional[str] = None
+    captcha_token: Optional[str] = None
 
 
 class OnlineBookingUpdate(BaseModel):
-    """Schema for updating an online booking"""
+    """Schema for staff-managed online booking updates."""
     status: Optional[BookingStatus] = None
     appointment_id: Optional[uuid_lib.UUID] = None
+    patient_id: Optional[uuid_lib.UUID] = None
     staff_notes: Optional[str] = None
     cancellation_reason: Optional[str] = None
 
@@ -210,13 +254,18 @@ class OnlineBookingResponse(OnlineBookingBase):
 
 
 class OnlineBookingPublicResponse(BaseModel):
-    """Public-facing online booking response (No sensitive UUIDs)"""
+    """Public booking result with an opaque, short-lived verification session."""
     confirmation_code: str
     status: BookingStatus
     first_name: str
     last_name: str
     requested_date: date
     requested_time: time
+    verification_session: str
+    require_email_verification: bool
+    require_phone_verification: bool
+    email_verified: bool = False
+    phone_verified: bool = False
     message: str = "Booking request submitted successfully"
 
     class Config:
@@ -224,9 +273,13 @@ class OnlineBookingPublicResponse(BaseModel):
 
 
 class OnlineBookingListResponse(BaseModel):
-    """Schema for listing online bookings"""
+    """Schema for a bounded page of online bookings."""
     bookings: List[OnlineBookingResponse]
     count: int
+    total: Optional[int] = None
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+    next_offset: Optional[int] = None
 
 
 # Waitlist Schemas
@@ -275,9 +328,13 @@ class WaitlistEntryResponse(WaitlistEntryBase):
 
 
 class WaitlistEntryListResponse(BaseModel):
-    """Schema for listing waitlist entries"""
+    """Schema for a bounded page of waitlist entries."""
     entries: List[WaitlistEntryResponse]
     count: int
+    total: Optional[int] = None
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+    next_offset: Optional[int] = None
 
 
 # Availability Schemas
@@ -300,12 +357,12 @@ class DayAvailability(BaseModel):
 
 
 class AvailabilityRequest(BaseModel):
-    """Request for availability"""
+    """Request for availability."""
     start_date: date
     end_date: date
     appointment_type_id: Optional[uuid_lib.UUID] = None
     provider_id: Optional[uuid_lib.UUID] = None
-    duration_minutes: int = 30
+    duration_minutes: int = Field(30, ge=5, le=480)
 
 
 class AvailabilityResponse(BaseModel):
@@ -316,21 +373,26 @@ class AvailabilityResponse(BaseModel):
 
 # Verification Schemas
 class EmailVerificationRequest(BaseModel):
-    """Request to verify email"""
-    booking_id: uuid_lib.UUID
-    verification_token: str
+    """Verify email through an opaque, short-lived booking session."""
+    verification_session: str = Field(..., min_length=1, max_length=4096)
+    verification_token: str = Field(..., min_length=16, max_length=256)
 
 
 class PhoneVerificationRequest(BaseModel):
-    """Request to verify phone"""
-    booking_id: uuid_lib.UUID
-    verification_code: str
+    """Verify phone through an opaque, short-lived booking session."""
+    verification_session: str
+    verification_code: str = Field(..., pattern=r"^\d{6}$")
 
 
 class VerificationResponse(BaseModel):
-    """Verification response"""
+    """Public verification state without exposing an internal booking UUID."""
     verified: bool
     message: str
+    confirmation_code: Optional[str] = None
+    email_verified: bool = False
+    phone_verified: bool = False
+    require_email_verification: bool = False
+    require_phone_verification: bool = False
 
 
 # Confirmation Schemas

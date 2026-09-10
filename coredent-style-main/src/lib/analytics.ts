@@ -1,7 +1,92 @@
 // Analytics Integration
 // PostHog for product analytics
+//
+// L-2 FIX: ``_PHI_BLOCKED_KEYS`` is a hard deny-list applied to every
+// event payload and every ``identify`` call. PostHog captures anything
+// passed to ``capture()` or ``identify()`` server-side, so any caller
+// that includes a patient name, email, phone, DOB, or any field that
+// mentions the words ``name``, ``email``, ``phone``, ``dob``, ``ssn``,
+// or ``address`` will be silently stripped. Operational metadata
+// (userId, role, practiceId, feature names, counters) flows through
+// unchanged.
 
 import { logger } from './logger';
+
+// Keys we refuse to forward to PostHog. The values can still flow
+// (a ``userId`` is a UUID, not a name); the *keys* are the leak.
+const _PHI_BLOCKED_KEYS: ReadonlySet<string> = new Set([
+  'email',
+  'practiceName',
+  'practice_name',
+  'firstName',
+  'first_name',
+  'lastName',
+  'last_name',
+  'fullName',
+  'full_name',
+  'patientName',
+  'patient_name',
+  'phone',
+  'dob',
+  'dateOfBirth',
+  'date_of_birth',
+  'address',
+  'homeAddress',
+  'home_address',
+  'ssn',
+  'insuranceMemberId',
+  'insurance_member_id',
+  'patientEmail',
+  'patient_email',
+  'patientPhone',
+  'patient_phone',
+  'patientDob',
+  'patient_dob',
+  'name',
+]);
+
+// Substring denylist for keys we did not anticipate. The cost of
+// over-blocking here is one extra property in a product dashboard;
+// the cost of under-blocking is a PHI leak. ``patientId`` is a UUID
+// and is intentionally NOT on this list; it is safe operational data.
+const _PHI_SUBSTRINGS: readonly string[] = [
+  'patientName',
+  'patient_name',
+  'patientEmail',
+  'patient_email',
+  'patientPhone',
+  'patient_phone',
+  'patientDob',
+  'patient_dob',
+  'practiceName',
+  'practice_name',
+  'insurance',
+  'address',
+];
+
+function _is_phikey(key: string): boolean {
+  if (_PHI_BLOCKED_KEYS.has(key)) {
+    return true;
+  }
+  const k = key.toLowerCase();
+  return _PHI_SUBSTRINGS.some((needle) => k.includes(needle));
+}
+
+function _redact_phi(
+  properties: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!properties) {
+    return properties;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(properties)) {
+    if (_is_phikey(key)) {
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
 
 interface PostHogWindow extends Window {
   posthog?: {
@@ -44,10 +129,13 @@ class Analytics {
 
     this.userId = userId;
 
+    // L-2 FIX: strip PHI before handing the payload to PostHog.
+    const safeProperties = _redact_phi(properties as Record<string, unknown>);
+
     // PostHog identify
     const w = window as unknown as PostHogWindow;
     if (typeof window !== 'undefined' && w.posthog) {
-      w.posthog.identify(userId, properties);
+      w.posthog.identify(userId, safeProperties);
     }
   }
 
@@ -57,10 +145,13 @@ class Analytics {
   track(event: string, properties: Record<string, unknown> = {}) {
     if (!this.enabled) return;
 
+    // L-2 FIX: strip PHI before handing the payload to PostHog.
+    const safeProperties = _redact_phi(properties);
+
     const eventData: AnalyticsEvent = {
       event,
       properties: {
-        ...properties,
+        ...safeProperties,
         timestamp: new Date().toISOString(),
         userId: this.userId,
       },
@@ -106,9 +197,12 @@ class Analytics {
   setUserProperties(properties: UserProperties) {
     if (!this.enabled) return;
 
+    // L-2 FIX: strip PHI before handing the payload to PostHog.
+    const safeProperties = _redact_phi(properties as Record<string, unknown>);
+
     const w = window as unknown as PostHogWindow;
     if (typeof window !== 'undefined' && w.posthog) {
-      w.posthog.people.set(properties);
+      w.posthog.people.set(safeProperties as UserProperties);
     }
   }
 

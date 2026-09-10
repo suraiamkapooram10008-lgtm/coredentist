@@ -4,7 +4,7 @@
 // ============================================
 
 import React, { useState, useEffect } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,16 +13,20 @@ import { Badge } from '@/components/ui/badge';
 import { Stethoscope, Eye, EyeOff, Loader2, CheckCircle, XCircle, UserCheck } from 'lucide-react';
 import { z } from 'zod';
 import { useToast } from '@/hooks/use-toast';
+import { useOneTimeToken } from '@/hooks/useOneTimeToken';
 import { rolePermissions } from '@/types/staff';
 import { authApi } from '@/services/api';
 import type { InvitationDetails } from '@/types/api';
 
+// Aligned with Register and the backend policy (config_simple.py): 12+
+// characters with upper, lower, digit, and special character classes.
 const acceptSchema = z.object({
   password: z.string()
-    .min(8, 'Password must be at least 8 characters')
+    .min(12, 'Password must be at least 12 characters')
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
     .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
-    .regex(/[0-9]/, 'Password must contain at least one number'),
+    .regex(/[0-9]/, 'Password must contain at least one number')
+    .regex(/[!@#$%^&*(),.?":{}|<>]/, 'Password must contain at least one special character'),
   confirmPassword: z.string(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
@@ -30,8 +34,10 @@ const acceptSchema = z.object({
 });
 
 export default function AcceptInvitation() {
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get('token');
+  // H-11: the invitation token arrives in the URL fragment so it is never sent
+  // to a server (no access logs, no Referer leakage) and is scrubbed from the
+  // address bar on mount.
+  const { token } = useOneTimeToken();
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -304,10 +310,11 @@ export default function AcceptInvitation() {
               <div className="text-xs text-muted-foreground space-y-1">
                 <p>Password must contain:</p>
                 <ul className="list-disc list-inside space-y-0.5">
-                  <li className={password.length >= 8 ? 'text-green-600' : ''}>At least 8 characters</li>
+                  <li className={password.length >= 12 ? 'text-green-600' : ''}>At least 12 characters</li>
                   <li className={/[A-Z]/.test(password) ? 'text-green-600' : ''}>One uppercase letter</li>
                   <li className={/[a-z]/.test(password) ? 'text-green-600' : ''}>One lowercase letter</li>
                   <li className={/[0-9]/.test(password) ? 'text-green-600' : ''}>One number</li>
+                  <li className={/[!@#$%^&*(),.?":{}|<>]/.test(password) ? 'text-green-600' : ''}>One special character</li>
                 </ul>
               </div>
             </CardContent>

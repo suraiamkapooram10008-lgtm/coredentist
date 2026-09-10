@@ -6,12 +6,14 @@ Core business logic for subscription management
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional, List, Tuple
-from uuid import UUID
+from uuid import UUID, uuid4
 import stripe as stripe_lib
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update, func
+from sqlalchemy.orm import selectinload
+import asyncio
 
 from app.models.subscription import (
     SubscriptionPlan,
@@ -19,11 +21,16 @@ from app.models.subscription import (
     SubscriptionInterval,
     ProrationBehavior,
     UsageRecord,
+    UsageMeter,
 )
 from app.models.payment import PaymentCard
 from app.core.config_simple import settings
 
 logger = logging.getLogger(__name__)
+
+# Cap on a single usage record — protects current_usage from runaway/abusive
+# batch submissions (also enforced by the schema's decimal_places=2).
+MAX_USAGE_QUANTITY = Decimal("100000000")
 
 
 class SubscriptionService:
@@ -43,8 +50,8 @@ class SubscriptionService:
 
         elif interval == SubscriptionInterval.MONTHLY:
             period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            next_month = period_start.replace(day=28) + timedelta(days=4)
-            period_end = next_month - timedelta(days=next_month.day - 1, hours=1, seconds=1)
+            next_month = (period_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+            period_end = next_month - timedelta(seconds=1)
 
         elif interval == SubscriptionInterval.QUARTERLY:
             quarter = (now.month - 1) // 3
@@ -80,10 +87,11 @@ class SubscriptionService:
         total_days: int
     ) -> Decimal:
         """Calculate proration amount for plan change"""
-        if total_days == 0:
+        if total_days <= 0:
             return Decimal(0)
+        bounded_days = max(0, min(days_remaining, total_days))
         daily_diff = (new_amount - old_amount) / Decimal(total_days)
-        return daily_diff * Decimal(days_remaining)
+        return daily_diff * Decimal(bounded_days)
 
     @staticmethod
     async def create_stripe_subscription(
@@ -93,8 +101,10 @@ class SubscriptionService:
         user_full_name: str,
         practice_id: UUID,
         user_id: UUID,
+        subscription_id: UUID,
         payment_card_id: Optional[UUID] = None,
         trial_days: int = 0,
+        idempotency_key: Optional[str] = None,
     ) -> Tuple[str, str]:
         """
         Create a Stripe subscription
@@ -108,14 +118,19 @@ class SubscriptionService:
             stripe_cust_id = None
             if payment_card_id:
                 card_result = await db.execute(
-                    select(PaymentCard).where(PaymentCard.id == payment_card_id)
+                    select(PaymentCard).where(
+                        PaymentCard.id == payment_card_id,
+                        PaymentCard.practice_id == practice_id,
+                        PaymentCard.is_active.is_(True),
+                    )
                 )
                 card = card_result.scalar_one_or_none()
                 if card and card.processor_customer_id:
                     stripe_cust_id = card.processor_customer_id
 
             if not stripe_cust_id:
-                customer = stripe_lib.Customer.create(
+                customer = await asyncio.to_thread(
+                    stripe_lib.Customer.create,
                     email=user_email,
                     name=user_full_name,
                     metadata={
@@ -130,6 +145,7 @@ class SubscriptionService:
                 "customer": stripe_cust_id,
                 "items": [{"price": plan.stripe_price_id}],
                 "metadata": {
+                    "coredent_subscription_id": str(subscription_id),
                     "coredent_plan_id": str(plan.id),
                     "practice_id": str(practice_id),
                 },
@@ -138,7 +154,15 @@ class SubscriptionService:
             if trial_days > 0:
                 sub_params["trial_period_days"] = trial_days
 
-            stripe_sub = stripe_lib.Subscription.create(**sub_params)
+            idempotency_key = (
+                idempotency_key
+                or f"sub_create_{uuid4()}"
+            )
+            sub_params["idempotency_key"] = idempotency_key
+
+            stripe_sub = await asyncio.to_thread(
+                stripe_lib.Subscription.create, **sub_params
+            )
             return stripe_sub.id, stripe_cust_id
 
         except stripe_lib.error.StripeError as e:
@@ -151,9 +175,12 @@ class SubscriptionService:
         subscription_id: UUID,
         practice_id: UUID,
     ) -> Optional[Subscription]:
-        """Get subscription with related plan"""
+        """Get subscription with related plan (eager-loaded: callers access
+        sub.plan on an AsyncSession, which would otherwise MissingGreenlet)."""
         result = await db.execute(
-            select(Subscription).where(
+            select(Subscription)
+            .options(selectinload(Subscription.plan))
+            .where(
                 Subscription.id == subscription_id,
                 Subscription.practice_id == practice_id,
             )
@@ -173,24 +200,52 @@ class SubscriptionService:
         """
         now = datetime.now(timezone.utc)
 
-        # Calculate proration
+        # Idempotency edge case: changing to the plan the subscription is
+        # already on is a no-op — no Stripe call, no proration, no state churn.
+        if subscription.plan_id == new_plan.id:
+            return Decimal("0")
+
+        # Fetch the current plan explicitly — accessing subscription.plan on
+        # an AsyncSession without eager loading raises MissingGreenlet.
+        old_plan_result = await db.execute(
+            select(SubscriptionPlan).where(SubscriptionPlan.id == subscription.plan_id)
+        )
+        old_plan = old_plan_result.scalar_one_or_none()
+
+        # Calculate proration against the ACTUAL period length, not a
+        # hardcoded 30 days (annual/quarterly plans were wildly mis-prorated).
         if subscription.current_period_end:
-            days_remaining = int((subscription.current_period_end - now).total_seconds() / 86400)
+            days_remaining = max(0, int((subscription.current_period_end - now).total_seconds() / 86400))
         else:
             days_remaining = 30
 
+        if subscription.current_period_start and subscription.current_period_end:
+            total_days = max(1, int((subscription.current_period_end - subscription.current_period_start).total_seconds() / 86400))
+        else:
+            interval_days = {
+                SubscriptionInterval.WEEKLY: 7,
+                SubscriptionInterval.MONTHLY: 30,
+                SubscriptionInterval.QUARTERLY: 91,
+                SubscriptionInterval.SEMI_ANNUAL: 182,
+                SubscriptionInterval.ANNUAL: 365,
+            }
+            total_days = interval_days.get(subscription.interval, 30)
+
         proration_amount = SubscriptionService.calculate_proration_amount(
-            subscription.plan.amount if subscription.plan else Decimal(0),
+            old_plan.amount if old_plan else Decimal(0),
             new_plan.amount,
             days_remaining,
-            30
+            total_days
         )
 
         # Update Stripe subscription
         if settings.STRIPE_API_KEY and subscription.stripe_subscription_id and new_plan.stripe_price_id:
             try:
-                stripe_sub = stripe_lib.Subscription.retrieve(subscription.stripe_subscription_id)
-                stripe_lib.Subscription.modify(
+                stripe_sub = await asyncio.to_thread(
+                    stripe_lib.Subscription.retrieve, subscription.stripe_subscription_id
+                )
+                await asyncio.to_thread(
+                    stripe_lib.Subscription.modify,
                     subscription.stripe_subscription_id,
                     items=[{
                         "id": stripe_sub["items"]["data"][0]["id"],
@@ -219,19 +274,59 @@ class SubscriptionService:
         metadata: Optional[dict] = None,
     ) -> UsageRecord:
         """Record usage for usage-based billing"""
+        # Edge-case guard: negative or zero usage would let internal callers
+        # (e.g. usage-billing/submit) corrupt current_usage. The API schema
+        # already enforces ge=0; this is defense-in-depth for service-level
+        # callers and the batch endpoint.
+        if quantity is None or quantity <= 0:
+            raise ValueError("Usage quantity must be a positive number")
+        if quantity > MAX_USAGE_QUANTITY:
+            raise ValueError("Usage quantity exceeds the maximum allowed value")
+
+        plan_result = await db.execute(
+            select(SubscriptionPlan).where(SubscriptionPlan.id == subscription.plan_id)
+        )
+        plan = plan_result.scalar_one_or_none()
+        usage_metadata = dict(metadata or {})
+        metric_name = usage_metadata.get("metric_name") or (
+            plan.usage_meter_name if plan and plan.usage_meter_name else "api_calls"
+        )
+        usage_metadata["metric_name"] = metric_name
+
+        meter_id = None
+        if plan:
+            meter_result = await db.execute(
+                select(UsageMeter.id).where(
+                    UsageMeter.plan_id == plan.id,
+                    UsageMeter.meter_name == metric_name,
+                )
+            )
+            meter_id = meter_result.scalar_one_or_none()
+
         record = UsageRecord(
             subscription_id=subscription.id,
+            meter_id=meter_id,
             quantity=quantity,
             description=description,
-            metadata=metadata or {},
+            usage_metadata=usage_metadata,
         )
         db.add(record)
 
-        # Update current usage on subscription
-        subscription.current_usage = (subscription.current_usage or 0) + quantity
-        if subscription.plan and subscription.plan.is_usage_based:
-            if subscription.current_usage > (subscription.plan.included_usage or 0):
-                subscription.current_overage = subscription.current_usage - (subscription.plan.included_usage or 0)
+        # Atomic increment — a read-modify-write on current_usage races under
+        # concurrent usage events and drops charge revenue.
+        await db.execute(
+            update(Subscription)
+            .where(Subscription.id == subscription.id)
+            .values(current_usage=func.coalesce(Subscription.current_usage, 0) + quantity)
+        )
+        await db.flush()
+        await db.refresh(subscription)
+
+        if plan and plan.is_usage_based:
+            included_usage = Decimal(str(plan.included_usage or 0))
+            subscription.current_overage = max(
+                Decimal("0"), Decimal(str(subscription.current_usage or 0)) - included_usage
+            )
 
         await db.commit()
         await db.refresh(record)
@@ -264,12 +359,15 @@ class SubscriptionService:
 
         try:
             if cancel_at_period_end:
-                stripe_lib.Subscription.modify(
+                await asyncio.to_thread(
+                    stripe_lib.Subscription.modify,
                     subscription.stripe_subscription_id,
                     cancel_at_period_end=True,
                 )
             else:
-                stripe_lib.Subscription.cancel(subscription.stripe_subscription_id)
+                await asyncio.to_thread(
+                    stripe_lib.Subscription.cancel, subscription.stripe_subscription_id
+                )
             return True
         except stripe_lib.error.StripeError as e:
             logger.error(f"Stripe cancellation error: {e}")
@@ -282,7 +380,8 @@ class SubscriptionService:
             return False
 
         try:
-            stripe_lib.Subscription.modify(
+            await asyncio.to_thread(
+                stripe_lib.Subscription.modify,
                 subscription.stripe_subscription_id,
                 pause_collection={"behavior": "mark_uncollectible"},
             )
@@ -298,7 +397,8 @@ class SubscriptionService:
             return False
 
         try:
-            stripe_lib.Subscription.modify(
+            await asyncio.to_thread(
+                stripe_lib.Subscription.modify,
                 subscription.stripe_subscription_id,
                 pause_collection="",  # Empty string unpauses
             )

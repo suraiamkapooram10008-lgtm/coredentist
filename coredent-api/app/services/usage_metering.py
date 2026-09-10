@@ -19,10 +19,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 from decimal import Decimal
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, literal
 import logging
 
-from app.models.subscription import SubscriptionPlan, Subscription, UsageMeter, UsageRecord
+from app.models.subscription import (
+    SubscriptionPlan,
+    Subscription,
+    SubscriptionStatus,
+    UsageMeter,
+    UsageRecord,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,14 +80,33 @@ class UsageMeteringService:
             True if recorded successfully
         """
         try:
+            import uuid
+            try:
+                sub_uuid = uuid.UUID(str(subscription_id))
+            except (ValueError, TypeError):
+                sub_uuid = subscription_id
+
+            quantity = Decimal(str(quantity))
+            if quantity <= 0:
+                raise ValueError("Usage quantity must be positive")
             record = UsageRecord(
-                subscription_id=subscription_id,
-                meter_id=self._get_meter_id(subscription_id, metric_name),
+                subscription_id=sub_uuid,
+                meter_id=self._get_meter_id(sub_uuid, metric_name),
                 quantity=quantity,
                 description=description or f"{metric_name}: {quantity}",
-                usage_metadata={"metric_name": metric_name}
+                usage_metadata={"metric_name": metric_name},
             )
             self.db.add(record)
+            self.db.query(Subscription).filter(
+                Subscription.id == sub_uuid
+            ).update(
+                {
+                    Subscription.current_usage: func.coalesce(
+                        Subscription.current_usage, 0
+                    ) + quantity
+                },
+                synchronize_session=False,
+            )
             self.db.commit()
 
             logger.debug(f"Recorded usage: {subscription_id} {metric_name}={quantity}")
@@ -92,10 +117,16 @@ class UsageMeteringService:
             self.db.rollback()
             return False
 
-    def _get_meter_id(self, subscription_id: str, metric_name: str) -> Optional[str]:
+    def _get_meter_id(self, subscription_id: Any, metric_name: str) -> Optional[Any]:
         """Get the meter ID for a subscription and metric"""
+        import uuid
+        try:
+            sub_uuid = uuid.UUID(str(subscription_id))
+        except (ValueError, TypeError):
+            sub_uuid = subscription_id
+
         subscription = self.db.query(Subscription).filter(
-            Subscription.id == subscription_id
+            Subscription.id == sub_uuid
         ).first()
 
         if not subscription:
@@ -135,8 +166,11 @@ class UsageMeteringService:
             period_end = period_start + timedelta(days=32)
             period_end = period_end.replace(day=1)
 
+        # Group by the metric name stored in the JSON usage_metadata column.
+        # Selecting a non-aggregated column without GROUP BY is invalid SQL.
+        metric_col = self._metric_name_expr()
         results = self.db.query(
-            UsageRecord.usage_metadata,
+            metric_col,
             func.sum(UsageRecord.quantity).label('total_quantity'),
             func.count(UsageRecord.id).label('event_count')
         ).filter(
@@ -145,20 +179,32 @@ class UsageMeteringService:
                 UsageRecord.timestamp >= period_start,
                 UsageRecord.timestamp < period_end
             )
-        ).all()
+        ).group_by(metric_col).all()
 
         usage = {}
         plan = self._get_subscription_plan(subscription_id)
-        limits = plan.limits if plan and plan.limits else {}
-        overage_rate = Decimal(str(plan.overage_rate)) if plan and plan.is_usage_based else Decimal('0')
+        limits = plan.limits if plan and isinstance(plan.limits, dict) else {}
+        overage_rate = (
+            Decimal(str(plan.overage_rate or 0))
+            if plan and plan.is_usage_based
+            else Decimal("0")
+        )
 
         for row in results:
-            metadata = row.usage_metadata or {}
-            metric = metadata.get('metric_name', 'unknown')
-            total = float(row.total_quantity or 0)
-
-            included = Decimal(str(limits.get(metric, 0)))
-            overage_quantity = max(0, Decimal(str(total)) - included)
+            metric = row.metric_name or (
+                plan.usage_meter_name if plan and plan.usage_meter_name else "unknown"
+            )
+            # Keep this calculation in Decimal until the response boundary;
+            # converting the aggregate to float first can create a cent-level
+            # billing error for large or fractional quantities.
+            total = Decimal(str(row.total_quantity or 0))
+            if metric in limits:
+                included = Decimal(str(limits[metric] or 0))
+            elif plan and plan.usage_meter_name == metric:
+                included = Decimal(str(plan.included_usage or 0))
+            else:
+                included = Decimal("0")
+            overage_quantity = max(Decimal("0"), total - included)
             overage_cost = overage_quantity * overage_rate
 
             label, unit = self.METRIC_LABELS.get(metric, (metric, "units"))
@@ -167,15 +213,39 @@ class UsageMeteringService:
                 "metric": metric,
                 "label": label,
                 "unit": unit,
-                "total": total,
+                "total": float(total),
                 "included": float(included),
                 "overage_quantity": float(overage_quantity),
                 "overage_rate": float(overage_rate),
                 "overage_cost": float(overage_cost),
-                "is_overage": overage_quantity > 0
+                "is_overage": overage_quantity > 0,
             }
 
         return usage
+
+    def _metric_name_expr(self):
+        """SQL expression extracting the JSON 'metric_name' as unquoted text.
+
+        The removed ``.astext`` accessor rendered ``->>`` on PostgreSQL and
+        ``JSON_UNQUOTE(JSON_EXTRACT(...))`` on MySQL. A plain
+        ``cast(col['metric_name'], String)`` compiles to
+        ``CAST(col -> 'metric_name' AS VARCHAR)`` — the ``->`` operator
+        returns JSON, so string values keep their surrounding double quotes,
+        silently corrupting metric keys and overage lookups (everything would
+        count as overage). Branch on the dialect so text comes back unquoted
+        on every supported database.
+        """
+        col = UsageRecord.usage_metadata
+        dialect = getattr(getattr(self.db, "bind", None), "dialect", None)
+        name = dialect.name if dialect is not None else ""
+        if name == "postgresql":
+            return col.op("->>")(literal("metric_name")).label("metric_name")
+        if name == "mysql":
+            return func.json_unquote(
+                func.json_extract(col, "$.metric_name")
+            ).label("metric_name")
+        # SQLite: json_extract() already returns the text value unquoted.
+        return func.json_extract(col, "$.metric_name").label("metric_name")
 
     def is_overage(
         self,
@@ -268,7 +338,10 @@ def get_practice_usage_summary(db: Session, practice_id: str) -> Dict[str, Any]:
     subscription = db.query(Subscription).filter(
         and_(
             Subscription.practice_id == practice_id,
-            Subscription.status == 'active'
+            # Compare against the Enum member, not a raw string: the column is
+            # typed Enum(SubscriptionStatus), and a bare 'active' literal is
+            # the wrong comparison on both PostgreSQL and SQLite.
+            Subscription.status == SubscriptionStatus.ACTIVE,
         )
     ).first()
 
@@ -281,56 +354,85 @@ def get_practice_usage_summary(db: Session, practice_id: str) -> Dict[str, Any]:
 
 class UsageTrackingMiddleware:
     """
-    FastAPI middleware to automatically track API usage
+    FastAPI middleware to automatically track successful authenticated API usage.
+
+    The middleware only records after the response starts and only for 2xx
+    responses. This avoids charging anonymous, rejected, or failed requests.
+    The JWT carries the practice_id, but the database lookup remains the source
+    of truth for the subscription associated with that tenant.
     """
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http":
-            path = scope.get("path", "")
-            method = scope.get("method", "")
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-            if path.startswith("/api/v1/") and method in ["GET", "POST", "PUT", "PATCH", "DELETE"]:
-                headers = dict(scope.get("headers", []))
-                practice_id = self._extract_practice_id(headers)
+        path = scope.get("path", "")
+        method = scope.get("method", "")
+        should_track = path.startswith("/api/v1/") and method in {
+            "GET", "POST", "PUT", "PATCH", "DELETE"
+        }
+        practice_id = self._extract_practice_id(dict(scope.get("headers", []))) if should_track else None
+        response_status = None
 
-                if practice_id:
-                    try:
-                        from app.core.database import SessionLocal
-                        db = SessionLocal()
-                        subscription = db.query(Subscription).filter(
-                            and_(
-                                Subscription.practice_id == practice_id,
-                                Subscription.status == 'active'
-                            )
-                        ).first()
+        async def capture_response_start(message):
+            nonlocal response_status
+            if message["type"] == "http.response.start":
+                response_status = message.get("status")
+            await send(message)
 
-                        if subscription:
-                            meter_service = UsageMeteringService(db)
-                            meter_service.record_usage(
-                                str(subscription.id),
-                                "api_calls",
-                                Decimal("1"),
-                                f"{method} {path}"
-                            )
-                        db.close()
-                    except Exception as e:
-                        logger.debug(f"Usage tracking error: {e}")
+        await self.app(scope, receive, capture_response_start)
 
-        await self.app(scope, receive, send)
+        if not practice_id or not response_status or not 200 <= response_status < 300:
+            return
+
+        db = None
+        try:
+            from app.core.database import SessionLocal
+            import uuid
+
+            db = SessionLocal()
+            try:
+                practice_uuid = uuid.UUID(str(practice_id))
+            except (ValueError, TypeError):
+                practice_uuid = practice_id
+
+            subscription = db.query(Subscription).filter(
+                Subscription.practice_id == practice_uuid,
+                Subscription.status.in_([
+                    SubscriptionStatus.ACTIVE,
+                    SubscriptionStatus.TRIALING,
+                ]),
+            ).first()
+            if subscription:
+                UsageMeteringService(db).record_usage(
+                    subscription.id,
+                    "api_calls",
+                    Decimal("1"),
+                    f"{method} {path}",
+                )
+        except Exception as e:
+            # Usage accounting must never turn a successful customer request
+            # into a 500; the failure is observable in application logs.
+            logger.warning("Usage tracking failed for %s: %s", path, e)
+        finally:
+            if db is not None:
+                db.close()
 
     def _extract_practice_id(self, headers: Dict) -> Optional[str]:
-        """Extract practice_id from authorization token"""
+        """Extract practice_id from authorization token."""
         try:
             auth_header = headers.get(b"authorization", b"").decode()
             if auth_header.startswith("Bearer "):
                 token = auth_header[7:]
                 from app.core.security import decode_token
+
                 payload = decode_token(token)
                 if payload:
                     return payload.get("practice_id")
         except Exception:
-            pass
+            return None
         return None

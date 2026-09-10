@@ -30,17 +30,12 @@ export const pwaConfig = VitePWA({
     globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
     runtimeCaching: [
       {
-        urlPattern: /^https:\/\/coredentist-production\.up\.railway\.app\/.*/i,
-        handler: 'NetworkFirst',
+        // Never persist authenticated API responses (which may contain PHI)
+        // in Cache Storage. This applies to same-origin and cross-origin APIs.
+        urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
+        handler: 'NetworkOnly',
         options: {
-          cacheName: 'api-cache',
-          expiration: {
-            maxEntries: 100,
-            maxAgeSeconds: 60 * 60, // 1 hour
-          },
-          cacheableResponse: {
-            statuses: [0, 200],
-          },
+          cacheName: 'api-network-only',
         },
       },
       {

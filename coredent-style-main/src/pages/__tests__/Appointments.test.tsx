@@ -8,6 +8,23 @@ import Appointments from '../Appointments';
 import { server } from '@/test/mocks/server';
 import { http, HttpResponse } from 'msw';
 
+// Mock @tanstack/react-virtual
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: (options: any) => ({
+    getVirtualItems: () => {
+      const count = options.count ?? 0;
+      return Array.from({ length: count }, (_, index) => ({
+        index,
+        key: String(index),
+        size: 72,
+        start: index * 72,
+      }));
+    },
+    getTotalSize: () => (options.count ?? 0) * 72,
+    measureElement: () => {},
+  }),
+}));
+
 // Mock components that might not be fully implemented
 vi.mock('@/components/appointments/AppointmentCalendar', () => ({
   default: ({ appointments, onAppointmentClick }: any) => (
@@ -27,27 +44,88 @@ vi.mock('@/components/appointments/AppointmentCalendar', () => ({
   ),
 }));
 
-vi.mock('@/components/appointments/AppointmentForm', () => ({
-  default: ({ onSubmit, onCancel, appointment }: any) => (
+vi.mock('@/components/appointments/AppointmentForm', () => {
+  const mockFormData: Record<string, string> = {};
+
+  return {
+    AppointmentForm: ({ onSubmit, onCancel, appointment }: any) => (
     <div data-testid="appointment-form">
       <h3>{appointment ? 'Edit Appointment' : 'New Appointment'}</h3>
-      <button onClick={() => onSubmit?.({ patientName: 'Test Patient', time: '10:00 AM' })}>
-        Save
+      <label htmlFor="patient-mock">Patient Name</label>
+      <input
+        id="patient-mock"
+        defaultValue={appointment?.patientName ?? ''}
+        onChange={(e) => {
+          // Mirror the real form: keep `patient` and `patientName` in sync
+          mockFormData.patient = e.target.value;
+          mockFormData.patientName = e.target.value;
+        }}
+      />
+      <label htmlFor="time-mock">Time</label>
+      <input
+        id="time-mock"
+        defaultValue={appointment?.time ?? ''}
+        onChange={(e) => {
+          mockFormData.time = e.target.value;
+        }}
+      />
+      <label htmlFor="duration-mock">Duration (minutes)</label>
+      <input
+        id="duration-mock"
+        type="number"
+        defaultValue={appointment?.duration ?? '30'}
+        onChange={(e) => {
+          mockFormData.duration = `${e.target.value} min`;
+        }}
+      />
+      <label htmlFor="dentist-mock">Dentist</label>
+      <input
+        id="dentist-mock"
+        defaultValue={appointment?.dentist ?? ''}
+        onChange={(e) => {
+          mockFormData.dentist = e.target.value;
+        }}
+      />
+      <button
+        onClick={() =>
+          onSubmit?.({
+            patientName: mockFormData.patientName ?? 'Test Patient',
+            time: mockFormData.time ?? '10:00 AM',
+            ...mockFormData,
+          })
+        }
+      >
+        {appointment ? 'Update' : 'Create'} Appointment
       </button>
       <button onClick={onCancel}>Cancel</button>
     </div>
   ),
-}));
+    default: ({ onSubmit, onCancel, appointment }: any) => (
+      <div data-testid="appointment-form">
+        <h3>{appointment ? 'Edit Appointment' : 'New Appointment'}</h3>
+        <button onClick={() => onSubmit?.({ patientName: 'Test Patient', time: '10:00 AM' })}>
+          Save
+        </button>
+        <button onClick={onCancel}>Cancel</button>
+      </div>
+    ),
+  };
+});
 
 // Mock hooks
+const mockToast = vi.fn();
 vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({
-    toast: vi.fn(),
+    toast: mockToast,
   }),
 }));
 
-const { mockUseAppointments } = vi.hoisted(() => ({
+const { mockUseAppointments, mockCreateMutation, mockUpdateMutation, mockDeleteMutation, mockReminderMutation } = vi.hoisted(() => ({
   mockUseAppointments: vi.fn(),
+  mockCreateMutation: vi.fn(),
+  mockUpdateMutation: vi.fn(),
+  mockDeleteMutation: vi.fn(),
+  mockReminderMutation: vi.fn(),
 }));
 
 vi.mock('@/hooks/useAppointments', () => ({
@@ -60,10 +138,50 @@ vi.mock('@/hooks/useAppointments', () => ({
     data: { data: { types: [{ id: '1', name: 'Checkup', duration: 30 }, { id: '2', name: 'Cleaning', duration: 45 }] } },
     isLoading: false,
   }),
-  useCreateAppointment: (_config?: any) => ({ mutate: vi.fn(), isPending: false }),
-  useUpdateAppointment: (_config?: any) => ({ mutate: vi.fn(), isPending: false }),
-  useDeleteAppointment: (_config?: any) => ({ mutate: vi.fn(), isPending: false }),
-  useSendAppointmentReminder: (_config?: any) => ({ mutate: vi.fn(), isPending: false }),
+  useCreateAppointment: (config?: any) => ({
+    mutate: (data: any) => {
+      mockCreateMutation(data);
+      if (data.patient === 'fail') {
+        config?.onError?.();
+      } else {
+        config?.onSuccess?.();
+      }
+    },
+    isPending: false,
+  }),
+  useUpdateAppointment: (config?: any) => ({
+    mutate: ({ id, data }: any) => {
+      mockUpdateMutation({ id, data });
+      if (data.patient === 'fail') {
+        config?.onError?.();
+      } else {
+        config?.onSuccess?.();
+      }
+    },
+    isPending: false,
+  }),
+  useDeleteAppointment: (config?: any) => ({
+    mutate: (id: string) => {
+      mockDeleteMutation(id);
+      if (id === 'fail') {
+        config?.onError?.();
+      } else {
+        config?.onSuccess?.();
+      }
+    },
+    isPending: false,
+  }),
+  useSendAppointmentReminder: (config?: any) => ({
+    mutate: (id: string) => {
+      mockReminderMutation(id);
+      if (id === 'fail') {
+        config?.onError?.();
+      } else {
+        config?.onSuccess?.();
+      }
+    },
+    isPending: false,
+  }),
 }));
 
 const TestWrapper = ({ children }: { children: React.ReactNode }) => {
@@ -92,8 +210,8 @@ describe('Appointments Page', () => {
       data: {
         data: {
           appointments: [
-            { id: '1', patientName: 'John Doe', time: '10:00 AM', status: 'scheduled', type: 'checkup', dentist: 'Dr. Smith', duration: '60' },
-            { id: '2', patientName: 'Jane Smith', time: '2:00 PM', status: 'scheduled', type: 'cleaning', dentist: 'Dr. Smith', duration: '60' },
+            { id: '1', patient: 'John Doe', patientName: 'John Doe', time: '10:00 AM', status: 'scheduled', type: 'checkup', dentist: 'Dr. Smith', duration: '60' },
+            { id: '2', patient: 'Jane Smith', patientName: 'Jane Smith', time: '2:00 PM', status: 'scheduled', type: 'cleaning', dentist: 'Dr. Smith', duration: '60' },
           ],
         },
       },
@@ -140,7 +258,7 @@ describe('Appointments Page', () => {
     },
   ];
 
-  it('should render appointments page with calendar', async () => {
+  it('should render appointments page with the table view as default', async () => {
     server.use(
       http.get('/api/v1/appointments', () => {
         return HttpResponse.json(mockAppointments);
@@ -153,7 +271,14 @@ describe('Appointments Page', () => {
       </TestWrapper>
     );
 
-    // Should show calendar after loading
+    // The real (virtualized) table is the default view
+    await waitFor(() => {
+      expect(screen.getByText('John Doe')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('appointment-calendar')).not.toBeInTheDocument();
+
+    // Toggling switches to the calendar view
+    await userEvent.setup().click(screen.getByTestId('filter-button'));
     await waitFor(() => {
       expect(screen.getByTestId('appointment-calendar')).toBeInTheDocument();
     });
@@ -162,6 +287,7 @@ describe('Appointments Page', () => {
   });
 
   it('should display appointments in calendar', async () => {
+    const user = userEvent.setup();
     server.use(
       http.get('/api/v1/appointments', () => {
         return HttpResponse.json(mockAppointments);
@@ -173,6 +299,8 @@ describe('Appointments Page', () => {
         <Appointments />
       </TestWrapper>
     );
+
+    await user.click(screen.getByTestId('filter-button'));
 
     await waitFor(() => {
       expect(screen.getByTestId('appointment-apt-1')).toBeInTheDocument();
@@ -199,6 +327,8 @@ describe('Appointments Page', () => {
       </TestWrapper>
     );
 
+    await user.click(screen.getByTestId('filter-button'));
+
     await waitFor(() => {
       expect(screen.getByTestId('appointment-apt-1')).toBeInTheDocument();
     });
@@ -219,52 +349,260 @@ describe('Appointments Page', () => {
       </TestWrapper>
     );
 
+    // Table view is the default; wait for it to load
     await waitFor(() => {
-      expect(screen.getByTestId('appointment-calendar')).toBeInTheDocument();
+      expect(screen.getByText('John Doe')).toBeInTheDocument();
     });
 
-    // Component has New Appointment button
-    const newButton = screen.getByRole('button', { name: /new|add|create/i });
-    expect(newButton).toBeInTheDocument();
-
-    // Click the button - hardcoded component doesn't show form, just verifies button exists
+    const newButton = screen.getByRole('button', { name: /new appointment/i });
     await user.click(newButton);
 
-    // Button should still be present after click
-    expect(screen.getByRole('button', { name: /new|add|create/i })).toBeInTheDocument();
+    // Verify form is open
+    expect(screen.getByTestId('appointment-form')).toBeInTheDocument();
+
+    // Fill form
+    const patientInput = screen.getByLabelText(/patient name/i);
+    const timeInput = screen.getByLabelText(/^time$/i);
+    const dentistInput = screen.getByLabelText(/dentist/i);
+
+    await user.type(patientInput, 'Alice Smith');
+    await user.type(timeInput, '11:00 AM');
+    await user.type(dentistInput, 'Dr. House');
+
+    // Submit form
+    const submitButton = screen.getByRole('button', { name: /create appointment/i });
+    await user.click(submitButton);
+
+    // Check mutation called
+    expect(mockCreateMutation).toHaveBeenCalledWith(expect.objectContaining({
+      patient: 'Alice Smith',
+      time: '11:00 AM',
+      dentist: 'Dr. House',
+    }));
+
+    // Verify success toast
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Success',
+        description: 'Appointment created successfully',
+      }));
+    });
+  });
+
+  it('should handle new appointment creation failure', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <Appointments />
+      </TestWrapper>
+    );
+
+    // Table view is the default; wait for it to load
+    await waitFor(() => {
+      expect(screen.getByText('John Doe')).toBeInTheDocument();
+    });
+
+    const newButton = screen.getByRole('button', { name: /new appointment/i });
+    await user.click(newButton);
+
+    const patientInput = screen.getByLabelText(/patient name/i);
+    await user.type(patientInput, 'fail');
+
+    const submitButton = screen.getByRole('button', { name: /create appointment/i });
+    await user.click(submitButton);
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Error',
+        description: 'Failed to create appointment',
+      }));
+    });
   });
 
   it('should handle appointment update', async () => {
-    // Component uses hardcoded data, verify basic rendering
+    const user = userEvent.setup();
+
     render(
       <TestWrapper>
         <Appointments />
       </TestWrapper>
     );
 
+    // Switch to the calendar view to click an appointment
+    await user.click(screen.getByTestId('filter-button'));
+
     await waitFor(() => {
       expect(screen.getByTestId('appointment-apt-1')).toBeInTheDocument();
     });
 
-    // Verify appointments are displayed
-    expect(screen.getByText(/John Doe/)).toBeInTheDocument();
+    // Click on appointment in calendar to open form
+    await user.click(screen.getByTestId('appointment-apt-1'));
+
+    // Verify form is pre-filled
+    const patientInput = screen.getByLabelText(/patient name/i);
+    expect(patientInput).toHaveValue('John Doe');
+
+    // Change patient name
+    await user.clear(patientInput);
+    await user.type(patientInput, 'John Doe Updated');
+
+    const submitButton = screen.getByRole('button', { name: /update appointment/i });
+    await user.click(submitButton);
+
+    expect(mockUpdateMutation).toHaveBeenCalledWith(expect.objectContaining({
+      id: '1',
+      data: expect.objectContaining({
+        patient: 'John Doe Updated',
+      }),
+    }));
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Success',
+        description: 'Appointment updated successfully',
+      }));
+    });
+  });
+
+  it('should handle appointment update failure', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <Appointments />
+      </TestWrapper>
+    );
+
+    // Switch to the calendar view to click an appointment
+    await user.click(screen.getByTestId('filter-button'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('appointment-apt-1')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId('appointment-apt-1'));
+
+    const patientInput = screen.getByLabelText(/patient name/i);
+    await user.clear(patientInput);
+    await user.type(patientInput, 'fail');
+
+    const submitButton = screen.getByRole('button', { name: /update appointment/i });
+    await user.click(submitButton);
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Error',
+        description: 'Failed to update appointment',
+      }));
+    });
   });
 
   it('should handle appointment deletion', async () => {
-    // Component uses hardcoded data, verify basic rendering
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockImplementation(() => true);
+
     render(
       <TestWrapper>
         <Appointments />
       </TestWrapper>
     );
 
+    // Table view (with the virtualized list) is the default
     await waitFor(() => {
-      expect(screen.getByTestId('appointment-apt-1')).toBeInTheDocument();
+      expect(screen.getByText('John Doe')).toBeInTheDocument();
     });
 
-    // Component doesn't have delete functionality, verify appointments render
-    expect(screen.getByText(/John Doe/)).toBeInTheDocument();
-    expect(screen.getByText(/Jane Smith/)).toBeInTheDocument();
+    // Click Delete button on the first row
+    const deleteButtons = screen.getAllByRole('button').filter(btn => btn.querySelector('.text-red-500'));
+    expect(deleteButtons.length).toBeGreaterThan(0);
+    await user.click(deleteButtons[0]);
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(mockDeleteMutation).toHaveBeenCalledWith('1');
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Success',
+        description: 'Appointment deleted successfully',
+      }));
+    });
+
+    confirmSpy.mockRestore();
+  });
+
+  it('should handle appointment deletion failure', async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockImplementation(() => true);
+
+    mockUseAppointments.mockReturnValue({
+      data: {
+        data: {
+          appointments: [
+            { id: 'fail', patient: 'Fail Patient', patientName: 'Fail Patient', time: '10:00 AM', status: 'Pending', type: 'checkup', dentist: 'Dr. Smith', duration: '60' },
+          ],
+        },
+      },
+      isLoading: false,
+      isError: false,
+    });
+
+    render(
+      <TestWrapper>
+        <Appointments />
+      </TestWrapper>
+    );
+
+    // Table view is the default
+    await waitFor(() => {
+      expect(screen.getByText('Fail Patient')).toBeInTheDocument();
+    });
+
+    // Click Delete button on the first row
+    const deleteButtons = screen.getAllByRole('button').filter(btn => btn.querySelector('.text-red-500'));
+    expect(deleteButtons.length).toBeGreaterThan(0);
+    await user.click(deleteButtons[0]);
+
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(mockDeleteMutation).toHaveBeenCalledWith('fail');
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Error',
+        description: 'Failed to delete appointment',
+      }));
+    });
+
+    confirmSpy.mockRestore();
+  });
+
+  it('should handle send reminder', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <Appointments />
+      </TestWrapper>
+    );
+
+    // Table view is the default
+    await waitFor(() => {
+      expect(screen.getByText('John Doe')).toBeInTheDocument();
+    });
+
+    // Find Send button precisely using Lucide class name
+    const sendButtons = screen.getAllByRole('button');
+    const sendBtn = sendButtons.find(btn => btn.querySelector('.lucide-send'));
+    expect(sendBtn).toBeDefined();
+    await user.click(sendBtn!);
+
+    expect(mockReminderMutation).toHaveBeenCalledWith('1');
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Success',
+        description: 'Reminder sent successfully',
+      }));
+    });
   });
 
   it('should handle API errors gracefully', async () => {
@@ -289,6 +627,7 @@ describe('Appointments Page', () => {
   });
 
   it('should filter appointments by date range', async () => {
+    const user = userEvent.setup();
 
     render(
       <TestWrapper>
@@ -296,29 +635,34 @@ describe('Appointments Page', () => {
       </TestWrapper>
     );
 
+    // Table view is the default; the search input lives there
     await waitFor(() => {
-      expect(screen.getByTestId('appointment-calendar')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('Search appointments...')).toBeInTheDocument();
     });
 
-    // Should show appointments
-    expect(screen.getByTestId('appointment-apt-1')).toBeInTheDocument();
-    expect(screen.getByTestId('appointment-apt-2')).toBeInTheDocument();
+    const searchInput = screen.getByPlaceholderText('Search appointments...');
+    await user.type(searchInput, 'Jane');
 
-    // Filter button exists
-    const dateFilter = screen.getByTestId('filter-button');
-    expect(dateFilter).toBeInTheDocument();
+    // Only Jane Smith should be visible
+    expect(screen.getByText('Jane Smith')).toBeInTheDocument();
   });
 
   it('should handle empty appointments list', async () => {
-    // Component uses hardcoded appointments, so we just verify it renders
+    mockUseAppointments.mockReturnValue({
+      data: { data: { appointments: [] } },
+      isLoading: false,
+      isError: false,
+    });
+
     render(
       <TestWrapper>
         <Appointments />
       </TestWrapper>
     );
 
+    // The empty-state selector is present in the default table view
     await waitFor(() => {
-      expect(screen.getByTestId('appointment-calendar')).toBeInTheDocument();
+      expect(screen.getByTestId('empty-appointments')).toBeInTheDocument();
     });
   });
 });

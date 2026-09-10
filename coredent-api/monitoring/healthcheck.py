@@ -7,7 +7,7 @@ Run this periodically to verify system health
 import sys
 import requests
 import psycopg2
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 
 # Configuration
@@ -77,7 +77,8 @@ def send_alert(message):
     try:
         payload = {
             "text": f"🚨 CoreDent Alert: {message}",
-            "timestamp": datetime.utcnow().isoformat()
+            # Timezone FIX: aware UTC (utcnow is naive/deprecated).
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         requests.post(ALERT_WEBHOOK, json=payload, timeout=5)
     except Exception as e:
@@ -86,7 +87,7 @@ def send_alert(message):
 def main():
     """Run all health checks"""
     print(f"\n{'='*50}")
-    print(f"CoreDent Health Check - {datetime.now()}")
+    print(f"CoreDent Health Check - {datetime.now(timezone.utc)}")
     print(f"{'='*50}\n")
     
     checks = [
@@ -99,12 +100,12 @@ def main():
     
     print(f"\n{'='*50}")
     if failed_checks:
-        print(f"❌ Health check FAILED")
+        print("❌ Health check FAILED")
         print(f"Failed checks: {', '.join(failed_checks)}")
         send_alert(f"Health check failed: {', '.join(failed_checks)}")
         sys.exit(1)
     else:
-        print(f"✅ All health checks PASSED")
+        print("✅ All health checks PASSED")
         sys.exit(0)
 
 if __name__ == "__main__":

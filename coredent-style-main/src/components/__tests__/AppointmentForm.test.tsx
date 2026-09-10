@@ -31,13 +31,18 @@ describe('AppointmentForm', () => {
   it('should populate form with appointment data for editing', () => {
     const appointment: Appointment = {
       id: '1',
+      patientId: 'p1',
       patient: 'John Doe',
       patientName: 'John Doe',
+      providerId: 'doc1',
+      providerName: 'Dr. Smith',
+      startTime: '2026-08-12T13:00:00.000Z',
+      endTime: '2026-08-12T13:30:00.000Z',
       time: '9:00 AM',
       duration: '30',
       type: 'Checkup',
       dentist: 'Dr. Smith',
-      status: 'Confirmed',
+      status: 'confirmed',
     };
 
     render(
@@ -124,13 +129,18 @@ describe('AppointmentForm', () => {
   it('should show Update button for existing appointment', () => {
     const appointment: Appointment = {
       id: '1',
+      patientId: 'p1',
       patient: 'John Doe',
       patientName: 'John Doe',
+      providerId: 'doc1',
+      providerName: 'Dr. Smith',
+      startTime: '2026-08-12T13:00:00.000Z',
+      endTime: '2026-08-12T13:30:00.000Z',
       time: '9:00 AM',
       duration: '30',
       type: 'Checkup',
       dentist: 'Dr. Smith',
-      status: 'Confirmed',
+      status: 'confirmed',
     };
 
     render(

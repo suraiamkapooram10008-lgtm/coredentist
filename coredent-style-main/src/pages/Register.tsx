@@ -96,7 +96,7 @@ export default function Register() {
     });
 
     if (success) {
-      navigate('/dashboard');
+      navigate('/login?registration=pending');
     }
 
     setIsSubmitting(false);

@@ -1,0 +1,9 @@
+
+> coredent-pms@1.0.0 typecheck
+> tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit
+
+
+> coredent-pms@1.0.0 lint:ci
+> eslint . --quiet
+
+FE_GATES_OK  

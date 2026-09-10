@@ -1,0 +1,4 @@
+
+> coredent-pms@1.0.0 lint:ci
+> eslint . --quiet
+

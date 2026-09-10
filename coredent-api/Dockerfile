@@ -40,17 +40,23 @@ RUN chmod +x /app/start.py
 # Make migration script executable
 RUN chmod +x /app/run_migrations.sh
 
+# Make the process-type-aware healthcheck executable
+RUN chmod +x /app/healthcheck.py
+
 # Create non-root user for security (HIPAA Best Practice)
 RUN useradd -m -u 1000 appuser && \
     chown -R appuser:appuser /app
 USER appuser
 
-# Expose port
-EXPOSE 8000
+# Keep the image and production compose topology on one port.
+ENV PORT=3000
+EXPOSE 3000
 
-# Health check using curl (HIPAA: Monitoring uptime)
-HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# Health check is process-type-aware (HIPAA: Monitoring uptime).
+# Worker/beat containers have no HTTP listener, so probing /health there would
+# crash-loop them; healthcheck.py switches probe by PROCESS_TYPE instead.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python /app/healthcheck.py || exit 1
 
 # Start application (migrations run automatically via start.py)
 CMD ["python", "/app/start.py"]

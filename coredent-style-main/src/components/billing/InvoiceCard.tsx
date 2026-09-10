@@ -1,4 +1,5 @@
 import { Card, CardContent } from '@/components/ui/card';
+import { useCurrencyFormatter } from '@/hooks/useCurrencyFormatter';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -40,28 +41,24 @@ export function InvoiceCard({
     switch (status) {
       case 'paid':
         return 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 border-emerald-500/20';
-      case 'partial':
+      case 'partially_paid':
         return 'bg-sky-500/10 text-sky-500 hover:bg-sky-500/20 border-sky-500/20';
-      case 'sent':
+      case 'pending':
         return 'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 border-amber-500/20';
       case 'overdue':
         return 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 border-rose-500/20';
-      case 'void':
+      case 'cancelled':
         return 'bg-neutral-500/10 text-neutral-500 hover:bg-neutral-500/20 border-neutral-500/20';
       default:
         return 'bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 border-blue-500/20'; // draft
     }
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(amount);
-  };
+  const { formatCurrency } = useCurrencyFormatter();
 
-  const isPaid = invoice.status === 'paid';
   const isDraft = invoice.status === 'draft';
+  const isPayable = ['pending', 'partially_paid', 'overdue'].includes(invoice.status);
+  const isCancellable = !['paid', 'cancelled'].includes(invoice.status);
 
   return (
     <Card className="overflow-hidden border border-border bg-card/60 backdrop-blur-md transition-all duration-300 hover:shadow-lg hover:border-primary/30 group">
@@ -73,7 +70,7 @@ export function InvoiceCard({
                 {invoice.invoiceNumber}
               </span>
               <Badge variant="outline" className={`${getStatusColor(invoice.status)} capitalize border px-2 py-0`}>
-                {invoice.status}
+                {invoice.status.replace('_', ' ')}
               </Badge>
             </div>
             <h3 className="font-semibold text-lg tracking-tight text-foreground transition-colors group-hover:text-primary">
@@ -93,7 +90,7 @@ export function InvoiceCard({
                 <Eye className="h-4 w-4 text-muted-foreground" />
                 View Details
               </DropdownMenuItem>
-              {!isPaid && (
+              {isPayable && (
                 <DropdownMenuItem onClick={() => onRecordPayment(invoice)} className="gap-2 cursor-pointer">
                   <DollarSign className="h-4 w-4 text-muted-foreground" />
                   Record Payment
@@ -109,14 +106,18 @@ export function InvoiceCard({
                   Send Invoice
                 </DropdownMenuItem>
               )}
-              <DropdownMenuSeparator className="bg-border" />
-              <DropdownMenuItem 
-                onClick={() => onDelete(invoice)} 
-                className="gap-2 cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive"
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete
-              </DropdownMenuItem>
+              {isCancellable && (
+                <>
+                  <DropdownMenuSeparator className="bg-border" />
+                  <DropdownMenuItem
+                    onClick={() => onDelete(invoice)}
+                    className="gap-2 cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Cancel Invoice
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -129,7 +130,7 @@ export function InvoiceCard({
           </div>
           <div className="flex items-center gap-1.5 justify-end">
             <Calendar className="h-3.5 w-3.5 text-muted-foreground/75" />
-            <span>Due: {invoice.dueDate}</span>
+            <span>Due: {invoice.dueDate || 'Not set'}</span>
           </div>
         </div>
 
@@ -158,7 +159,7 @@ export function InvoiceCard({
             <Eye className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" />
             Details
           </Button>
-          {!isPaid && (
+          {isPayable && (
             <Button 
               size="sm" 
               className="flex-1 text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-medium"

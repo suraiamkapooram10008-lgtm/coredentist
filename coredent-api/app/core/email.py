@@ -5,11 +5,30 @@ SendGrid and AWS SES integration for transactional emails
 
 import os
 import logging
+import hashlib
 from typing import Optional, List, Dict, Any
 from enum import Enum
-from datetime import datetime
+from email.message import EmailMessage
+from uuid import uuid4
+import asyncio
+import html as html_module
 
 logger = logging.getLogger(__name__)
+
+
+def build_outbound_message_id(idempotency_key: Optional[str] = None) -> str:
+    """Build one stable, RFC 5322 Message-ID for a logical delivery.
+
+    Caller keys are hashed before entering mail headers so internal identifiers
+    are not disclosed to recipients or providers. When no durable key exists,
+    the caller gets a fresh identity for this one send invocation.
+    """
+    identity = idempotency_key or uuid4().hex
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    domain = os.getenv("EMAIL_MESSAGE_ID_DOMAIN", "coredent.app").strip().lower()
+    if not domain or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789.-" for ch in domain):
+        domain = "coredent.app"
+    return f"<{digest}@{domain}>"
 
 
 def log_email_failure(exc: Exception, kind: str, recipient: str) -> None:
@@ -55,6 +74,7 @@ def log_email_failure(exc: Exception, kind: str, recipient: str) -> None:
 class EmailProvider(str, Enum):
     SENDGRID = "sendgrid"
     AWS_SES = "aws_ses"
+    SMTP = "smtp"
     CONSOLE = "console"  # For development
 
 
@@ -67,11 +87,13 @@ class EmailService:
     """
 
     def __init__(self, provider: Optional[EmailProvider] = None):
-        self.provider = provider or EmailProvider(
-            os.getenv("EMAIL_PROVIDER", "console")
-        )
-        self.from_email = os.getenv("EMAIL_FROM", "noreply@coredent.app")
-        self.from_name = os.getenv("EMAIL_FROM_NAME", "CoreDent")
+        raw_provider = os.getenv(
+            "EMAIL_PROVIDER",
+            "smtp" if os.getenv("ENVIRONMENT", "development").strip().lower() == "production" else "console",
+        ).strip().lower()
+        self.provider = provider or EmailProvider(raw_provider)
+        self.from_email = os.getenv("EMAIL_FROM", os.getenv("SMTP_FROM", "noreply@coredent.app"))
+        self.from_name = os.getenv("EMAIL_FROM_NAME", os.getenv("SMTP_FROM_NAME", "CoreDent"))
 
     async def send_email(
         self,
@@ -82,11 +104,11 @@ class EmailService:
         template_id: Optional[str] = None,
         dynamic_template_data: Optional[Dict[str, Any]] = None,
         attachments: Optional[List[Dict[str, str]]] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Send an email using the configured provider
-        """
+        """Send an email with a stable identity for this logical delivery."""
         recipients = [to] if isinstance(to, str) else to
+        outbound_message_id = build_outbound_message_id(idempotency_key)
 
         email_data = {
             "from": f"{self.from_name} <{self.from_email}>",
@@ -95,14 +117,18 @@ class EmailService:
             "html": html_content,
             "text": text_content,
             "attachments": attachments,
+            "outbound_message_id": outbound_message_id,
         }
 
         if self.provider == EmailProvider.SENDGRID:
             return await self._send_sendgrid(email_data, template_id, dynamic_template_data)
         elif self.provider == EmailProvider.AWS_SES:
             return await self._send_aws_ses(email_data)
-        else:
+        elif self.provider == EmailProvider.SMTP:
+            return await self._send_smtp(email_data)
+        elif self.provider == EmailProvider.CONSOLE:
             return await self._send_console(email_data)
+        raise RuntimeError(f"Unsupported email provider: {self.provider}")
 
     async def _send_sendgrid(
         self,
@@ -113,9 +139,7 @@ class EmailService:
         """Send email via SendGrid"""
         try:
             from sendgrid import SendGridAPIClient
-            from sendgrid.helpers.mail import (
-                Mail
-            )
+            from sendgrid.helpers.mail import Header, Mail
 
             sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
 
@@ -135,14 +159,18 @@ class EmailService:
                 message.content = [
                     {"type": "text/plain", "value": email_data["text"]}
                 ]
+            message.add_header(
+                Header("Message-ID", email_data["outbound_message_id"])
+            )
 
-            response = sg.send(message)
+            response = await asyncio.to_thread(sg.send, message)
 
             logger.info(f"SendGrid email sent successfully: {response.status_code}")
             return {
                 "success": True,
                 "provider": "sendgrid",
-                "message_id": response.headers.get("x-message-id"),
+                "outbound_message_id": email_data["outbound_message_id"],
+                "provider_message_id": response.headers.get("x-message-id"),
                 "status_code": response.status_code,
             }
         except Exception as e:
@@ -150,7 +178,7 @@ class EmailService:
             raise
 
     async def _send_aws_ses(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Send email via AWS SES"""
+        """Send an RFC 5322 message via SES while preserving Message-ID."""
         try:
             import boto3
             from botocore.exceptions import ClientError
@@ -162,42 +190,85 @@ class EmailService:
                 region_name=os.getenv("AWS_REGION", "us-east-1"),
             )
 
-            destination = {"ToAddresses": email_data["to"]}
-
-            message = {
-                "Subject": {"Data": email_data["subject"]},
-                "Body": {},
-            }
-
-            if email_data.get("html"):
-                message["Body"]["Html"] = {"Data": email_data["html"]}
-            if email_data.get("text"):
-                message["Body"]["Text"] = {"Data": email_data["text"]}
-
-            response = ses_client.send_email(
+            message = self._build_mime_message(email_data)
+            response = await asyncio.to_thread(
+                ses_client.send_raw_email,
                 Source=email_data["from"],
-                Destination=destination,
-                Message=message,
+                Destinations=email_data["to"],
+                RawMessage={"Data": message.as_bytes()},
             )
 
-            logger.info(f"AWS SES email sent successfully")
+            logger.info("AWS SES email sent successfully")
             return {
                 "success": True,
                 "provider": "aws_ses",
-                "message_id": response["MessageId"],
+                "outbound_message_id": email_data["outbound_message_id"],
+                "provider_message_id": response["MessageId"],
             }
         except ClientError as e:
             logger.error(f"AWS SES error: {str(e)}")
             raise
 
+    @staticmethod
+    def _build_mime_message(email_data: Dict[str, Any]) -> EmailMessage:
+        """Create the same MIME envelope for SMTP and SES raw delivery."""
+        message = EmailMessage()
+        message["From"] = email_data["from"]
+        message["To"] = ", ".join(email_data["to"])
+        message["Subject"] = email_data["subject"]
+        message["Message-ID"] = email_data["outbound_message_id"]
+        message.set_content(email_data.get("text") or "")
+        if email_data.get("html"):
+            message.add_alternative(email_data["html"], subtype="html")
+        return message
+
+    async def _send_smtp(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Send transactional email through the configured SMTP server."""
+        import smtplib
+        import ssl
+
+        message = self._build_mime_message(email_data)
+        host = os.getenv("SMTP_HOST", "")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        username = os.getenv("SMTP_USER", "")
+        password = os.getenv("SMTP_PASSWORD", "")
+
+        def send_message():
+            tls_context = ssl.create_default_context()
+            if port == 465:
+                with smtplib.SMTP_SSL(host, port, timeout=20, context=tls_context) as client:
+                    if username:
+                        client.login(username, password)
+                    client.send_message(message)
+            else:
+                with smtplib.SMTP(host, port, timeout=20) as client:
+                    client.ehlo()
+                    if port == 587:
+                        client.starttls(context=tls_context)
+                        client.ehlo()
+                    if username:
+                        client.login(username, password)
+                    client.send_message(message)
+
+        await asyncio.to_thread(send_message)
+        return {
+            "success": True,
+            "provider": "smtp",
+            "outbound_message_id": email_data["outbound_message_id"],
+            "provider_message_id": None,
+        }
+
     async def _send_console(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Log email to console (development)"""
+        """Log email to console (development only)."""
+        if os.getenv("ENVIRONMENT", "development").strip().lower() == "production":
+            raise RuntimeError("Console email delivery is disabled in production")
         logger.info("=" * 50)
-        logger.info(f"📧 EMAIL (Development Mode)")
+        logger.info("📧 EMAIL (Development Mode)")
         logger.info("=" * 50)
         logger.info(f"From: {email_data['from']}")
         logger.info(f"To: {', '.join(email_data['to'])}")
         logger.info(f"Subject: {email_data['subject']}")
+        logger.info(f"Message-ID: {email_data['outbound_message_id']}")
         if email_data.get("text"):
             logger.info(f"Body: {email_data['text'][:200]}...")
         logger.info("=" * 50)
@@ -205,20 +276,22 @@ class EmailService:
         return {
             "success": True,
             "provider": "console",
-            "message_id": f"dev-{datetime.now().timestamp()}",
+            "outbound_message_id": email_data["outbound_message_id"],
+            "provider_message_id": None,
         }
 
     # Convenience methods for common emails
 
     async def send_welcome_email(self, to: str, first_name: str) -> Dict[str, Any]:
         """Send welcome email to new patients"""
+        safe_first_name = html_module.escape(first_name)
         return await self.send_email(
             to=to,
             subject="Welcome to CoreDent!",
             html_content=f"""
             <html>
                 <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                    <h1>Welcome to CoreDent, {first_name}!</h1>
+                    <h1>Welcome to CoreDent, {safe_first_name}!</h1>
                     <p>Thank you for choosing CoreDent for your dental care needs.</p>
                     <p>We're excited to have you as a patient!</p>
                     <hr>
@@ -228,7 +301,7 @@ class EmailService:
                 </body>
             </html>
             """,
-            text_content=f"Welcome to CoreDent, {first_name}! Thank you for choosing us.",
+            text_content=f"Welcome to CoreDent, {safe_first_name}! Thank you for choosing us.",
         )
 
     async def send_appointment_reminder(
@@ -238,8 +311,13 @@ class EmailService:
         appointment_date: str,
         appointment_time: str,
         dentist_name: str,
+        idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send appointment reminder"""
+        safe_patient_name = html_module.escape(patient_name)
+        safe_appointment_date = html_module.escape(appointment_date)
+        safe_appointment_time = html_module.escape(appointment_time)
+        safe_dentist_name = html_module.escape(dentist_name)
         return await self.send_email(
             to=to,
             subject="Appointment Reminder - CoreDent",
@@ -247,12 +325,12 @@ class EmailService:
             <html>
                 <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
                     <h1>Appointment Reminder</h1>
-                    <p>Dear {patient_name},</p>
+                    <p>Dear {safe_patient_name},</p>
                     <p>This is a reminder about your upcoming dental appointment:</p>
                     <ul>
-                        <li><strong>Date:</strong> {appointment_date}</li>
-                        <li><strong>Time:</strong> {appointment_time}</li>
-                        <li><strong>Dentist:</strong> {dentist_name}</li>
+                        <li><strong>Date:</strong> {safe_appointment_date}</li>
+                        <li><strong>Time:</strong> {safe_appointment_time}</li>
+                        <li><strong>Dentist:</strong> {safe_dentist_name}</li>
                     </ul>
                     <p>Please arrive 15 minutes early.</p>
                     <p>Need to reschedule? Please call us.</p>
@@ -263,6 +341,7 @@ class EmailService:
                 </body>
             </html>
             """,
+            idempotency_key=idempotency_key,
         )
 
     async def send_appointment_confirmation(
@@ -274,6 +353,10 @@ class EmailService:
         procedure: str,
     ) -> Dict[str, Any]:
         """Send appointment confirmation"""
+        safe_patient_name = html_module.escape(patient_name)
+        safe_appointment_date = html_module.escape(appointment_date)
+        safe_appointment_time = html_module.escape(appointment_time)
+        safe_procedure = html_module.escape(procedure)
         return await self.send_email(
             to=to,
             subject="Appointment Confirmed - CoreDent",
@@ -281,12 +364,12 @@ class EmailService:
             <html>
                 <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
                     <h1>Appointment Confirmed ✅</h1>
-                    <p>Dear {patient_name},</p>
+                    <p>Dear {safe_patient_name},</p>
                     <p>Your appointment has been confirmed:</p>
                     <ul>
-                        <li><strong>Date:</strong> {appointment_date}</li>
-                        <li><strong>Time:</strong> {appointment_time}</li>
-                        <li><strong>Procedure:</strong> {procedure}</li>
+                        <li><strong>Date:</strong> {safe_appointment_date}</li>
+                        <li><strong>Time:</strong> {safe_appointment_time}</li>
+                        <li><strong>Procedure:</strong> {safe_procedure}</li>
                     </ul>
                     <p>We look forward to seeing you!</p>
                     <hr>
@@ -306,17 +389,19 @@ class EmailService:
         amount: float,
     ) -> Dict[str, Any]:
         """Send insurance claim submission notification"""
+        safe_patient_name = html_module.escape(patient_name)
+        safe_claim_number = html_module.escape(claim_number)
         return await self.send_email(
             to=to,
-            subject=f"Insurance Claim Submitted - {claim_number}",
+            subject=f"Insurance Claim Submitted - {safe_claim_number}",
             html_content=f"""
             <html>
                 <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
                     <h1>Insurance Claim Submitted</h1>
-                    <p>Dear {patient_name},</p>
+                    <p>Dear {safe_patient_name},</p>
                     <p>Your insurance claim has been submitted:</p>
                     <ul>
-                        <li><strong>Claim Number:</strong> {claim_number}</li>
+                        <li><strong>Claim Number:</strong> {safe_claim_number}</li>
                         <li><strong>Amount:</strong> ${amount:.2f}</li>
                     </ul>
                     <p>We'll notify you once we receive a response from your insurance.</p>
@@ -438,7 +523,7 @@ class EmailService:
         urgency_color = "#dc3545" if attempt_number >= 3 else "#ffc107"
         return await self.send_email(
             to=to,
-            subject=f"⚠️ Payment Failed - Action Required",
+            subject="⚠️ Payment Failed - Action Required",
             html_content=f"""
             <html>
                 <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -534,7 +619,8 @@ class EmailService:
         reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send subscription cancellation confirmation"""
-        reason_text = f"<p><strong>Reason:</strong> {reason}</p>" if reason else ""
+        safe_reason = html_module.escape(reason) if reason else ""
+        reason_text = f"<p><strong>Reason:</strong> {safe_reason}</p>" if safe_reason else ""
         return await self.send_email(
             to=to,
             subject=f"Subscription Canceled - {plan_name}",
@@ -590,6 +676,10 @@ async def send_payment_confirmation_email(
     or invoice number from Stripe payloads), so we render a generic receipt.
     """
     try:
+        # SECURITY: description may arrive from Stripe metadata (user-
+        # influenced in self-serve signup) — escape before interpolating
+        # into the HTML body.
+        safe_description = html_module.escape(description or "")
         return await email_service.send_email(
             to=to_email,
             subject=f"Payment Received - ${amount:.2f} {currency.upper()}",
@@ -598,7 +688,7 @@ async def send_payment_confirmation_email(
                 "<h2>Payment Received</h2>"
                 f"<p>We've successfully processed your payment of "
                 f"<strong>${amount:.2f} {currency.upper()}</strong>.</p>"
-                + (f"<p>{description}</p>" if description else "")
+                + (f"<p>{safe_description}</p>" if safe_description else "")
                 + (f"<p>Reference: {payment_id}</p>" if payment_id else "")
                 + "<p>Thank you for your business.</p>"
                 "<hr><p style='color:#666;font-size:12px;'>"

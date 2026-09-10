@@ -4,7 +4,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { appointmentsApi } from '@/services/api';
 import type { Appointment } from '@/types/api';
 
@@ -42,9 +42,12 @@ export function useTodayAppointments(
   const { startDate, endDate, enabled = true } = options;
 
   // Default to the start/end of today so the query function always hands the
-  // API concrete date strings (appointmentsApi.list requires them).
-  const safeStart = startDate ?? new Date();
-  const safeEnd = endDate ?? new Date();
+  // API concrete date strings (appointmentsApi.list requires them). The
+  // fallback is memoized: a fresh `new Date()` per render would change the
+  // queryKey on every render and refetch forever.
+  const [fallbackBounds] = useState(() => new Date());
+  const safeStart = startDate ?? fallbackBounds;
+  const safeEnd = endDate ?? fallbackBounds;
 
   const { data: response, isLoading, isError, error } = useQuery({
     queryKey: ['dashboard', 'appointments', safeStart.toISOString(), safeEnd.toISOString()],
@@ -63,14 +66,17 @@ export function useTodayAppointments(
   const upcomingAppointments = useMemo(() => {
     return [...appointments]
       .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+      .filter(apt => new Date(apt.startTime).getTime() > Date.now())
       .slice(0, 5);
   }, [appointments]);
 
   const upcomingCount = useMemo(() => {
-    return upcomingAppointments.filter(
+    // Count against the full list: applying slice(0, 5) first capped the
+    // "upcoming" stat at 5 even on busier days.
+    return appointments.filter(
       apt => new Date(apt.startTime).getTime() > Date.now()
     ).length;
-  }, [upcomingAppointments]);
+  }, [appointments]);
 
   const uniquePatientsCount = useMemo(() => {
     return new Set(appointments.map(apt => apt.patientId)).size;

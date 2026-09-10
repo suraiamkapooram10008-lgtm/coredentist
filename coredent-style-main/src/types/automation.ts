@@ -19,7 +19,20 @@ export interface AutomationWebhook {
   url: string;
   event: AutomationEvent;
   isActive: boolean;
+  /**
+   * Write-only. The API never returns a stored secret (audit finding H-14:
+   * the webhook list used to include `secretToken` verbatim for any
+   * authenticated user). Send a value to set or replace it; omit it to leave
+   * the stored secret untouched. Read `hasSecretToken` to know whether one is
+   * configured.
+   */
   secretToken?: string;
+  /** Write-only, same contract as `secretToken`. */
+  headers?: Record<string, string>;
+  /** Read-only: whether a secret token is configured. */
+  hasSecretToken?: boolean;
+  /** Read-only: names (not values) of configured custom headers. */
+  customHeaderNames?: string[];
   createdAt?: string;
   updatedAt?: string;
 }

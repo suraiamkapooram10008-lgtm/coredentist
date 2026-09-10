@@ -6,6 +6,14 @@ import {
   logPerformance,
 } from "../logger";
 
+const mockSentry = vi.hoisted(() => ({
+  init: vi.fn(),
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
+}));
+
+vi.mock("@sentry/browser", () => mockSentry);
+
 describe("logger", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -119,6 +127,67 @@ describe("logger", () => {
       const recent = logger.getRecentLogs();
       expect(recent[0].message).toBe("Performance: api_call");
       expect(recent[0].context).toEqual({ duration: 250, metric: "api_call" });
+    });
+  });
+
+  describe("production and Sentry monitoring", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      vi.stubEnv("DEV", false as any);
+      vi.stubEnv("PROD", true as any);
+    });
+
+    it("initializes Sentry and scrubs sensitive headers in beforeSend", async () => {
+      vi.stubEnv("VITE_SENTRY_DSN", "https://12345@o123.ingest.sentry.io/123");
+
+      vi.resetModules();
+      await import("../logger");
+
+      expect(mockSentry.init).toHaveBeenCalled();
+      const initConfig = mockSentry.init.mock.calls[0][0];
+
+      // Test beforeSend scrubbing
+      const dummyEvent = {
+        request: {
+          cookies: { session: "123" },
+          headers: {
+            Authorization: "Bearer token",
+            cookie: "session=123",
+            "x-csrf-token": "csrf123",
+            "content-type": "application/json",
+          },
+        },
+      };
+
+      const scrubbed = initConfig.beforeSend(dummyEvent);
+      expect(scrubbed.request.cookies).toBeUndefined();
+      expect(scrubbed.request.headers.Authorization).toBeUndefined();
+      expect(scrubbed.request.headers.cookie).toBeUndefined();
+      expect(scrubbed.request.headers["x-csrf-token"]).toBeUndefined();
+      expect(scrubbed.request.headers["content-type"]).toBe("application/json");
+    });
+
+    it("sends warnings and errors to Sentry", async () => {
+      vi.stubEnv("VITE_SENTRY_DSN", "https://12345@o123.ingest.sentry.io/123");
+      vi.resetModules();
+      const { logger: prodLogger } = await import("../logger");
+
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.spyOn(console, "error").mockImplementation(() => {});
+
+      prodLogger.warn("some warning");
+      expect(mockSentry.captureMessage).toHaveBeenCalledWith("some warning", "warning");
+
+      const err = new Error("prod failure");
+      prodLogger.error("some error", err);
+      expect(mockSentry.captureException).toHaveBeenCalledWith(err);
+    });
+
+    it("does not initialize Sentry if DSN is invalid or placeholder", async () => {
+      vi.stubEnv("VITE_SENTRY_DSN", "your-sentry-dsn");
+      vi.resetModules();
+      await import("../logger");
+      expect(mockSentry.init).not.toHaveBeenCalled();
     });
   });
 });

@@ -6,7 +6,7 @@ Handles imaging statistics, analysis, and reporting
 from typing import Optional, Dict, Any
 from uuid import UUID
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -31,15 +31,15 @@ class ImagingAnalysisService:
         try:
             # Default to last 30 days if not specified
             if not start_date:
-                start_date = datetime.now() - timedelta(days=30)
+                start_date = datetime.now(timezone.utc) - timedelta(days=30)
             if not end_date:
-                end_date = datetime.now()
+                end_date = datetime.now(timezone.utc)
 
             # Total images
             total_result = await db.execute(
                 select(func.count(PatientImage.id)).where(
                     PatientImage.practice_id == practice_id,
-                    PatientImage.is_deleted == False,
+                    PatientImage.is_deleted.is_(False),
                 )
             )
             total_images = total_result.scalar() or 0
@@ -48,7 +48,7 @@ class ImagingAnalysisService:
             recent_result = await db.execute(
                 select(func.count(PatientImage.id)).where(
                     PatientImage.practice_id == practice_id,
-                    PatientImage.is_deleted == False,
+                    PatientImage.is_deleted.is_(False),
                     PatientImage.acquisition_date >= start_date,
                     PatientImage.acquisition_date <= end_date,
                 )
@@ -59,7 +59,7 @@ class ImagingAnalysisService:
             storage_result = await db.execute(
                 select(func.sum(PatientImage.file_size)).where(
                     PatientImage.practice_id == practice_id,
-                    PatientImage.is_deleted == False,
+                    PatientImage.is_deleted.is_(False),
                 )
             )
             total_storage = storage_result.scalar() or 0
@@ -71,7 +71,7 @@ class ImagingAnalysisService:
                     func.count(PatientImage.id).label('count')
                 ).where(
                     PatientImage.practice_id == practice_id,
-                    PatientImage.is_deleted == False,
+                    PatientImage.is_deleted.is_(False),
                 ).group_by(PatientImage.image_type)
             )
             images_by_type = {
@@ -85,7 +85,7 @@ class ImagingAnalysisService:
                     func.count(PatientImage.id).label('count')
                 ).where(
                     PatientImage.practice_id == practice_id,
-                    PatientImage.is_deleted == False,
+                    PatientImage.is_deleted.is_(False),
                 ).group_by(PatientImage.category)
             )
             images_by_category = {
@@ -96,8 +96,8 @@ class ImagingAnalysisService:
             shared_result = await db.execute(
                 select(func.count(PatientImage.id)).where(
                     PatientImage.practice_id == practice_id,
-                    PatientImage.is_deleted == False,
-                    PatientImage.is_shared_with_patient == True,
+                    PatientImage.is_deleted.is_(False),
+                    PatientImage.is_shared_with_patient.is_(True),
                 )
             )
             shared_images = shared_result.scalar() or 0
@@ -154,7 +154,7 @@ class ImagingAnalysisService:
             total_result = await db.execute(
                 select(func.count(PatientImage.id)).where(
                     PatientImage.patient_id == patient_id,
-                    PatientImage.is_deleted == False,
+                    PatientImage.is_deleted.is_(False),
                 )
             )
             total_images = total_result.scalar() or 0
@@ -163,7 +163,7 @@ class ImagingAnalysisService:
             latest_result = await db.execute(
                 select(PatientImage).where(
                     PatientImage.patient_id == patient_id,
-                    PatientImage.is_deleted == False,
+                    PatientImage.is_deleted.is_(False),
                 ).order_by(PatientImage.acquisition_date.desc()).limit(1)
             )
             latest_image = latest_result.scalar_one_or_none()
@@ -175,7 +175,7 @@ class ImagingAnalysisService:
                     func.count(PatientImage.id).label('count')
                 ).where(
                     PatientImage.patient_id == patient_id,
-                    PatientImage.is_deleted == False,
+                    PatientImage.is_deleted.is_(False),
                 ).group_by(PatientImage.image_type)
             )
             images_by_type = {
@@ -186,7 +186,7 @@ class ImagingAnalysisService:
             storage_result = await db.execute(
                 select(func.sum(PatientImage.file_size)).where(
                     PatientImage.patient_id == patient_id,
-                    PatientImage.is_deleted == False,
+                    PatientImage.is_deleted.is_(False),
                 )
             )
             total_storage = storage_result.scalar() or 0
@@ -216,21 +216,28 @@ class ImagingAnalysisService:
         practice_id: UUID,
         days: int = 30,
     ) -> Dict[str, Any]:
-        """Get imaging trends over time"""
+        """Get imaging trends over time (M-5 FIX: bucket by practice-local day)."""
         try:
-            start_date = datetime.now() - timedelta(days=days)
+            from app.core.business_time import day_expr, get_practice_timezone_name
+
+            start_date = datetime.now(timezone.utc) - timedelta(days=days)
+            tz_name = await get_practice_timezone_name(db, practice_id)
+            # Predicates stay UTC (index-friendly); GROUP BY uses the
+            # practice-local date like reports.py so non-UTC practices do not
+            # see off-by-one days around midnight/DST.
+            day_col = day_expr(PatientImage.acquisition_date, tz_name)
 
             # Get daily image counts
             result = await db.execute(
                 select(
-                    func.date(PatientImage.acquisition_date).label('date'),
+                    day_col.label('date'),
                     func.count(PatientImage.id).label('count')
                 ).where(
                     PatientImage.practice_id == practice_id,
-                    PatientImage.is_deleted == False,
+                    PatientImage.is_deleted.is_(False),
                     PatientImage.acquisition_date >= start_date,
-                ).group_by(func.date(PatientImage.acquisition_date))
-                .order_by(func.date(PatientImage.acquisition_date))
+                ).group_by(day_col)
+                .order_by(day_col)
             )
 
             daily_counts = [
@@ -270,7 +277,7 @@ class ImagingAnalysisService:
                     func.sum(PatientImage.file_size).label('total_size')
                 ).where(
                     PatientImage.practice_id == practice_id,
-                    PatientImage.is_deleted == False,
+                    PatientImage.is_deleted.is_(False),
                 ).group_by(PatientImage.image_type)
             )
 

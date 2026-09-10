@@ -3,7 +3,7 @@ Imaging Service
 Core business logic for imaging operations
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 import logging
@@ -15,6 +15,13 @@ from sqlalchemy import select
 from app.models.imaging import PatientImage, ImageSeries, ImageTemplate, ImageType, ImageCategory
 
 logger = logging.getLogger(__name__)
+
+# M-12: columns a caller may never overwrite through a generic update. These
+# are ownership/identity fields; changing them re-parents PHI.
+_IMAGE_IMMUTABLE_FIELDS = frozenset(
+    {"id", "practice_id", "patient_id", "created_at", "updated_at"}
+)
+_SERIES_IMMUTABLE_FIELDS = _IMAGE_IMMUTABLE_FIELDS
 
 
 class ImagingService:
@@ -35,7 +42,7 @@ class ImagingService:
         query = select(PatientImage).where(
             PatientImage.patient_id == patient_id,
             PatientImage.practice_id == practice_id,
-            PatientImage.is_deleted == False,
+            PatientImage.is_deleted.is_(False),
         )
 
         if image_type:
@@ -69,7 +76,7 @@ class ImagingService:
             select(PatientImage).where(
                 PatientImage.id == image_id,
                 PatientImage.practice_id == practice_id,
-                PatientImage.is_deleted == False,
+                PatientImage.is_deleted.is_(False),
             )
         )
         return result.scalar_one_or_none()
@@ -80,15 +87,33 @@ class ImagingService:
         image_id: UUID,
         token: str,
     ) -> Optional[PatientImage]:
-        """Get image by public share token"""
+        """Get image by public share token.
+
+        L1 FIX: enforce the 30-day expiry the share email promises.
+        ``share_expires_at IS NULL`` is a legacy (pre-enforcement) share and
+        stays valid — grandfathered deliberately so existing links don't
+        break; every newly created share always carries an expiry.
+        """
         result = await db.execute(
             select(PatientImage).where(
                 PatientImage.id == image_id,
                 PatientImage.share_token == token,
-                PatientImage.is_deleted == False,
+                PatientImage.is_deleted.is_(False),
             )
         )
-        return result.scalar_one_or_none()
+        image = result.scalar_one_or_none()
+        if image is None:
+            return None
+
+        expires_at = image.share_expires_at
+        if expires_at is not None:
+            if expires_at.tzinfo is None:
+                from datetime import timezone as _tz
+                expires_at = expires_at.replace(tzinfo=_tz.utc)
+            from datetime import datetime as _dt, timezone as _tz
+            if expires_at < _dt.now(_tz.utc):
+                return None
+        return image
 
     @staticmethod
     async def create_image(
@@ -113,7 +138,7 @@ class ImagingService:
             file_name=file_name,
             file_size=file_size,
             mime_type=mime_type,
-            acquisition_date=datetime.now(),
+            acquisition_date=datetime.now(timezone.utc),
             **kwargs
         )
         db.add(image)
@@ -126,18 +151,29 @@ class ImagingService:
     async def update_image(
         db: AsyncSession,
         image_id: UUID,
+        practice_id: UUID,
         **kwargs
     ) -> Optional[PatientImage]:
-        """Update image metadata"""
-        result = await db.execute(
-            select(PatientImage).where(PatientImage.id == image_id)
+        """Update image metadata.
+
+        M-12 FIX: ``practice_id`` is required and applied as a predicate. This
+        method used to look the image up by id alone; the current routes happen
+        to pre-check ownership, but that made the service an unsafe reusable
+        primitive -- any future call site that trusted it would have a
+        cross-tenant write. Identity columns are also no longer settable.
+        """
+        stmt = select(PatientImage).where(
+            PatientImage.id == image_id,
+            PatientImage.practice_id == practice_id,
         )
-        image = result.scalar_one_or_none()
+        image = (await db.execute(stmt)).scalar_one_or_none()
 
         if not image:
             return None
 
         for key, value in kwargs.items():
+            if key in _IMAGE_IMMUTABLE_FIELDS:
+                continue
             if hasattr(image, key):
                 setattr(image, key, value)
 
@@ -150,18 +186,25 @@ class ImagingService:
     async def delete_image(
         db: AsyncSession,
         image_id: UUID,
+        practice_id: UUID,
     ) -> bool:
-        """Soft delete an image"""
-        result = await db.execute(
-            select(PatientImage).where(PatientImage.id == image_id)
+        """Soft delete an image.
+
+        M-12 FIX: practice_id is now mandatory rather than an optional
+        opt-in — an omitted tenant scope silently deleted across tenants.
+        """
+        stmt = select(PatientImage).where(
+            PatientImage.id == image_id,
+            PatientImage.practice_id == practice_id,
         )
+        result = await db.execute(stmt)
         image = result.scalar_one_or_none()
 
         if not image:
             return False
 
         image.is_deleted = True
-        image.deleted_at = datetime.now()
+        image.deleted_at = datetime.now(timezone.utc)
         await db.commit()
         logger.info(f"Deleted image: {image_id}")
         return True
@@ -171,10 +214,14 @@ class ImagingService:
         db: AsyncSession,
         image_id: UUID,
         annotations: List[Dict[str, Any]],
+        practice_id: UUID,
     ) -> Optional[PatientImage]:
-        """Add annotations to image"""
+        """Add annotations to image (M-12: tenant-scoped)."""
         result = await db.execute(
-            select(PatientImage).where(PatientImage.id == image_id)
+            select(PatientImage).where(
+                PatientImage.id == image_id,
+                PatientImage.practice_id == practice_id,
+            )
         )
         image = result.scalar_one_or_none()
 
@@ -245,11 +292,15 @@ class ImagingService:
     async def update_series(
         db: AsyncSession,
         series_id: UUID,
+        practice_id: UUID,
         **kwargs
     ) -> Optional[ImageSeries]:
-        """Update image series"""
+        """Update image series (M-12: tenant-scoped, identity fields frozen)."""
         result = await db.execute(
-            select(ImageSeries).where(ImageSeries.id == series_id)
+            select(ImageSeries).where(
+                ImageSeries.id == series_id,
+                ImageSeries.practice_id == practice_id,
+            )
         )
         series = result.scalar_one_or_none()
 
@@ -257,6 +308,8 @@ class ImagingService:
             return None
 
         for key, value in kwargs.items():
+            if key in _SERIES_IMMUTABLE_FIELDS:
+                continue
             if hasattr(series, key):
                 setattr(series, key, value)
 
@@ -327,12 +380,14 @@ class ImagingService:
     async def update_template(
         db: AsyncSession,
         template_id: UUID,
+        practice_id: UUID | None = None,
         **kwargs
     ) -> Optional[ImageTemplate]:
-        """Update image template"""
-        result = await db.execute(
-            select(ImageTemplate).where(ImageTemplate.id == template_id)
-        )
+        """Update image template (L-10 FIX: scope by practice_id like siblings)."""
+        stmt = select(ImageTemplate).where(ImageTemplate.id == template_id)
+        if practice_id is not None:
+            stmt = stmt.where(ImageTemplate.practice_id == practice_id)
+        result = await db.execute(stmt)
         template = result.scalar_one_or_none()
 
         if not template:

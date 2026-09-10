@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useCurrencyFormatter } from '@/hooks/useCurrencyFormatter';
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,77 +18,83 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  CreditCard,
-  Banknote,
-  ClipboardList,
-  FileCheck2,
-  Receipt
-} from 'lucide-react';
+import { Receipt } from 'lucide-react';
 import type { Invoice, PaymentMethod } from '@/types/billing';
+
+const methodLabels: Record<PaymentMethod, string> = {
+  cash: 'Cash',
+  card: 'Card',
+  check: 'Check',
+  insurance: 'Insurance',
+  upi: 'UPI',
+  other: 'Other',
+};
 
 interface RecordPaymentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   invoice: Invoice | null;
+  acceptedPaymentMethods?: PaymentMethod[];
   onSubmit: (data: {
     amount: number;
     method: PaymentMethod;
-    reference?: string;
+    reference: string;
     notes?: string;
-  }) => Promise<void>;
+  }) => Promise<boolean>;
 }
 
 export function RecordPaymentDialog({
   open,
   onOpenChange,
   invoice,
+  acceptedPaymentMethods,
   onSubmit,
 }: RecordPaymentDialogProps) {
-  const [amount, setAmount] = useState<number>(0);
-  const [method, setMethod] = useState<PaymentMethod>('credit_card');
-  const [reference, setReference] = useState<string>('');
-  const [notes, setNotes] = useState<string>('');
+  const availableMethods = useMemo(
+    () => acceptedPaymentMethods?.length
+      ? acceptedPaymentMethods
+      : (['cash', 'card', 'check'] as PaymentMethod[]),
+    [acceptedPaymentMethods],
+  );
+  const preferredMethod = availableMethods.includes('card')
+    ? 'card'
+    : availableMethods[0];
+
+  const [amount, setAmount] = useState(0);
+  const [method, setMethod] = useState<PaymentMethod>(preferredMethod);
+  const [reference, setReference] = useState('');
+  const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Set default fields when invoice changes
   useEffect(() => {
-    if (open && invoice) {
-      setAmount(invoice.balance);
-      setMethod('credit_card');
-      setReference('');
-      setNotes('');
-    }
-  }, [open, invoice]);
+    if (!open || !invoice) return;
+    setAmount(invoice.balance);
+    setMethod(preferredMethod);
+    setReference('');
+    setNotes('');
+  }, [open, invoice, preferredMethod]);
 
-  const handleFormSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!invoice || amount <= 0) return;
+  const { formatCurrency } = useCurrencyFormatter();
+  if (!invoice) return null;
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const trimmedReference = reference.trim();
+    if (amount <= 0 || amount > invoice.balance || !trimmedReference) return;
 
     setIsSubmitting(true);
     try {
-      await onSubmit({
+      const succeeded = await onSubmit({
         amount,
         method,
-        reference: reference || undefined,
+        reference: trimmedReference,
         notes: notes || undefined,
       });
-      onOpenChange(false);
-    } catch (err) {
-      console.error(err);
+      if (succeeded) onOpenChange(false);
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(val);
-  };
-
-  if (!invoice) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -98,17 +105,15 @@ export function RecordPaymentDialog({
             Record Payment
           </DialogTitle>
         </DialogHeader>
-
-        <form onSubmit={handleFormSubmit} className="space-y-5">
-          {/* Quick Invoice Details */}
+        <form onSubmit={handleSubmit} className="space-y-5">
           <div className="rounded-xl border border-border bg-accent/20 p-4 space-y-2 text-xs">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Invoice Number:</span>
-              <span className="font-semibold font-mono text-foreground">{invoice.invoiceNumber}</span>
+              <span className="font-semibold font-mono">{invoice.invoiceNumber}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Patient Name:</span>
-              <span className="font-semibold text-foreground">{invoice.patientName}</span>
+              <span className="font-semibold">{invoice.patientName}</span>
             </div>
             <div className="flex justify-between border-t border-border/50 pt-2 text-sm">
               <span className="text-muted-foreground">Remaining Balance:</span>
@@ -116,108 +121,67 @@ export function RecordPaymentDialog({
             </div>
           </div>
 
-          {/* Payment Amount */}
           <div className="space-y-2">
-            <Label htmlFor="payAmount" className="text-sm font-semibold">Payment Amount ($)</Label>
-            <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">$</div>
-              <Input
-                type="number"
-                id="payAmount"
-                min="0.01"
-                max={invoice.balance}
-                step="0.01"
-                value={amount || ''}
-                onChange={e => setAmount(Number(e.target.value))}
-                className="pl-7 bg-background/60 border-border text-lg font-mono font-semibold text-foreground"
-                required
-              />
-              <Button 
-                type="button" 
-                variant="ghost" 
-                size="sm"
-                onClick={() => setAmount(invoice.balance)}
-                className="absolute right-1 top-1/2 -translate-y-1/2 h-8 text-xs text-primary hover:bg-primary/10"
-              >
-                Pay Full
-              </Button>
-            </div>
+            <Label htmlFor="payAmount">Payment Amount</Label>
+            <Input
+              id="payAmount"
+              type="number"
+              min="0.01"
+              max={invoice.balance}
+              step="0.01"
+              value={amount || ''}
+              onChange={event => setAmount(Number(event.target.value))}
+              required
+            />
+            <Button type="button" variant="ghost" size="sm" onClick={() => setAmount(invoice.balance)}>
+              Pay full balance
+            </Button>
           </div>
 
-          {/* Payment Method */}
           <div className="space-y-2">
             <Label htmlFor="payMethod">Payment Method</Label>
-            <Select value={method} onValueChange={(val) => setMethod(val as PaymentMethod)}>
-              <SelectTrigger id="payMethod" className="bg-background/60 border-border">
+            <Select value={method} onValueChange={value => setMethod(value as PaymentMethod)}>
+              <SelectTrigger id="payMethod">
                 <SelectValue placeholder="Select method..." />
               </SelectTrigger>
-              <SelectContent className="bg-card border-border">
-                <SelectItem value="credit_card" className="cursor-pointer">
-                  <span className="flex items-center gap-2">
-                    <CreditCard className="h-4 w-4 text-primary" /> Credit Card
-                  </span>
-                </SelectItem>
-                <SelectItem value="cash" className="cursor-pointer">
-                  <span className="flex items-center gap-2">
-                    <Banknote className="h-4 w-4 text-emerald-500" /> Cash
-                  </span>
-                </SelectItem>
-                <SelectItem value="check" className="cursor-pointer">
-                  <span className="flex items-center gap-2">
-                    <ClipboardList className="h-4 w-4 text-amber-500" /> Check
-                  </span>
-                </SelectItem>
-                <SelectItem value="debit_card" className="cursor-pointer">
-                  <span className="flex items-center gap-2">
-                    <CreditCard className="h-4 w-4 text-sky-500" /> Debit Card
-                  </span>
-                </SelectItem>
-                <SelectItem value="bank_transfer" className="cursor-pointer">
-                  <span className="flex items-center gap-2">
-                    <FileCheck2 className="h-4 w-4 text-purple-500" /> Bank Transfer
-                  </span>
-                </SelectItem>
+              <SelectContent>
+                {availableMethods.map(value => (
+                  <SelectItem key={value} value={value}>{methodLabels[value]}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
 
-          {/* Reference */}
           <div className="space-y-2">
-            <Label htmlFor="reference">Reference / Check / Auth #</Label>
+            <Label htmlFor="reference">Transaction Reference</Label>
             <Input
-              placeholder="e.g. Check number, CC auth code, Tx ID"
               id="reference"
               value={reference}
-              onChange={e => setReference(e.target.value)}
-              className="bg-background/60 border-border"
+              onChange={event => setReference(event.target.value)}
+              placeholder="Check number, authorization, or transaction ID"
+              required
             />
+            <p className="text-[11px] text-muted-foreground">
+              Required for manual payments so the entry can be reconciled against your records.
+            </p>
           </div>
 
-          {/* Memo / Notes */}
           <div className="space-y-2">
             <Label htmlFor="payNotes">Payment Notes</Label>
             <Textarea
-              placeholder="Optional notes or memos about this payment..."
               id="payNotes"
               value={notes}
-              onChange={e => setNotes(e.target.value)}
-              className="h-20 bg-background/60 border-border resize-none"
+              onChange={event => setNotes(event.target.value)}
             />
           </div>
 
-          <DialogFooter className="pt-2 border-t border-border/50">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              className="border-border bg-background hover:bg-accent text-foreground"
-            >
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting || amount <= 0}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold px-5"
+              disabled={isSubmitting || amount <= 0 || amount > invoice.balance || !reference.trim()}
             >
               {isSubmitting ? 'Recording...' : 'Record Payment'}
             </Button>

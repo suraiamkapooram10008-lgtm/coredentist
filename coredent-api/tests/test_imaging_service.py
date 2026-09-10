@@ -1,12 +1,8 @@
 import pytest
 import uuid
 import json
-from datetime import datetime
 from app.services.imaging_service import ImagingService
-from app.models.imaging import PatientImage, ImageSeries, ImageTemplate, ImageType, ImageCategory
-from app.models.practice import Practice
-from app.models.patient import Patient
-from app.models.user import User
+from app.models.imaging import ImageType, ImageCategory
 
 @pytest.mark.asyncio
 class TestImagingService:
@@ -113,13 +109,74 @@ class TestImagingService:
         )
         
         updated = await ImagingService.update_image(
-            db=db_session, 
-            image_id=image.id, 
+            db=db_session,
+            image_id=image.id,
+            practice_id=test_practice.id,
             tooth_number="15",
             notes="Updated note"
         )
         assert updated.tooth_number == "15"
         assert updated.notes == "Updated note"
+
+    async def test_update_image_rejects_other_practice(
+        self, db_session, test_practice, test_patient, test_user
+    ):
+        """M-12: the service itself refuses a cross-tenant update."""
+        from uuid import uuid4
+
+        image = await ImagingService.create_image(
+            db=db_session,
+            practice_id=test_practice.id,
+            patient_id=test_patient.id,
+            provider_id=test_user.id,
+            image_type=ImageType.XRAY,
+            file_path="/path/tenant.png",
+            file_name="tenant.png",
+            file_size=1024,
+            mime_type="image/png",
+        )
+
+        result = await ImagingService.update_image(
+            db=db_session,
+            image_id=image.id,
+            practice_id=uuid4(),
+            notes="should not apply",
+        )
+        assert result is None
+
+        await db_session.refresh(image)
+        assert image.notes != "should not apply"
+
+    async def test_update_image_ignores_identity_fields(
+        self, db_session, test_practice, test_patient, test_user
+    ):
+        """M-12: patient_id cannot be re-parented through a generic update."""
+        from uuid import uuid4
+
+        image = await ImagingService.create_image(
+            db=db_session,
+            practice_id=test_practice.id,
+            patient_id=test_patient.id,
+            provider_id=test_user.id,
+            image_type=ImageType.XRAY,
+            file_path="/path/identity.png",
+            file_name="identity.png",
+            file_size=1024,
+            mime_type="image/png",
+        )
+
+        updated = await ImagingService.update_image(
+            db=db_session,
+            image_id=image.id,
+            practice_id=test_practice.id,
+            patient_id=uuid4(),
+            notes="ok",
+        )
+        assert updated is not None
+        assert updated.notes == "ok"
+        # The identity columns are unchanged despite being supplied.
+        assert updated.patient_id == test_patient.id
+        assert updated.practice_id == test_practice.id
 
     async def test_delete_image(self, db_session, test_practice, test_patient, test_user):
         """Test soft-deleting an image."""
@@ -135,7 +192,9 @@ class TestImagingService:
             mime_type="image/png"
         )
         
-        success = await ImagingService.delete_image(db_session, image.id)
+        success = await ImagingService.delete_image(
+            db_session, image.id, test_practice.id
+        )
         assert success is True
         
         # Verify it's soft deleted
@@ -161,7 +220,9 @@ class TestImagingService:
             {"type": "rect", "x1": 50, "y1": 50, "x2": 150, "y2": 150}
         ]
         
-        updated = await ImagingService.add_annotations(db_session, image.id, annotations)
+        updated = await ImagingService.add_annotations(
+            db_session, image.id, annotations, test_practice.id
+        )
         assert updated.annotations is not None
         if isinstance(updated.annotations, str):
             saved_annotations = json.loads(updated.annotations)
@@ -190,7 +251,9 @@ class TestImagingService:
         fetched = await ImagingService.get_series(db_session, series.id, test_practice.id)
         assert fetched.id == series.id
         
-        updated = await ImagingService.update_series(db_session, series.id, series_name="Updated Series Name")
+        updated = await ImagingService.update_series(
+            db_session, series.id, test_practice.id, series_name="Updated Series Name"
+        )
         assert updated.series_name == "Updated Series Name"
 
     async def test_template_operations(self, db_session, test_practice):

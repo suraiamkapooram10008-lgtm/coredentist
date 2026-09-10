@@ -30,11 +30,14 @@ class RegisterRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    """Token response schema"""
+    """Access-token response; refresh credentials are cookie-only."""
     access_token: str
-    refresh_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     expires_in: int  # seconds
+    # First-login force-change flag: admin-provisioned accounts must rotate
+    # the temporary password before they get full API access.
+    must_change_password: bool = False
 
 
 class LoginResponse(TokenResponse):
@@ -43,8 +46,8 @@ class LoginResponse(TokenResponse):
 
 
 class TokenRefreshRequest(BaseModel):
-    """Token refresh request"""
-    refresh_token: str
+    """Token refresh request; cookie-backed browser sessions may omit the body."""
+    refresh_token: Optional[str] = None
 
 
 class TokenData(BaseModel):
@@ -61,22 +64,23 @@ class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
 
+class VerifyEmailRequest(BaseModel):
+    """Email verification request (token in body, not the URL)."""
+    token: str = Field(..., min_length=1)
+
+
+class InvitationValidateRequest(BaseModel):
+    """Invitation validation token carried in a POST body."""
+    token: str = Field(..., min_length=1)
+
+
 class ResetPasswordRequest(BaseModel):
     """Reset password request"""
     token: str
-    new_password: str = Field(..., min_length=8)
+    # Aligned with the enforced policy (PASSWORD_MIN_LENGTH)
+    new_password: str = Field(..., min_length=12)
 
 
-class InvitationValidateResponse(BaseModel):
-    """Invitation validation response"""
-    email: EmailStr
-    first_name: str
-    last_name: str
-    role: UserRole
-    practice_name: str
-
-
-class AcceptInvitationRequest(BaseModel):
-    """Accept invitation request"""
-    token: str
-    password: str = Field(..., min_length=8)
+# NOTE: the invitation flow (InvitationValidateResponse /
+# AcceptInvitationRequest) was removed — it had no endpoints. Staff
+# onboarding uses admin-provisioned accounts + /auth/change-password.

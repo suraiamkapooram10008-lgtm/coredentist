@@ -7,7 +7,7 @@ import os
 import logging
 from typing import Dict, Any, Optional, List
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -50,15 +50,16 @@ class EDIService:
         self.provider_npi = os.getenv("PROVIDER_NPI", "")
 
     def _generate_isa_segment(self) -> str:
-        """Generate ISA segment for X12 envelope"""
-        timestamp = datetime.now().strftime("%y%m%d%H%M")
-        control_number = str(int(datetime.now().timestamp()))[-9:]
+        """Generate ISA segment for X12 envelope (UTC — M8)"""
+        timestamp = datetime.now(timezone.utc).strftime("%y%m%d%H%M")
+        control_number = str(int(datetime.now(timezone.utc).timestamp()))[-9:]
 
         return f"ISA*00*          *00*          *ZZ*{self.sender_id:<15}*ZZ*{self.receiver_id:<15}*{timestamp}*U*00401*{control_number}*0*P*>~"
 
     def _generate_gs_segment(self) -> str:
-        """Generate GS segment for X12 envelope"""
-        return f"GS*HC*{self.sender_id}*{self.receiver_id}*{datetime.now().strftime('%Y%m%d')}*{datetime.now().strftime('%H%M')}*1*X*004010~"
+        """Generate GS segment for X12 envelope (UTC — M8)"""
+        now = datetime.now(timezone.utc)
+        return f"GS*HC*{self.sender_id}*{self.receiver_id}*{now.strftime('%Y%m%d')}*{now.strftime('%H%M')}*1*X*004010~"
 
     def _generate_st_segment(self, transaction_code: str, control_number: int = 1) -> str:
         """Generate ST segment for transaction set"""
@@ -87,7 +88,7 @@ class EDIService:
         segments.append(self._generate_st_segment("837D"))
 
         # BHT Beginning of Hierarchical Transaction
-        segments.append(f"BHT*0010*00*{claim_number}*{datetime.now().strftime('%Y%m%d%H%M')}*CH~")
+        segments.append(f"BHT*0010*00*{claim_number}*{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')}*CH~")
 
         # Loop 1000A - Submitter Name
         segments.append(f"NM1*41*2*{provider['name']}*****46*{self.sender_id}~")
@@ -97,14 +98,14 @@ class EDIService:
         segments.append(f"NM1*40*2*{self.clearinghouse.value.upper()}*****46*{self.receiver_id}~")
 
         # Loop 2000A - Billing Provider Hierarchical Level
-        segments.append(f"HL*1**20*1~")
+        segments.append("HL*1**20*1~")
         segments.append(f"NM1*85*1*{provider['last_name']}*{provider['first_name']}****XX*{provider['npi']}~")
         segments.append(f"N3*{provider['address']}~")
         segments.append(f"N4*{provider['city']}*{provider['state']}*{provider['zip']}~")
         segments.append(f"REF*EI*{self.sender_id}~")
 
         # Loop 2000B - Subscriber Hierarchical Level
-        segments.append(f"HL*2*1*22*0~")
+        segments.append("HL*2*1*22*0~")
         segments.append(f"SBR*P*{subscriber.get('relationship', 'self')}*******CI~")
         segments.append(f"NM1*IL*1*{subscriber['last_name']}*{subscriber['first_name']}****MI*{subscriber.get('member_id', '')}~")
         segments.append(f"N3*{subscriber.get('address', '')}~")
@@ -112,7 +113,7 @@ class EDIService:
 
         # Loop 2000C - Patient Hierarchical Level
         if patient.get('is_subscriber', True) is False:
-            segments.append(f"HL*3*2*22*0~")
+            segments.append("HL*3*2*22*0~")
             segments.append(f"NM1*QC*1*{patient['last_name']}*{patient['first_name']}~")
             segments.append(f"N3*{patient.get('address', '')}~")
             segments.append(f"N4*{patient.get('city', '')}*{patient.get('state', '')}*{patient.get('zip', '')}~")
@@ -128,7 +129,7 @@ class EDIService:
         for idx, line in enumerate(claim_lines, 1):
             segments.append(f"LX*{idx}~")
             segments.append(f"SOA*{line.get('service_code', 'D0120')}**{line.get('charged_amount', '0')}*1*1~")
-            segments.append(f"DTP*472*D8*{line.get('service_date', datetime.now().strftime('%Y%m%d'))}~")
+            segments.append(f"DTP*472*D8*{line.get('service_date', datetime.now(timezone.utc).strftime('%Y%m%d'))}~")
 
             # Tooth code if present
             if line.get('tooth_code'):

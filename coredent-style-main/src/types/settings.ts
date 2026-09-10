@@ -1,50 +1,42 @@
 // ============================================
 // CoreDent PMS - Settings Types
-// Types for billing and practice preferences
+// Exact frontend representation of the persisted billing preferences.
 // ============================================
 
-export interface BillingPreferences {
-  taxRate: number;
-  taxLabel: string;
-  enableTax: boolean;
-  defaultPaymentTerms: number; // days
-  invoicePrefix: string;
-  invoiceStartNumber: number;
-  currency: string;
-  acceptedPaymentMethods: PaymentMethod[];
-  receiptFooterText: string;
-  lateFeeEnabled: boolean;
-  lateFeePercentage: number;
-  lateFeeGracePeriod: number; // days
-  autoSendInvoices: boolean;
-  autoSendReceipts: boolean;
-}
+export type PaymentMethod = 'cash' | 'card' | 'check' | 'insurance' | 'upi' | 'other';
 
-export type PaymentMethod = 'cash' | 'check' | 'credit_card' | 'debit_card' | 'bank_transfer';
+export interface BillingPreferences {
+  /** Percentage, from 0 through 100. */
+  taxRate: number;
+  currency: string;
+  invoicePrefix: string;
+  paymentTerms: number;
+  lateFeePercentage: number;
+  acceptedPaymentMethods: PaymentMethod[];
+  autoSendInvoices: boolean;
+  autoSendReminders: boolean;
+  reminderDaysBefore: number;
+}
 
 export const paymentMethodLabels: Record<PaymentMethod, string> = {
   cash: 'Cash',
+  card: 'Card',
   check: 'Check',
-  credit_card: 'Credit Card',
-  debit_card: 'Debit Card',
-  bank_transfer: 'Bank Transfer',
+  insurance: 'Insurance',
+  upi: 'UPI',
+  other: 'Other',
 };
 
 export const defaultBillingPreferences: BillingPreferences = {
   taxRate: 0,
-  taxLabel: 'Tax',
-  enableTax: false,
-  defaultPaymentTerms: 30,
-  invoicePrefix: 'INV',
-  invoiceStartNumber: 1001,
   currency: 'USD',
-  acceptedPaymentMethods: ['cash', 'check', 'credit_card', 'debit_card'],
-  receiptFooterText: 'Thank you for your payment!',
-  lateFeeEnabled: false,
-  lateFeePercentage: 1.5,
-  lateFeeGracePeriod: 15,
-  autoSendInvoices: true,
-  autoSendReceipts: true,
+  invoicePrefix: 'INV',
+  paymentTerms: 30,
+  lateFeePercentage: 0,
+  acceptedPaymentMethods: ['cash', 'card', 'check'],
+  autoSendInvoices: false,
+  autoSendReminders: false,
+  reminderDaysBefore: 3,
 };
 
 export const currencyOptions = [

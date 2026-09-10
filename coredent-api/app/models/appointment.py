@@ -66,6 +66,10 @@ class Appointment(Base):
     duration = Column(Integer, nullable=False)  # in minutes
 
     notes = Column(Text)
+    # M-6 FIX: dedicated column for the cancellation reason. Previously the
+    # reason was appended to ``notes`` (a free-text clinical observation
+    # column), mixing which of state-machine metadata with clinical content.
+    cancellation_reason = Column(Text)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

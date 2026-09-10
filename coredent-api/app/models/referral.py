@@ -3,7 +3,7 @@ Referral Management Models
 Patient referrals, specialist communication, and tracking
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, Numeric, Boolean
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, Numeric, Boolean, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -75,6 +75,10 @@ class ReferralSource1(Base):
     is_track_referrals = Column(Boolean, default=True)
     notes = Column(Text)
 
+    # Deletion (HIPAA: soft delete to preserve referral attribution)
+    is_deleted = Column(Boolean, default=False)
+    deleted_at = Column(DateTime(timezone=True))
+
     # Stats
     total_referrals = Column(String(20), default="0")
     successful_referrals = Column(String(20), default="0")
@@ -93,6 +97,9 @@ class ReferralSource1(Base):
 class Referral(Base):
     """Patient referral model"""
     __tablename__ = "referrals"
+    __table_args__ = (
+        UniqueConstraint('practice_id', 'referral_number', name='uq_practice_referral_number'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
@@ -105,6 +112,7 @@ class Referral(Base):
     is_internal = Column(Boolean, default=False)
 
     # Referral Information
+    referral_number = Column(String(50), nullable=True, index=True)
     referral_type = Column(Enum(ReferralType), nullable=False)
     status = Column(Enum(ReferralStatus), default=ReferralStatus.PENDING)
 
@@ -122,6 +130,13 @@ class Referral(Base):
     referral_date = Column(DateTime(timezone=True), server_default=func.now())
     appointment_date = Column(DateTime(timezone=True))
     completed_date = Column(DateTime(timezone=True))
+    completed_at = Column(DateTime(timezone=True))
+
+    # Soft delete (HIPAA audit-trail preservation). FIX: delete_referral
+    # previously set these attributes without the columns existing — the
+    # values were silently discarded and nothing was ever deleted.
+    is_deleted = Column(Boolean, nullable=False, default=False, server_default="0")
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     # Results
     outcome = Column(Text)

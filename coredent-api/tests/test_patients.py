@@ -189,7 +189,7 @@ class TestPatientEndpoints:
 
     @pytest.mark.asyncio
     async def test_update_patient_success(
-        self, client: AsyncClient, auth_headers, test_patient
+        self, client: AsyncClient, auth_headers, test_patient, db_session: AsyncSession
     ):
         """Test updating a patient"""
         update_data = {
@@ -210,6 +210,11 @@ class TestPatientEndpoints:
         data = response.json()
         assert data["phone"] == update_data["phone"]
         assert data["address_street"] == update_data["address_street"]
+        from app.core.search_index import hmac_index
+
+        await db_session.refresh(test_patient)
+        assert test_patient.search_index_phone == hmac_index(update_data["phone"])
+
 
     @pytest.mark.asyncio
     async def test_update_patient_not_found(
@@ -268,3 +273,35 @@ class TestPatientEndpoints:
             f"/api/v1/patients/{missing_id}", headers=auth_headers
         )
         assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_export_patient_data_success(
+        self, client: AsyncClient, auth_headers, test_patient, db_session: AsyncSession
+    ):
+        """Test exporting patient data for GDPR/HIPAA compliance"""
+        response = await client.get(
+            f"/api/v1/patients/{test_patient.id}/export", headers=auth_headers
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert "exported_at" in data
+        assert "exported_by" in data
+        assert "patient_demographics" in data
+        assert data["patient_demographics"]["id"] == str(test_patient.id)
+        assert data["patient_demographics"]["first_name"] == test_patient.first_name
+        assert "appointments" in data
+        assert "clinical_notes" in data
+        assert "treatment_plans" in data
+
+        # Check that audit log was created
+        from app.models.audit import AuditLog
+        from sqlalchemy import select
+        audit_result = await db_session.execute(
+            select(AuditLog).where(
+                AuditLog.action == "patient_data_exported",
+                AuditLog.entity_id == test_patient.id
+            )
+        )
+        audit_log = audit_result.scalar_one_or_none()
+        assert audit_log is not None

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   AlertDialog,
@@ -34,13 +35,19 @@ import { CreateInvoiceDialog } from '@/components/billing/CreateInvoiceDialog';
 import { RecordPaymentDialog } from '@/components/billing/RecordPaymentDialog';
 import { InvoiceDetails } from '@/components/billing/InvoiceDetails';
 import { billingApi } from '@/services/billingApi';
+import { useAuth } from '@/contexts/auth-context';
+import { settingsApi } from '@/services/api';
 import { triggerAutomation } from '@/services/automationApi';
+import { useCurrencyFormatter } from '@/hooks/useCurrencyFormatter';
+import { logger } from '@/lib/logger';
 import type { Invoice, PaymentMethod } from '@/types/billing';
 
 type TabFilter = 'all' | 'pending' | 'paid' | 'overdue';
 
 export default function Billing() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const clinicName = user?.practiceName?.trim() || 'Your dental clinic';
   const queryClient = useQueryClient();
   
   // State
@@ -54,20 +61,33 @@ export default function Billing() {
   const [deletingInvoice, setDeletingInvoice] = useState<Invoice | null>(null);
 
   // Load invoices with React Query
-  const { data: invoices = [], isLoading: isLoadingInvoices } = useQuery({
+  const { data: invoices = [], isLoading: isLoadingInvoices, isError: invoicesError } = useQuery({
     queryKey: ['billing', 'invoices'],
     queryFn: () => billingApi.getInvoices(),
     staleTime: 2 * 60 * 1000, // 2 minutes
   });
 
   // Load billing summary
-  const { data: summary, isLoading: isLoadingSummary } = useQuery({
+  const { data: summary, isLoading: isLoadingSummary, isError: summaryError } = useQuery({
     queryKey: ['billing', 'summary'],
     queryFn: () => billingApi.getSummary(),
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
+  // Load persisted billing preferences for exact tax, terms, and payment methods.
+  // The backend remains authoritative if this owner/admin settings request is unavailable.
+  const { data: preferencesResponse } = useQuery({
+    queryKey: ['settings', 'billing-preferences'],
+    queryFn: () => settingsApi.getBillingPreferences(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const billingPreferences = preferencesResponse?.success
+    ? preferencesResponse.data
+    : undefined;
+
   const isLoading = isLoadingInvoices || isLoadingSummary;
+
+  const { currency, formatCurrency } = useCurrencyFormatter();
 
   // Filter invoices
   const filteredInvoices = invoices.filter(invoice => {
@@ -79,7 +99,7 @@ export default function Billing() {
     // Tab filter
     let matchesTab = true;
     if (activeTab === 'pending') {
-      matchesTab = ['draft', 'sent', 'partial'].includes(invoice.status);
+      matchesTab = ['draft', 'pending', 'partially_paid'].includes(invoice.status);
     } else if (activeTab === 'paid') {
       matchesTab = invoice.status === 'paid';
     } else if (activeTab === 'overdue') {
@@ -89,72 +109,71 @@ export default function Billing() {
     return matchesSearch && matchesTab;
   });
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(amount);
-  };
-
-  // Create invoice
+  // Create invoice. Returns true on success so the dialog can dismiss;
+  // false tells it to keep the form state for retry.
   const handleCreateInvoice = async (data: {
     patientId: string;
     patientName: string;
     patientEmail?: string;
     patientPhone?: string;
     lineItems: {
-      procedureCode: string;
       description: string;
-      toothNumber?: number;
       quantity: number;
       unitPrice: number;
-      discount: number;
     }[];
+    taxRatePercent?: number;
     dueDate: string;
     notes?: string;
-  }) => {
+  }): Promise<boolean> => {
     try {
       const newInvoice = await billingApi.createInvoice(data);
       queryClient.invalidateQueries({ queryKey: ['billing'] });
-      
+
       toast({
         title: 'Invoice created',
         description: `Invoice ${newInvoice.invoiceNumber} has been created`,
       });
 
       // Trigger invoice_created automation
-      triggerAutomation('invoice_created', {
+      Promise.resolve(triggerAutomation('invoice_created', {
         paymentId: '',
         invoiceId: newInvoice.id,
         patientName: data.patientName,
         patientEmail: data.patientEmail,
         amount: newInvoice.total,
         paymentMethod: '',
-        clinicName: 'CoreDent Clinic',
+        clinicName,
+      })).catch((automationError) => {
+        logger.warn('invoice_created automation failed', {
+          error: automationError instanceof Error ? automationError.message : String(automationError),
+        });
       });
+
+      return true;
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to create invoice',
+        description: 'Failed to create invoice. The dialog has been kept open so you can retry.',
         variant: 'destructive',
       });
+      return false;
     }
   };
 
-  // Record payment
+  // Record payment. Returns true on success so the dialog can dismiss.
   const handleRecordPayment = async (data: {
     amount: number;
     method: PaymentMethod;
-    reference?: string;
+    reference: string;
     notes?: string;
-  }) => {
-    if (!paymentInvoice) return;
+  }): Promise<boolean> => {
+    if (!paymentInvoice) return false;
     
     try {
-      const updated = await billingApi.recordPayment(paymentInvoice.id, data);
+      const result = await billingApi.recordPayment(paymentInvoice.id, data);
       queryClient.invalidateQueries({ queryKey: ['billing'] });
-      if (viewingInvoice?.id === updated.id) {
-        setViewingInvoice(updated);
+      if (viewingInvoice?.id === result.invoice.id) {
+        setViewingInvoice(result.invoice);
       }
       
       toast({
@@ -163,27 +182,34 @@ export default function Billing() {
       });
 
       // Trigger payment_received automation
-      triggerAutomation('payment_received', {
-        paymentId: crypto.randomUUID(),
+      Promise.resolve(triggerAutomation('payment_received', {
+        paymentId: result.payment.id,
         invoiceId: paymentInvoice.id,
         patientName: paymentInvoice.patientName,
         patientEmail: paymentInvoice.patientEmail,
         amount: data.amount,
         paymentMethod: data.method,
-        clinicName: 'CoreDent Clinic',
+        clinicName,
+      })).catch((automationError) => {
+        logger.warn('payment_received automation failed', {
+          error: automationError instanceof Error ? automationError.message : String(automationError),
+        });
       });
+
+      return true;
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to record payment',
+        description: 'Failed to record payment. The dialog has been kept open so you can retry.',
         variant: 'destructive',
       });
+      return false;
     }
   };
 
   // Download receipt
   const handleDownload = (invoice: Invoice) => {
-    const html = billingApi.generateReceiptHTML(invoice);
+    const html = billingApi.generateReceiptHTML(invoice, currency);
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     
@@ -204,12 +230,12 @@ export default function Billing() {
   // Send invoice
   const handleSend = async (invoice: Invoice) => {
     try {
-      await billingApi.updateStatus(invoice.id, 'sent');
+      await billingApi.updateStatus(invoice.id, 'pending');
       queryClient.invalidateQueries({ queryKey: ['billing'] });
 
       toast({
-        title: 'Invoice sent',
-        description: 'Invoice status updated to Sent',
+        title: 'Invoice issued',
+        description: 'Invoice status updated to Pending',
       });
     } catch (error) {
       toast({
@@ -220,12 +246,12 @@ export default function Billing() {
     }
   };
 
-  // Delete invoice
-  const handleDelete = async () => {
+  // Cancel invoice (the backend performs a terminal soft cancellation).
+  const handleCancel = async () => {
     if (!deletingInvoice) return;
-    
+
     try {
-      await billingApi.deleteInvoice(deletingInvoice.id);
+      await billingApi.cancelInvoice(deletingInvoice.id);
       queryClient.invalidateQueries({ queryKey: ['billing'] });
       if (viewingInvoice?.id === deletingInvoice.id) {
         setViewingInvoice(null);
@@ -233,13 +259,13 @@ export default function Billing() {
       
       setDeletingInvoice(null);
       toast({
-        title: 'Invoice deleted',
-        description: 'Invoice has been deleted',
+        title: 'Invoice cancelled',
+        description: 'Invoice has been cancelled',
       });
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to delete invoice',
+        description: 'Failed to cancel invoice',
         variant: 'destructive',
       });
     }
@@ -262,6 +288,16 @@ export default function Billing() {
         </Button>
       </div>
 
+      {(invoicesError || summaryError) && (
+        <Alert variant="destructive" role="alert">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Billing data unavailable</AlertTitle>
+          <AlertDescription>
+            Invoices or billing totals could not be loaded. No zero-value estimates are being substituted.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Summary cards */}
       {summary && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -272,8 +308,8 @@ export default function Billing() {
                   <DollarSign className="h-5 w-5 text-amber-600" />
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Outstanding</p>
-                  <p className="text-xl font-bold">{formatCurrency(summary.totalOutstanding)}</p>
+                  <p className="text-sm text-muted-foreground">Outstanding (90-day invoices)</p>
+                  <p className="text-xl font-bold">{formatCurrency(summary.outstandingBalance)}</p>
                 </div>
               </div>
             </CardContent>
@@ -285,8 +321,8 @@ export default function Billing() {
                   <TrendingUp className="h-5 w-5 text-green-600" />
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">This Month</p>
-                  <p className="text-xl font-bold">{formatCurrency(summary.totalPaidThisMonth)}</p>
+                  <p className="text-sm text-muted-foreground">Collected (90 days)</p>
+                  <p className="text-xl font-bold">{formatCurrency(summary.totalCollected)}</p>
                 </div>
               </div>
             </CardContent>
@@ -386,12 +422,15 @@ export default function Billing() {
         open={isCreateDialogOpen}
         onOpenChange={setIsCreateDialogOpen}
         onSubmit={handleCreateInvoice}
+        taxRatePercent={billingPreferences?.taxRate}
+        paymentTermsDays={billingPreferences?.paymentTerms}
       />
 
       <RecordPaymentDialog
         open={!!paymentInvoice}
         onOpenChange={(open) => !open && setPaymentInvoice(null)}
         invoice={paymentInvoice}
+        acceptedPaymentMethods={billingPreferences?.acceptedPaymentMethods}
         onSubmit={handleRecordPayment}
       />
 
@@ -409,18 +448,18 @@ export default function Billing() {
       <AlertDialog open={!!deletingInvoice} onOpenChange={(open) => !open && setDeletingInvoice(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Invoice?</AlertDialogTitle>
+            <AlertDialogTitle>Cancel Invoice?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete invoice {deletingInvoice?.invoiceNumber}. This action cannot be undone.
+              Invoice {deletingInvoice?.invoiceNumber} will be marked cancelled. Invoices with recorded payments must be refunded before cancellation.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>Keep Invoice</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDelete}
+              onClick={handleCancel}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Delete
+              Cancel Invoice
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

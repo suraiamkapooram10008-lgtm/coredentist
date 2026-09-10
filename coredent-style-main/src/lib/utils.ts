@@ -32,17 +32,44 @@ export function toURLSearchParams(
 }
 
 /**
- * Formats a number as currency
+ * Formats a number as currency.
+ *
+ * This is the single place money formatting happens; every call site passes
+ * the currency explicitly (or uses the currency-aware hook) instead of
+ * hardcoding USD.
  */
 export function formatCurrency(
   amount: number,
   currency: string = 'USD',
-  locale: string = 'en-US'
+  locale: string = 'en-US',
+  options: { maximumFractionDigits?: number; minimumFractionDigits?: number } = {}
 ): string {
   return new Intl.NumberFormat(locale, {
     style: 'currency',
     currency,
+    ...options,
   }).format(amount);
+}
+
+/**
+ * Maps a practice country code (ISO 3166-1 alpha-2, as carried on the auth
+ * user's `practiceCountry`) to the currency used for practice money display.
+ * Unknown/missing countries default to USD.
+ */
+export function currencyForCountry(country?: string | null): string {
+  switch ((country ?? '').trim().toUpperCase()) {
+    case 'IN':
+      return 'INR';
+    case 'GB':
+      return 'GBP';
+    case 'CA':
+      return 'CAD';
+    case 'AU':
+      return 'AUD';
+    case 'US':
+    default:
+      return 'USD';
+  }
 }
 
 /**
@@ -53,22 +80,29 @@ export function formatDate(
   formatStr: string = 'MMMM d, yyyy'
 ): string {
   const dateObj = typeof date === 'string' ? new Date(date) : date;
-  
-  // Simple format implementation (in production, use date-fns format)
-  const months = [
+
+  // Token-based formatter supporting the date-fns-style patterns used in
+  // this app. Previously any format other than the literal 'yyyy-MM-dd'
+  // silently fell back to 'MMMM d, yyyy'.
+  const monthsLong = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
-  
-  const month = months[dateObj.getMonth()];
-  const day = dateObj.getDate();
-  const year = dateObj.getFullYear();
-  
-  if (formatStr === 'yyyy-MM-dd') {
-    return `${year}-${String(dateObj.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  }
-  
-  return `${month} ${day}, ${year}`;
+  const monthsShort = monthsLong.map((m) => m.slice(0, 3));
+
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const tokens: Record<string, string> = {
+    yyyy: String(dateObj.getFullYear()),
+    MM: pad2(dateObj.getMonth() + 1),
+    MMMM: monthsLong[dateObj.getMonth()],
+    MMM: monthsShort[dateObj.getMonth()],
+    dd: pad2(dateObj.getDate()),
+    d: String(dateObj.getDate()),
+    HH: pad2(dateObj.getHours()),
+    mm: pad2(dateObj.getMinutes()),
+  };
+
+  return formatStr.replace(/yyyy|MMMM|MMM|MM|dd|d|HH|mm/g, (t) => tokens[t] ?? t);
 }
 
 /**
@@ -287,7 +321,12 @@ export function retry<T>(
         if (currentAttempt >= maxAttempts) {
           reject(error);
         } else {
-          setTimeout(() => attempt(currentAttempt + 1), delay * currentAttempt);
+          // Exponential backoff (delay, 2*delay, 4*delay, ...) as documented
+          // in the JSDoc — the previous `delay * currentAttempt` was linear.
+          setTimeout(
+            () => attempt(currentAttempt + 1),
+            delay * Math.pow(2, currentAttempt - 1)
+          );
         }
       }
     };

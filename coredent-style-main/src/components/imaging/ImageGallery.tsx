@@ -22,7 +22,7 @@ export function ImageGallery({ patientId, onImageSelect, onUpload }: ImageGaller
 
   const { data: images, isLoading, error } = useQuery({
     queryKey: ['patient-images', patientId],
-    queryFn: () => imagingApi.getImages({ patientId }),
+    queryFn: () => imagingApi.getImages({ patientId: patientId! }),
     enabled: !!patientId,
   });
 

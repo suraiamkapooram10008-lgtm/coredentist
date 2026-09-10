@@ -3,7 +3,18 @@ Communication Models
 Patient messaging, SMS/email reminders, two-way messaging
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, Boolean, Integer
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -31,6 +42,7 @@ class MessageDirection(str, enum.Enum):
 class MessageStatus(str, enum.Enum):
     """Message status"""
     PENDING = "pending"
+    SENDING = "sending"
     SENT = "sent"
     DELIVERED = "delivered"
     FAILED = "failed"
@@ -85,8 +97,22 @@ class MessageTemplate(Base):
 
 
 class PatientMessage(Base):
-    """Patient message model"""
+    """Persisted outbound/inbound patient communication and delivery state."""
+
     __tablename__ = "patient_messages"
+    __table_args__ = (
+        # A caller-supplied or system-derived key turns a retried business
+        # event into the same durable delivery rather than a second message.
+        Index(
+            "uq_patient_messages_practice_dedupe_key",
+            "practice_id",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=text("dedupe_key IS NOT NULL"),
+            sqlite_where=text("dedupe_key IS NOT NULL"),
+        ),
+        Index("ix_patient_messages_delivery_due", "status", "next_attempt_at"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
@@ -121,6 +147,15 @@ class PatientMessage(Base):
     sent_at = Column(DateTime(timezone=True))
     delivered_at = Column(DateTime(timezone=True))
     read_at = Column(DateTime(timezone=True))
+
+    # A durable, lease-based delivery claim. The task commits SENDING before
+    # network I/O and a periodic dispatcher reclaims only expired leases.
+    dedupe_key = Column(String(255))
+    attempt_count = Column(Integer, nullable=False, default=0, server_default="0")
+    next_attempt_at = Column(DateTime(timezone=True))
+    claimed_at = Column(DateTime(timezone=True))
+    claim_token = Column(String(64))
+    claim_expires_at = Column(DateTime(timezone=True))
 
     # Error Info
     error_message = Column(Text)

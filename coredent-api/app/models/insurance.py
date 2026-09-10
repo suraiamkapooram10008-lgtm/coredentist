@@ -7,6 +7,7 @@ from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Numeric, Date
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from decimal import Decimal
 import uuid
 import enum
 
@@ -24,6 +25,10 @@ class ClaimStatus(str, enum.Enum):
     """Claim status"""
     DRAFT = "draft"
     PENDING = "pending"
+    # H-03: reserved locally and committed BEFORE the clearinghouse call, so a
+    # crash between "external submit succeeded" and "local commit" leaves an
+    # in-flight marker instead of losing the submission. Never a resting state.
+    SUBMITTING = "submitting"
     SUBMITTED = "submitted"
     IN_REVIEW = "in_review"
     APPROVED = "approved"
@@ -31,6 +36,9 @@ class ClaimStatus(str, enum.Enum):
     DENIED = "denied"
     PAID = "paid"
     APPEALED = "appealed"
+    # Terminal failure of the submission attempt itself (transport/rejection),
+    # distinct from DENIED which is a payer adjudication outcome.
+    SUBMISSION_FAILED = "submission_failed"
 
 
 class RelationshipToSubscriber(str, enum.Enum):
@@ -85,6 +93,7 @@ class InsuranceCarrier(Base):
     __tablename__ = "insurance_carriers"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=True)
     name = Column(String(255), nullable=False, index=True)
     phone = Column(String(20))
     fax = Column(String(20))
@@ -99,7 +108,7 @@ class InsuranceCarrier(Base):
     zip_code = Column(String(10))
 
     # EDI Information
-    payer_id = Column(String(50), unique=True, index=True)  # Electronic payer ID
+    payer_id = Column(String(50), index=True)  # Electronic payer ID
     edi_enabled = Column(Boolean, default=False)
 
     # Fee Schedule Link
@@ -129,39 +138,35 @@ class PatientInsurance(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
     carrier_id = Column(UUID(as_uuid=True), ForeignKey("insurance_carriers.id"), nullable=False)
-
-    insurance_type = Column(Enum(InsuranceType), default=InsuranceType.PRIMARY)
-
-    # Subscriber Information
-    subscriber_id = Column(String(50), nullable=False)  # Member/Policy ID
-    group_number = Column(String(50))
-    relationship_to_subscriber = Column(Enum(RelationshipToSubscriber), default=RelationshipToSubscriber.SELF)
-
-    # Subscriber Details (if not self)
-    subscriber_first_name = Column(String(100))
-    subscriber_last_name = Column(String(100))
-    subscriber_dob = Column(Date)
-    subscriber_ssn = Column(String(11))  # Encrypted in production
+    subscriber_id = Column(String(100), nullable=False)
+    group_number = Column(String(100))
+    relationship_to_subscriber = Column(String(50), default="self")
 
     # Coverage Details
-    effective_date = Column(Date)
-    termination_date = Column(Date)
+    is_primary = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True)
+    coverage_type = Column(String(50))  # HMO, PPO, EPO, etc.
 
-    # Benefits
+    # Financial Limits
     annual_maximum = Column(Numeric(10, 2))
     annual_deductible = Column(Numeric(10, 2))
     deductible_met = Column(Numeric(10, 2), default=0)
+    benefits_used = Column(Numeric(10, 2), default=0)
 
     # Coverage Percentages
     preventive_coverage = Column(Integer, default=100)  # Percentage
     basic_coverage = Column(Integer, default=80)
     major_coverage = Column(Integer, default=50)
+    ortho_coverage = Column(Integer, default=0)
 
-    # Employer Information
-    employer_name = Column(String(255))
+    # Effective Dates
+    effective_date = Column(Date)
+    expiration_date = Column(Date)
 
-    notes = Column(Text)
-    is_active = Column(Boolean, default=True)
+    # Verification
+    verified = Column(Boolean, default=False)
+    verified_at = Column(DateTime(timezone=True))
+    verified_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -173,12 +178,26 @@ class PatientInsurance(Base):
     eligibility = relationship("Eligibility", back_populates="patient_insurance", cascade="all, delete-orphan")
 
     def __repr__(self):
-        return f"<PatientInsurance {self.patient_id} - {self.insurance_type}>"
+        return f"<PatientInsurance {self.subscriber_id} - {self.carrier_id}>"
 
 
 class InsuranceClaim(Base):
     """Insurance claim model"""
     __tablename__ = "insurance_claims"
+    __table_args__ = (
+        UniqueConstraint('practice_id', 'claim_number', name='uq_practice_claim_number'),
+        # H-03: durable idempotency for clearinghouse submission. The external
+        # POST used to happen before the local commit, so a failed commit
+        # meant a retry re-submitted the same claim to the payer. The old
+        # guard was a five-minute "any claim for this patient" query, which
+        # both let duplicates through after five minutes and blocked
+        # legitimate same-day second claims.
+        UniqueConstraint(
+            'practice_id',
+            'submission_idempotency_key',
+            name='uq_practice_claim_idempotency_key',
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
@@ -187,7 +206,7 @@ class InsuranceClaim(Base):
     carrier_id = Column(UUID(as_uuid=True), ForeignKey("insurance_carriers.id"), nullable=False)
 
     # Claim Information
-    claim_number = Column(String(50), unique=True, nullable=False, index=True)
+    claim_number = Column(String(50), nullable=False, index=True)
     status = Column(Enum(ClaimStatus), default=ClaimStatus.DRAFT)
 
     # Dates
@@ -220,6 +239,14 @@ class InsuranceClaim(Base):
     edi_batch_id = Column(String(100))
     confirmation_number = Column(String(100))  # From clearinghouse
 
+    # H-03: stable key identifying one submission attempt. Derived from the
+    # claim's content (patient + insurance + service date + procedure set) or
+    # supplied by the client. Unique per practice, so a retry of the same
+    # logical submission cannot produce a second external claim.
+    submission_idempotency_key = Column(String(255), index=True)
+    submission_attempts = Column(Integer, default=0, nullable=False)
+    submission_error = Column(Text)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -231,9 +258,11 @@ class InsuranceClaim(Base):
     eob = relationship("ExplanationOfBenefits", back_populates="claim", cascade="all, delete-orphan", uselist=False)
 
     @property
-    def outstanding_balance(self) -> float:
-        """Calculate outstanding balance"""
-        return float(self.billed_amount or 0) - float(self.paid_amount or 0)
+    def outstanding_balance(self) -> Decimal:
+        """Calculate the balance without converting currency through float."""
+        return (self.billed_amount or Decimal("0")) - (
+            self.paid_amount or Decimal("0")
+        )
 
     def __repr__(self):
         return f"<InsuranceClaim {self.claim_number} - {self.status}>"

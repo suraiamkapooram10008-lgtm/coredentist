@@ -12,8 +12,6 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Table, 
   TableBody, 
@@ -46,7 +44,19 @@ import {
   useDeleteAppointment,
   useSendAppointmentReminder,
 } from "@/hooks/useAppointments";
+import { AppointmentForm } from "@/components/appointments/AppointmentForm";
 import type { Appointment } from "@/services/appointmentsApi";
+
+// Dev/test-only flag: drives virtualized-list rendering in the vitest
+// integration suite. It is compiled to `false` in production bundles so no
+// test hooks ship to real users.
+// NOTE: Must be evaluated lazily (not at module scope) because the vitest
+// integration suite sets window.__INTEGRATION_TEST__ in beforeEach, after
+// this module has already been imported.
+const isIntegrationTest = (): boolean =>
+  import.meta.env.DEV &&
+  typeof window !== "undefined" &&
+  Boolean((window as { __INTEGRATION_TEST__?: boolean }).__INTEGRATION_TEST__);
 
 // Lazy load calendar and form components for tests
 const AppointmentCalendar = ({ appointments, onAppointmentClick }: { 
@@ -68,90 +78,14 @@ const AppointmentCalendar = ({ appointments, onAppointmentClick }: {
   </div>
 );
 
-const AppointmentForm = ({ 
-  onSubmit, 
-  onCancel, 
-  appointment,
-  appointmentTypes 
-}: { 
-  onSubmit?: (data: Partial<Appointment>) => void; 
-  onCancel?: () => void;
-  appointment?: Appointment | null;
-  appointmentTypes?: { id: string; name: string; duration: number }[];
-}) => {
-  const [formData, setFormData] = useState<Partial<Appointment>>(
-    appointment || { patient: '', patientName: '', time: '', duration: '30', type: '', dentist: '', status: 'Pending' }
-  );
-
-  return (
-    <div data-testid="appointment-form" className="space-y-4">
-      <div className="space-y-2">
-        <Label htmlFor="patient">Patient Name</Label>
-        <Input
-          id="patient"
-          value={formData.patient || ''}
-          onChange={(e) => setFormData({ ...formData, patient: e.target.value, patientName: e.target.value })}
-          placeholder="Enter patient name"
-        />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="time">Time</Label>
-        <Input
-          id="time"
-          value={formData.time || ''}
-          onChange={(e) => setFormData({ ...formData, time: e.target.value })}
-          placeholder="e.g., 9:00 AM"
-        />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="duration">Duration (minutes)</Label>
-        <Input
-          id="duration"
-          type="number"
-          value={formData.duration || '30'}
-          onChange={(e) => setFormData({ ...formData, duration: `${e.target.value} min` })}
-        />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="type">Appointment Type</Label>
-        <Select value={formData.type || ''} onValueChange={(value) => setFormData({ ...formData, type: value })}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select type" />
-          </SelectTrigger>
-          <SelectContent>
-            {appointmentTypes?.map((type) => (
-              <SelectItem key={type.id} value={type.name}>{type.name} ({type.duration} min)</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="dentist">Dentist</Label>
-        <Input
-          id="dentist"
-          value={formData.dentist || ''}
-          onChange={(e) => setFormData({ ...formData, dentist: e.target.value })}
-          placeholder="e.g., Dr. Wilson"
-        />
-      </div>
-      <div className="flex gap-2 justify-end">
-        <Button variant="outline" onClick={onCancel}>Cancel</Button>
-        <Button onClick={() => onSubmit?.(formData)}>
-          {appointment ? 'Update' : 'Create'} Appointment
-        </Button>
-      </div>
-    </div>
-  );
-};
-
 export default function Appointments() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [showForm, setShowForm] = useState(false);
 
-  const [showCalendar, setShowCalendar] = useState(
-    typeof window !== 'undefined' ? !(window as any).__INTEGRATION_TEST__ : true
-  );
+  // The real (virtualized) table is the default view; the lightweight
+  // calendar view is a toggle for quick visual scanning.
+  const [showCalendar, setShowCalendar] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
@@ -161,9 +95,14 @@ export default function Appointments() {
     data: appointmentsData,
     isLoading: appointmentsLoading,
     isError: appointmentsError,
+  // The search term deliberately stays OUT of the query params. It used to
+  // be part of the React Query key, so every keystroke created a new query
+  // key and fired a server round-trip — then the result was filtered again
+  // client-side below. Server filtering of a single day's appointments is
+  // redundant with that client-side filter, so fetch the day once per
+  // selected date and filter in memory.
   } = useAppointments({
     date: selectedDate,
-    search: searchTerm || undefined,
   });
   const {
     data: statsData,
@@ -225,11 +164,14 @@ export default function Appointments() {
   });
 
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case "Confirmed": return "bg-green-500";
-      case "Pending": return "bg-yellow-500";
-      case "Cancelled": return "bg-red-500";
-      case "Completed": return "bg-blue-500";
+    // Statuses arrive lowercased from the API adapter (confirmed, scheduled,
+    // cancelled, ...); normalize before switching so badges never fall through
+    // to gray for valid statuses.
+    switch (status.toLowerCase()) {
+      case "confirmed": return "bg-green-500";
+      case "scheduled": case "pending": return "bg-yellow-500";
+      case "cancelled": case "no_show": return "bg-red-500";
+      case "completed": case "checked_in": case "in_progress": return "bg-blue-500";
       default: return "bg-gray-500";
     }
   };
@@ -253,10 +195,13 @@ export default function Appointments() {
 
   const handleFormSubmit = (data: Partial<Appointment>) => {
     logger.info('Appointment form submitted', { data });
+    // Anchor the appointment to the date currently selected in the date picker
+    // so the create/update adapter can build a concrete start_time/end_time.
+    const payload = { ...data, date: data.date || selectedDate };
     if (selectedAppointment?.id) {
-      updateMutation.mutate({ id: selectedAppointment.id, data });
+      updateMutation.mutate({ id: selectedAppointment.id, data: payload });
     } else {
-      createMutation.mutate(data as Omit<Appointment, 'id'>);
+      createMutation.mutate(payload as Omit<Appointment, 'id'>);
     }
   };
 
@@ -308,14 +253,14 @@ export default function Appointments() {
           onAppointmentClick={handleAppointmentClick}
         />
 
-        {/* Filter Button for Tests */}
+        {/* View Toggle (calendar <-> table) */}
         <div className="flex gap-2">
-          <Button 
+          <Button
             data-testid="filter-button"
             onClick={() => setShowCalendar(!showCalendar)}
             variant="outline"
           >
-            Filter by Date
+            {showCalendar ? 'Table View' : 'Calendar View'}
           </Button>
         </div>
 
@@ -514,21 +459,28 @@ export default function Appointments() {
 
       {/* Date Picker and Search */}
       <div className="flex gap-4">
-        <Input 
-          type="date" 
+        <Input
+          type="date"
           value={selectedDate}
           onChange={(e) => setSelectedDate(e.target.value)}
           className="w-auto"
         />
         <div className="relative flex-1">
           <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-          <Input 
-            placeholder="Search appointments..." 
+          <Input
+            placeholder="Search appointments..."
             className="pl-10"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
+        <Button
+          data-testid="filter-button"
+          onClick={() => setShowCalendar(!showCalendar)}
+          variant="outline"
+        >
+          {showCalendar ? 'Table View' : 'Calendar View'}
+        </Button>
       </div>
 
       {/* Tabs */}
@@ -548,11 +500,11 @@ export default function Appointments() {
                   <span className="text-muted-foreground">Loading appointments...</span>
                 </div>
               ) : appointments.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
+                <div data-testid="empty-appointments" className="text-center py-8 text-muted-foreground">
                   No appointments found
                 </div>
               ) : (
-                <div 
+                <div
                   ref={parentRef}
                   className="overflow-auto max-h-[600px] relative"
                 >
@@ -568,8 +520,8 @@ export default function Appointments() {
                       <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
-                  <TableBody style={{ height: typeof window !== 'undefined' && (window as any).__INTEGRATION_TEST__ ? 'auto' : `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
-                    {typeof window !== 'undefined' && (window as any).__INTEGRATION_TEST__ ? (
+                  <TableBody style={{ height: isIntegrationTest() ? 'auto' : `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+                    {isIntegrationTest() ? (
                       appointments.map((apt) => (
                         <TableRow key={apt.id}>
                           <TableCell className="font-medium flex-1">

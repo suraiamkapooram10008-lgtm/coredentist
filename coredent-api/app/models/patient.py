@@ -23,10 +23,11 @@ from sqlalchemy import (
     ForeignKey,
     Enum,
     Index,
+    Integer,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 import enum
 import uuid
 
@@ -52,10 +53,26 @@ class Patient(Base):
     __tablename__ = "patients"
 
     # PERFORMANCE: Add composite indexes for common query patterns
+    # M16 FIX: unique per-practice contact indexes (active rows only) make
+    # the DB the final arbiter for the check-then-insert duplicate race.
     __table_args__ = (
         Index("idx_patient_practice_status", "practice_id", "status"),
         Index("idx_patient_name", "last_name", "first_name"),
         Index("idx_patient_practice_email", "practice_id", "email"),
+        Index(
+            "uq_patient_practice_email_idx",
+            "practice_id", "search_index_email",
+            unique=True,
+            postgresql_where=text("search_index_email IS NOT NULL AND status <> 'INACTIVE'"),
+            sqlite_where=text("search_index_email IS NOT NULL AND status <> 'INACTIVE'"),
+        ),
+        Index(
+            "uq_patient_practice_phone_idx",
+            "practice_id", "search_index_phone",
+            unique=True,
+            postgresql_where=text("search_index_phone IS NOT NULL AND status <> 'INACTIVE'"),
+            sqlite_where=text("search_index_phone IS NOT NULL AND status <> 'INACTIVE'"),
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -151,3 +168,81 @@ class Patient(Base):
 
     def __repr__(self):
         return f"<Patient {self.id}>"
+
+
+class PatientPortalSession(Base):
+    """One row per active patient-portal login.
+
+    H-5 FIX: the prior design stored a single ``Patient.portal_access_token``
+    column, so a second login in a different browser would silently
+    overwrite the first session. This table records every issued token
+    (hashed) so multiple concurrent sessions work and the patient (or
+    an operator) can revoke them all atomically.
+
+    Tokens are stored hashed (SHA-256 hex); the plaintext is only ever
+    returned to the caller at issue time. Expired / revoked rows are
+    kept for a short retention window so audit can correlate them with
+    the access log; a periodic Celery task purges them.
+    """
+
+    __tablename__ = "patient_portal_sessions"
+    __table_args__ = (
+        Index("ix_pps_patient_active", "patient_id", "revoked_at", "expires_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_id = Column(
+        UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False
+    )
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
+
+    token_hash = Column(String(128), nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+
+    # User-agent and IP at issue time. Best-effort, useful for the
+    # patient to see which devices are logged in.
+    user_agent = Column(String(500), nullable=True)
+    ip_address = Column(String(45), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<PatientPortalSession {self.id} patient={self.patient_id}>"
+
+
+class PatientPortalAccessCode(Base):
+    """Single-use magic-link code proving inbox control (Option A).
+
+    POST /portal/access creates one row and emails a link containing the raw
+    code; POST /portal/access/verify consumes it and issues the bearer. Codes
+    are SHA-256 hashed at rest, expire in 15 minutes, allow 5 guesses, and
+    are single-use. Login links, not the bearer, are what travel by email.
+    """
+
+    __tablename__ = "patient_portal_access_codes"
+    __table_args__ = (
+        Index("ix_ppac_patient_active", "patient_id", "used_at", "expires_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    patient_id = Column(
+        UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False
+    )
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
+
+    token_hash = Column(String(128), nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    ip_address = Column(String(45), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<PatientPortalAccessCode {self.id} patient={self.patient_id}>"

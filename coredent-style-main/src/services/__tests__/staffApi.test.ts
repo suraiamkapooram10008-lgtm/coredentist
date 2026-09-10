@@ -53,6 +53,28 @@ describe('staffApi', () => {
       expect(result.data?.total).toBe(1);
     });
 
+    it('normalizes a bare backend array (List[UserResponse]) into the paginated envelope', async () => {
+      server.use(
+        http.get('/api/v1/staff', () =>
+          HttpResponse.json([
+            { id: 's1', first_name: 'Jane', last_name: 'Doe', email: 'j@x.com', role: 'dentist', is_active: true },
+            { id: 's2', first_name: 'Bob', last_name: 'Smith', email: 'b@x.com', role: 'owner', is_active: false },
+          ]),
+        ),
+      );
+
+      const result = await staffApi.list();
+
+      expect(result.success).toBe(true);
+      expect(Array.isArray(result.data?.data)).toBe(true);
+      expect(result.data?.data?.length).toBe(2);
+      expect(result.data?.total).toBe(2);
+      // is_active (bool) is mapped onto the frontend status contract.
+      expect(result.data?.data?.[0].status).toBe('active');
+      expect(result.data?.data?.[1].status).toBe('inactive');
+      expect(result.data?.data?.[0].firstName).toBe('Jane');
+    });
+
     it('returns empty data with total=0 when no staff', async () => {
       server.use(
         http.get('/api/v1/staff', () =>
@@ -152,6 +174,18 @@ describe('staffApi', () => {
 
       const result = await staffApi.cancelInvitation('inv-1');
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('getById', () => {
+    it('returns a staff member by ID', async () => {
+      server.use(
+        http.get('/api/v1/staff/staff-1', () => HttpResponse.json(mockStaff)),
+      );
+
+      const result = await staffApi.getById('staff-1');
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual(mockStaff);
     });
   });
 

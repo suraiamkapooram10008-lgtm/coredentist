@@ -13,7 +13,8 @@ import { AIClinicalAssistant } from '@/components/chart/AIClinicalAssistant';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { RefreshCw, User } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { AlertTriangle, RefreshCw, User } from 'lucide-react';
 import { dentalChartApi } from '@/services/dentalChartApi';
 import type { 
   DentalChart as DentalChartType, 
@@ -28,6 +29,7 @@ export default function DentalChart() {
   // State
   const [chart, setChart] = useState<DentalChartType | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<Error | null>(null);
   const [selectedToothNumber, setSelectedToothNumber] = useState<number | null>(null);
   const [isAddProcedureOpen, setIsAddProcedureOpen] = useState(false);
   
@@ -38,6 +40,7 @@ export default function DentalChart() {
   useEffect(() => {
     if (!patientId) {
       setChart(null);
+      setLoadError(new Error('No patient was selected for this chart.'));
       setIsLoading(false);
       toast({
         title: 'Missing patient',
@@ -49,10 +52,14 @@ export default function DentalChart() {
 
     async function loadChart() {
       setIsLoading(true);
+      setLoadError(null);
       try {
         const data = await dentalChartApi.getChart(patientId as string);
         setChart(data);
-      } catch (error) {
+      } catch (cause) {
+        const nextError = cause instanceof Error ? cause : new Error('Failed to load dental chart data');
+        setChart(null);
+        setLoadError(nextError);
         toast({
           title: 'Error loading chart',
           description: 'Failed to load dental chart data',
@@ -235,6 +242,7 @@ export default function DentalChart() {
   const handleRefresh = async () => {
     if (!patientId) return;
     setIsLoading(true);
+    setLoadError(null);
     try {
       const data = await dentalChartApi.getChart(patientId);
       setChart(data);
@@ -243,7 +251,9 @@ export default function DentalChart() {
         title: 'Chart refreshed',
         description: 'Dental chart data has been reloaded',
       });
-    } catch (error) {
+    } catch (cause) {
+      const nextError = cause instanceof Error ? cause : new Error('Failed to refresh chart');
+      setLoadError(nextError);
       toast({
         title: 'Error',
         description: 'Failed to refresh chart',
@@ -272,6 +282,14 @@ export default function DentalChart() {
           </Button>
         </div>
       </div>
+
+      {loadError && (
+        <Alert variant="destructive" role="alert">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Dental chart unavailable</AlertTitle>
+          <AlertDescription>{loadError.message}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Patient info bar */}
       {chart && (

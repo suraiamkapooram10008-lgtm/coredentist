@@ -3,7 +3,7 @@ Lab Management Models
 Case tracking, lab orders, and invoicing
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, Numeric, Boolean
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, Numeric, Boolean, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -104,6 +104,9 @@ class Lab(Base):
 class LabCase(Base):
     """Lab case model - tracks cases sent to lab"""
     __tablename__ = "lab_cases"
+    __table_args__ = (
+        UniqueConstraint('practice_id', 'case_number', name='uq_practice_case_number'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
@@ -112,7 +115,7 @@ class LabCase(Base):
     provider_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
     # Case Information
-    case_number = Column(String(50), unique=True, nullable=False)
+    case_number = Column(String(50), nullable=False, index=True)
     case_type = Column(Enum(LabCaseType), nullable=False)
     status = Column(Enum(LabCaseStatus), default=LabCaseStatus.PENDING)
 
@@ -172,6 +175,16 @@ class LabCase(Base):
 class LabInvoice(Base):
     """Lab invoice model"""
     __tablename__ = "lab_invoices"
+    __table_args__ = (
+        # L-2 FIX: scope invoice numbers per practice like case numbers
+        # (uq_practice_case_number). The previous global unique let one tenant
+        # squat/probe another's numbers and forced a global advisory lock.
+        UniqueConstraint(
+            "practice_id",
+            "invoice_number",
+            name="uq_lab_invoice_practice_number",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
@@ -179,7 +192,7 @@ class LabInvoice(Base):
     lab_case_id = Column(UUID(as_uuid=True), ForeignKey("lab_cases.id"))
 
     # Invoice Information
-    invoice_number = Column(String(50), unique=True, nullable=False)
+    invoice_number = Column(String(50), nullable=False, index=True)
     invoice_date = Column(DateTime(timezone=True), server_default=func.now())
     due_date = Column(DateTime(timezone=True))
 
@@ -193,7 +206,8 @@ class LabInvoice(Base):
     discount = Column(Numeric(10, 2), default=0)
     total = Column(Numeric(10, 2), default=0)
 
-    # Payments
+    # Cached payment aggregate retained for list/report compatibility. The
+    # immutable payment ledger below is the durable source of each mutation.
     amount_paid = Column(Numeric(10, 2), default=0)
     payment_date = Column(DateTime(timezone=True))
 
@@ -208,13 +222,55 @@ class LabInvoice(Base):
     practice = relationship("Practice", back_populates="lab_invoices")
     lab = relationship("Lab", back_populates="invoices")
     lab_case = relationship("LabCase", back_populates="invoices")
+    payments = relationship(
+        "LabInvoicePayment",
+        back_populates="lab_invoice",
+        cascade="all, delete-orphan",
+    )
 
     @property
-    def balance_due(self) -> float:
-        return float(self.total or 0) - float(self.amount_paid or 0)
+    def balance_due(self):
+        from decimal import Decimal
+
+        return Decimal(str(self.total or 0)) - Decimal(str(self.amount_paid or 0))
 
     def __repr__(self):
         return f"<LabInvoice {self.invoice_number} - {self.status}>"
+
+
+class LabInvoicePayment(Base):
+    """Immutable, idempotent ledger entry for a lab-invoice payment."""
+
+    __tablename__ = "lab_invoice_payments"
+    __table_args__ = (
+        UniqueConstraint(
+            "practice_id",
+            "transaction_id",
+            name="uq_lab_invoice_payment_practice_transaction",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
+    lab_invoice_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("lab_invoices.id"),
+        nullable=False,
+        index=True,
+    )
+    amount = Column(Numeric(10, 2), nullable=False)
+    transaction_id = Column(String(255), nullable=False)
+    payment_date = Column(DateTime(timezone=True), nullable=False)
+    notes = Column(Text)
+    recorded_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    lab_invoice = relationship("LabInvoice", back_populates="payments")
+    practice = relationship("Practice")
+    recorded_by = relationship("User")
+
+    def __repr__(self):
+        return f"<LabInvoicePayment {self.transaction_id} - ${self.amount}>"
 
 
 class LabCommunication(Base):

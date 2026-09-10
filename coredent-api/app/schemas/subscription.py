@@ -81,6 +81,7 @@ class SubscriptionCreate(BaseModel):
     patient_id: Optional[UUID] = None
     payment_card_id: Optional[UUID] = None
     trial_period_days: Optional[int] = None
+    idempotency_key: Optional[str] = Field(None, min_length=16, max_length=255)
     proration_behavior: str = "create_prorations"  # create_prorations, always_invoice, none
     metadata: Optional[Dict[str, Any]] = None
 
@@ -115,6 +116,18 @@ class SubscriptionChangePlan(BaseModel):
     """Schema for changing subscription plan"""
     new_plan_id: UUID
     proration_behavior: str = "create_prorations"
+
+    # FIX: A bad proration_behavior previously flowed straight into
+    # ProrationBehavior(...) in subscription_service.change_plan and raised an
+    # uncaught ValueError -> HTTP 500. Validate it here, mirroring
+    # SubscriptionCreate, so the client gets a 422 instead.
+    @field_validator("proration_behavior")
+    @classmethod
+    def validate_proration(cls, v: str) -> str:
+        allowed = ["create_prorations", "always_invoice", "none"]
+        if v not in allowed:
+            raise ValueError(f"proration_behavior must be one of {allowed}")
+        return v
 
 
 class SubscriptionUpdatePayment(BaseModel):

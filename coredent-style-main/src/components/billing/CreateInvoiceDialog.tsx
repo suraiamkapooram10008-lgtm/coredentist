@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,123 +22,108 @@ import { Plus, Trash2 } from 'lucide-react';
 import { patientsApi } from '@/services/api';
 
 interface LineItemInput {
-  procedureCode: string;
   description: string;
-  toothNumber?: number;
   quantity: number;
   unitPrice: number;
-  discount: number;
 }
 
 interface CreateInvoiceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  taxRatePercent?: number;
+  paymentTermsDays?: number;
   onSubmit: (data: {
     patientId: string;
     patientName: string;
     patientEmail?: string;
     patientPhone?: string;
     lineItems: LineItemInput[];
+    taxRatePercent?: number;
     dueDate: string;
     notes?: string;
-  }) => Promise<void>;
+  }) => Promise<boolean>;
+}
+
+function dateAfterDays(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 export function CreateInvoiceDialog({
   open,
   onOpenChange,
   onSubmit,
+  taxRatePercent,
+  paymentTermsDays = 30,
 }: CreateInvoiceDialogProps) {
-  // Query patients
   const { data: patientsResponse } = useQuery({
     queryKey: ['patients', 'list-simple'],
     queryFn: () => patientsApi.list({ limit: 100 }),
     enabled: open,
   });
-
   const patients = patientsResponse?.success && patientsResponse.data?.data
     ? patientsResponse.data.data
     : [];
 
-  // Form State
-  const [selectedPatientId, setSelectedPatientId] = useState<string>('');
-  const [dueDate, setDueDate] = useState<string>('');
-  const [notes, setNotes] = useState<string>('');
+  const [selectedPatientId, setSelectedPatientId] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lineItems, setLineItems] = useState<LineItemInput[]>([
-    { procedureCode: 'D0120', description: 'Periodic Oral Evaluation', quantity: 1, unitPrice: 85, discount: 0 },
+    { description: '', quantity: 1, unitPrice: 0 },
   ]);
 
-  // Set default due date (30 days from now)
   useEffect(() => {
-    if (open) {
-      const date = new Date();
-      date.setDate(date.getDate() + 30);
-      setDueDate(date.toISOString().split('T')[0]);
-      setSelectedPatientId('');
-      setNotes('');
-      setLineItems([
-        { procedureCode: 'D0120', description: 'Periodic Oral Evaluation', quantity: 1, unitPrice: 85, discount: 0 },
-      ]);
-    }
-  }, [open]);
+    if (!open) return;
+    setDueDate(dateAfterDays(paymentTermsDays));
+    setSelectedPatientId('');
+    setNotes('');
+    setLineItems([{ description: '', quantity: 1, unitPrice: 0 }]);
+  }, [open, paymentTermsDays]);
 
-  // Calculations
-  const subtotal = lineItems.reduce((acc, item) => acc + (item.quantity * item.unitPrice), 0);
-  const discountTotal = lineItems.reduce((acc, item) => acc + (item.discount || 0), 0);
-  const taxRate = 5; // 5% flat practice tax
-  const taxAmount = Math.max(0, (subtotal - discountTotal) * (taxRate / 100));
-  const total = Math.max(0, subtotal - discountTotal + taxAmount);
+  const subtotal = lineItems.reduce(
+    (sum, item) => sum + item.quantity * item.unitPrice,
+    0,
+  );
+  const taxAmount = taxRatePercent === undefined
+    ? undefined
+    : subtotal * (taxRatePercent / 100);
+  const total = taxAmount === undefined ? undefined : subtotal + taxAmount;
 
-  const handleAddLineItem = () => {
-    setLineItems([
-      ...lineItems,
-      { procedureCode: '', description: '', quantity: 1, unitPrice: 0, discount: 0 },
-    ]);
-  };
-
-  const handleRemoveLineItem = (index: number) => {
-    if (lineItems.length === 1) return;
-    setLineItems(lineItems.filter((_, i) => i !== index));
-  };
-
-  const handleLineItemChange = (index: number, field: keyof LineItemInput, value: any) => {
-    const updated = [...lineItems];
-    if (field === 'quantity' || field === 'unitPrice' || field === 'discount' || field === 'toothNumber') {
-      updated[index] = {
-        ...updated[index],
-        [field]: value === '' ? 0 : Number(value),
+  const updateLineItem = (
+    index: number,
+    field: keyof LineItemInput,
+    value: string,
+  ) => {
+    setLineItems(current => current.map((item, itemIndex) => {
+      if (itemIndex !== index) return item;
+      return {
+        ...item,
+        [field]: field === 'description' ? value : Number(value),
       };
-    } else {
-      updated[index] = {
-        ...updated[index],
-        [field]: value,
-      };
-    }
-    setLineItems(updated);
+    }));
   };
 
-  const handleFormSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedPatientId) return;
-
-    const patient = patients.find(p => p.id === selectedPatientId);
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const patient = patients.find(item => item.id === selectedPatientId);
     if (!patient) return;
 
     setIsSubmitting(true);
     try {
-      await onSubmit({
+      const succeeded = await onSubmit({
         patientId: patient.id,
-        patientName: `${patient.firstName} ${patient.lastName}`,
+        patientName: `${patient.firstName} ${patient.lastName}`.trim(),
         patientEmail: patient.email,
         patientPhone: patient.phone,
         lineItems,
+        taxRatePercent,
         dueDate,
-        notes,
+        notes: notes || undefined,
       });
-      onOpenChange(false);
-    } catch (err) {
-      console.error(err);
+      if (succeeded) onOpenChange(false);
     } finally {
       setIsSubmitting(false);
     }
@@ -150,9 +135,7 @@ export function CreateInvoiceDialog({
         <DialogHeader>
           <DialogTitle className="text-xl font-bold">Create Invoice</DialogTitle>
         </DialogHeader>
-
-        <form onSubmit={handleFormSubmit} className="space-y-6">
-          {/* Patient and Due Date */}
+        <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="patientSelect">Patient</Label>
@@ -161,124 +144,85 @@ export function CreateInvoiceDialog({
                   <SelectValue placeholder="Select patient..." />
                 </SelectTrigger>
                 <SelectContent className="bg-card border-border">
-                  {patients.map(p => (
-                    <SelectItem key={p.id} value={p.id} className="cursor-pointer">
-                      {p.firstName} {p.lastName} ({p.email || 'No email'})
+                  {patients.map(patient => (
+                    <SelectItem key={patient.id} value={patient.id}>
+                      {patient.firstName} {patient.lastName} ({patient.email || 'No email'})
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-
             <div className="space-y-2">
               <Label htmlFor="dueDate">Due Date</Label>
               <Input
-                type="date"
                 id="dueDate"
+                type="date"
                 value={dueDate}
-                onChange={e => setDueDate(e.target.value)}
-                className="bg-background/60 border-border"
+                onChange={event => setDueDate(event.target.value)}
                 required
               />
             </div>
           </div>
 
-          {/* Line Items */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <Label className="text-sm font-semibold">Procedures / Items</Label>
+              <Label className="text-sm font-semibold">Invoice Items</Label>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={handleAddLineItem}
-                className="h-8 border-dashed border-primary/40 text-primary hover:bg-primary/5 hover:border-primary"
+                onClick={() => setLineItems(items => [
+                  ...items,
+                  { description: '', quantity: 1, unitPrice: 0 },
+                ])}
               >
                 <Plus className="h-4 w-4 mr-1" /> Add Item
               </Button>
             </div>
-
             <div className="space-y-3 border border-border/40 rounded-xl p-4 bg-accent/10">
               {lineItems.map((item, index) => (
-                <div key={index} className="grid grid-cols-12 gap-2 items-end border-b border-border/20 pb-3 last:border-0 last:pb-0">
-                  <div className="col-span-2">
-                    <Label className="text-[10px] text-muted-foreground uppercase tracking-wide">Code</Label>
+                <div key={index} className="grid grid-cols-12 gap-2 items-end">
+                  <div className="col-span-7">
+                    <Label htmlFor={`item-description-${index}`}>Description</Label>
                     <Input
-                      placeholder="e.g. D1110"
-                      value={item.procedureCode}
-                      onChange={e => handleLineItemChange(index, 'procedureCode', e.target.value)}
-                      className="h-9 bg-background/80 border-border text-xs"
-                      required
-                    />
-                  </div>
-
-                  <div className="col-span-3">
-                    <Label className="text-[10px] text-muted-foreground uppercase tracking-wide">Description</Label>
-                    <Input
-                      placeholder="Prophylaxis..."
+                      id={`item-description-${index}`}
                       value={item.description}
-                      onChange={e => handleLineItemChange(index, 'description', e.target.value)}
-                      className="h-9 bg-background/80 border-border text-xs"
+                      onChange={event => updateLineItem(index, 'description', event.target.value)}
+                      placeholder="Procedure or item description"
                       required
                     />
                   </div>
-
-                  <div className="col-span-1">
-                    <Label className="text-[10px] text-muted-foreground uppercase tracking-wide">Tooth</Label>
+                  <div className="col-span-2">
+                    <Label htmlFor={`item-quantity-${index}`}>Qty</Label>
                     <Input
-                      type="number"
-                      placeholder="-"
-                      value={item.toothNumber || ''}
-                      onChange={e => handleLineItemChange(index, 'toothNumber', e.target.value)}
-                      className="h-9 bg-background/80 border-border text-xs text-center"
-                    />
-                  </div>
-
-                  <div className="col-span-1.5 col-start-8 col-span-1">
-                    <Label className="text-[10px] text-muted-foreground uppercase tracking-wide text-center block">Qty</Label>
-                    <Input
+                      id={`item-quantity-${index}`}
                       type="number"
                       min="1"
                       value={item.quantity}
-                      onChange={e => handleLineItemChange(index, 'quantity', e.target.value)}
-                      className="h-9 bg-background/80 border-border text-xs text-center"
+                      onChange={event => updateLineItem(index, 'quantity', event.target.value)}
                       required
                     />
                   </div>
-
                   <div className="col-span-2">
-                    <Label className="text-[10px] text-muted-foreground uppercase tracking-wide text-right block">Price ($)</Label>
+                    <Label htmlFor={`item-price-${index}`}>Unit Price</Label>
                     <Input
+                      id={`item-price-${index}`}
                       type="number"
                       min="0"
                       step="0.01"
                       value={item.unitPrice}
-                      onChange={e => handleLineItemChange(index, 'unitPrice', e.target.value)}
-                      className="h-9 bg-background/80 border-border text-xs text-right"
+                      onChange={event => updateLineItem(index, 'unitPrice', event.target.value)}
                       required
                     />
                   </div>
-
-                  <div className="col-span-2">
-                    <Label className="text-[10px] text-muted-foreground uppercase tracking-wide text-right block">Disc ($)</Label>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={item.discount}
-                      onChange={e => handleLineItemChange(index, 'discount', e.target.value)}
-                      className="h-9 bg-background/80 border-border text-xs text-right"
-                    />
-                  </div>
-
-                  <div className="col-span-1 flex justify-center pb-1">
+                  <div className="col-span-1">
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                      onClick={() => handleRemoveLineItem(index)}
+                      aria-label="Remove item"
                       disabled={lineItems.length === 1}
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => setLineItems(items => items.filter((_, i) => i !== index))}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -288,56 +232,41 @@ export function CreateInvoiceDialog({
             </div>
           </div>
 
-          {/* Notes & Summary breakdown */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <Label htmlFor="notes">Invoice Notes / Memo</Label>
               <Textarea
                 id="notes"
-                placeholder="Add special instructions, payment guidelines, or treatment notes..."
                 value={notes}
-                onChange={e => setNotes(e.target.value)}
-                className="h-32 bg-background/60 border-border"
+                onChange={event => setNotes(event.target.value)}
               />
             </div>
-
-            <div className="rounded-xl border border-border/60 bg-accent/5 p-4 space-y-3 text-sm">
-              <h4 className="font-semibold text-foreground border-b border-border pb-2">Calculation Summary</h4>
+            <div className="rounded-xl border border-border/60 p-4 space-y-3 text-sm">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Subtotal</span>
-                <span className="font-mono">${subtotal.toFixed(2)}</span>
+                <span>Subtotal</span><span>${subtotal.toFixed(2)}</span>
               </div>
-              {discountTotal > 0 && (
-                <div className="flex justify-between text-emerald-500 font-medium">
-                  <span>Discounts</span>
-                  <span className="font-mono">-${discountTotal.toFixed(2)}</span>
-                </div>
+              {taxAmount === undefined ? (
+                <p className="text-xs text-muted-foreground">
+                  The server will apply the practice tax preference when this invoice is created.
+                </p>
+              ) : (
+                <>
+                  <div className="flex justify-between">
+                    <span>Tax ({taxRatePercent}%)</span><span>${taxAmount.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between font-bold border-t pt-2">
+                    <span>Total Due</span><span>${total?.toFixed(2)}</span>
+                  </div>
+                </>
               )}
-              <div className="flex justify-between text-muted-foreground">
-                <span>Tax ({taxRate}%)</span>
-                <span className="font-mono">${taxAmount.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between font-bold text-base border-t border-border pt-2 text-foreground">
-                <span>Total Due</span>
-                <span className="font-mono text-primary">${total.toFixed(2)}</span>
-              </div>
             </div>
           </div>
 
-          <DialogFooter className="border-t border-border/50 pt-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              className="border-border bg-background hover:bg-accent text-foreground"
-            >
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button
-              type="submit"
-              disabled={isSubmitting || !selectedPatientId}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold px-6"
-            >
+            <Button type="submit" disabled={isSubmitting || !selectedPatientId}>
               {isSubmitting ? 'Creating...' : 'Create Invoice'}
             </Button>
           </DialogFooter>

@@ -5,7 +5,6 @@ import datetime
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.billing import Invoice, Payment, PaymentStatus, PaymentMethod
@@ -50,6 +49,7 @@ class TestReportsDashboard:
         payment = Payment(
             invoice_id=invoice.id,
             patient_id=test_patient.id,
+            practice_id=test_practice.id,
             amount=200,
             payment_method=PaymentMethod.CARD,
             status=PaymentStatus.COMPLETED,

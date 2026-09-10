@@ -32,6 +32,8 @@ describe("Referrals Page", () => {
   it("displays summary metric cards", () => {
     render(<Referrals />, { wrapper: createWrapper() });
     expect(screen.getByText(/total referrals/i)).toBeInTheDocument();
-    expect(screen.getByText(/referral fees/i)).toBeInTheDocument();
+    // Exact match: the card subtitle "total referral fees" also contains
+    // this phrase, so a substring match would find two elements.
+    expect(screen.getByText(/^referral fees$/i)).toBeInTheDocument();
   });
 });

@@ -11,11 +11,13 @@ vi.mock("@/contexts/auth-context", () => ({
 }));
 
 const mockedUseAuth = vi.mocked(useAuth);
-const baseAuth: Pick<AuthContextValue, "login" | "register" | "logout" | "hasRole"> = {
+const baseAuth: Pick<AuthContextValue, "login" | "register" | "logout" | "hasRole" | "mustChangePassword" | "clearMustChangePassword"> = {
   login: vi.fn(),
   register: vi.fn(),
   logout: vi.fn(),
   hasRole: vi.fn(),
+  mustChangePassword: false,
+  clearMustChangePassword: vi.fn(),
 };
 
 function renderRoute(roles?: UserRole[]) {
@@ -79,6 +81,7 @@ describe("ProtectedRoute", () => {
         practiceId: "practice-1",
         practiceName: "CoreDent",
         practiceCountry: "US",
+        mustChangePassword: false,
       },
       role: "owner",
       isAuthenticated: true,
@@ -101,6 +104,7 @@ describe("ProtectedRoute", () => {
         practiceId: "practice-1",
         practiceName: "CoreDent",
         practiceCountry: "US",
+        mustChangePassword: false,
       },
       role: "front_desk",
       isAuthenticated: true,
@@ -110,5 +114,81 @@ describe("ProtectedRoute", () => {
     renderRoute(["owner", "admin"]);
     expect(screen.getByRole("alert")).toHaveTextContent("Access denied");
     expect(screen.queryByText("Private content")).not.toBeInTheDocument();
+  });
+
+  it("redirects authenticated users with mustChangePassword to force-change-password", () => {
+    mockedUseAuth.mockReturnValue({
+      ...baseAuth,
+      mustChangePassword: true,
+      user: {
+        id: "user-3",
+        email: "temp@example.com",
+        firstName: "Temp",
+        lastName: "Staff",
+        role: "dentist",
+        practiceId: "practice-1",
+        practiceName: "CoreDent",
+        practiceCountry: "US",
+        mustChangePassword: true,
+      },
+      role: "dentist",
+      isAuthenticated: true,
+      isLoading: false,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/private"]}>
+        <Routes>
+          <Route path="/force-change-password" element={<div>Force change page</div>} />
+          <Route
+            path="/private"
+            element={
+              <ProtectedRoute>
+                <div>Private content</div>
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Force change page")).toBeInTheDocument();
+    expect(screen.queryByText("Private content")).not.toBeInTheDocument();
+  });
+
+  it("renders content on /force-change-password even when mustChangePassword is true", () => {
+    mockedUseAuth.mockReturnValue({
+      ...baseAuth,
+      mustChangePassword: true,
+      user: {
+        id: "user-3",
+        email: "temp@example.com",
+        firstName: "Temp",
+        lastName: "Staff",
+        role: "dentist",
+        practiceId: "practice-1",
+        practiceName: "CoreDent",
+        practiceCountry: "US",
+        mustChangePassword: true,
+      },
+      role: "dentist",
+      isAuthenticated: true,
+      isLoading: false,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/force-change-password"]}>
+        <Routes>
+          <Route
+            path="/force-change-password"
+            element={
+              <ProtectedRoute>
+                <div>Force change content</div>
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Force change content")).toBeInTheDocument();
   });
 });

@@ -121,7 +121,6 @@ class TestPatientTenantIsolation:
         if response.status_code == 200:
             body = response.json()
             items = body.get("items", body if isinstance(body, list) else [])
-            ids = {p.get("id") for p in items}
             # B's patients (created in fixtures) must not appear.
             assert all(
                 p.get("practice_id") != str(other_practice.id) for p in items
@@ -182,6 +181,32 @@ class TestBillingTenantIsolation:
         response = await async_client.get(
             f"/api/v1/billing/invoices/{inv.id}",
             headers=auth_headers,
+        )
+        assert response.status_code == 404, response.text
+
+    async def test_cannot_create_invoice_for_other_practice_patient(
+        self, async_client, auth_headers, other_patient
+    ):
+        """POST /billing/invoices/ against the other practice's patient → 404.
+
+        Invoices are tenant-scoped by the patient's practice; the patient
+        existence check must not resolve across practices.
+        """
+        response = await async_client.post(
+            "/api/v1/billing/invoices/",
+            headers=auth_headers,
+            json={
+                "patient_id": str(other_patient.id),
+                "line_items": [
+                    {
+                        "description": "X-Ray",
+                        "quantity": 1,
+                        "unit_price": "100.00",
+                        "total": "100.00",
+                    }
+                ],
+                "tax_rate": "0.0",
+            },
         )
         assert response.status_code == 404, response.text
 

@@ -3,14 +3,14 @@ import type { TreatmentPlan } from '@/types/treatmentPlan';
 
 export interface FormData {
   title: string;
-  description: string;
+  treatmentGoals: string;
   patientName: string;
   notes: string;
 }
 
 export interface FormErrors {
   title?: string;
-  description?: string;
+  treatmentGoals?: string;
   patientName?: string;
   notes?: string;
 }
@@ -18,7 +18,7 @@ export interface FormErrors {
 function getInitialFormData(plan?: TreatmentPlan | null): FormData {
   return {
     title: plan?.title || '',
-    description: plan?.description || '',
+    treatmentGoals: plan?.treatmentGoals || '',
     patientName: plan?.patientName || '',
     notes: plan?.notes || '',
   };
@@ -44,30 +44,24 @@ export function useTreatmentPlanForm(plan?: TreatmentPlan | null) {
     const next = { ...formDataRef.current, [field]: value };
     formDataRef.current = next;
     setFormData(next);
-    setErrors((prev) => {
-      const nextErrors = { ...prev };
+    setErrors((previous) => {
+      const nextErrors = { ...previous };
       delete nextErrors[field];
       return nextErrors;
     });
   }, []);
 
   const validate = useCallback((): boolean => {
-    const currentFormData = formDataRef.current;
+    const current = formDataRef.current;
     const nextErrors: FormErrors = {};
-    if (!currentFormData.title.trim()) {
+    if (!current.title.trim()) {
       nextErrors.title = 'Title is required';
-    } else if (currentFormData.title.length > 100) {
+    } else if (current.title.length > 255) {
       nextErrors.title = 'Title too long';
     }
-    if (!currentFormData.patientName.trim()) {
-      nextErrors.patientName = 'Patient name is required';
-    }
-    if (currentFormData.description && currentFormData.description.length > 500) {
-      nextErrors.description = 'Description too long';
-    }
-    if (currentFormData.notes && currentFormData.notes.length > 1000) {
-      nextErrors.notes = 'Notes too long';
-    }
+    if (!current.patientName.trim()) nextErrors.patientName = 'Patient name is required';
+    if (current.treatmentGoals.length > 2000) nextErrors.treatmentGoals = 'Treatment goals too long';
+    if (current.notes.length > 2000) nextErrors.notes = 'Notes too long';
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   }, []);
@@ -79,11 +73,5 @@ export function useTreatmentPlanForm(plan?: TreatmentPlan | null) {
     setErrors({});
   }, [plan]);
 
-  return {
-    formData,
-    errors,
-    updateField,
-    validate,
-    reset,
-  };
+  return { formData, errors, updateField, validate, reset };
 }

@@ -1,6 +1,6 @@
 # Production Status — CoreDent
 
-**Last updated:** 2026-06-02
+**Last updated:** 2026-07-23
 
 This is the single source of truth for CoreDent's production readiness. All other `.md` files in this repository that make readiness claims should be ignored. The detailed technical review is in `HONEST_PRODUCTION_REVIEW_2026.md`.
 
@@ -17,13 +17,16 @@ This is the single source of truth for CoreDent's production readiness. All othe
 | **PHI at-rest proven by test** | ✅ `tests/test_phi_encrypted_at_rest.py` |
 | **Auth** | ✅ bcrypt 14, JWT HS256 (PyJWT), lockout, hashed refresh, anti-enum |
 | **Stripe / webhooks** | ✅ Re-implemented HMAC verifier, fail-closed |
-| **Production config validation** | ✅ Hard fail-closed in `ENVIRONMENT=production` for 9 secrets |
+| **Production config validation** | ✅ Hard fail-closed in `ENVIRONMENT=production` — 13 config-check groups incl. placeholder detection (`SECRET_KEY`, `ENCRYPTION_KEYS`, `SEARCH_INDEX_KEY`, `KMS_BACKEND`/`AWS_KMS_KEY_ARN`, `SENTRY_DSN`, `STRIPE_WEBHOOK_SECRET`, `REDIS_URL`, `TRUSTED_PROXIES`, `MONITORING_TOKEN`, SMTP, `AWS_S3_BUCKET`, `ALLOWED_HOSTS`, `CORS_ORIGINS`) |
 | **Backup / DR** | ✅ 540-line runbook, RPO 1h / RTO 4h, monthly test |
 | **Observability** | ✅ Sentry required-in-prod, JSON logs, security event middleware |
 | **CORS / CSP / headers** | ✅ Strict CSP (no `unsafe-inline`), HSTS, X-Frame-Options |
 | **CI** | ✅ bandit + safety + pip-audit, real Postgres, coverage upload |
 | **Dependency hygiene** | ✅ `cryptography` 44.x, PyJWT, direct bcrypt, `pip-audit` |
 | **Billing race conditions** | ✅ Postgres advisory lock + `SELECT FOR UPDATE` |
+| **Plan quota enforcement** | ✅ `enforce_plan_quota()` dependency gates patient/staff creation against the plan's `limits` map (added 2026-08) |
+| **Accepted payment methods** | ✅ `POST /billing/payments/` rejects methods outside the practice's configured `acceptedPaymentMethods` |
+| **Real-PostgreSQL concurrency tests** | ✅ `tests/test_postgres_concurrency.py` — invoice-number + double-payment races; runs on CI Postgres, skips on SQLite |
 | **Uvicorn proxy headers** | ✅ `--proxy-headers` + `TRUSTED_PROXIES` env |
 | **Service worker PHI caching** | ✅ NetworkOnly for `/api/*` (verified) |
 | **DemoBanner in prod bundle** | ✅ Build-time no-op via `import.meta.env.PROD` |
@@ -42,7 +45,7 @@ This is the single source of truth for CoreDent's production readiness. All othe
 
 ## Verdict
 
-**GO** for a **closed beta of friendly customers** (5-10 practices, in jurisdictions where the customer is the BAA-bearing party). **NO** yet for:
+**NO-GO** for any environment with real patient data or payment processing. Online payments are intentionally fail-closed (HTTP 503) until transactional persistence, idempotent reconciliation, and webhook reliability are implemented and validated. The four fake dashboards are fixed, making the SaaS more honest and beta-ready, but it is **NO** yet for the open market as a complete dental platform. It is not ready for:
 - US healthcare customers where the vendor is the Business Associate
 - Open sign-up from the public internet
 - Any environment with real ePHI liability and a signed vendor BAA
@@ -81,7 +84,7 @@ This is the single source of truth for CoreDent's production readiness. All othe
 - [ ] `pip install -r requirements.txt` resolves cleanly with the new pins.
 - [ ] `pytest tests/test_tenant_isolation.py tests/test_phi_encrypted_at_rest.py` passes on staging Postgres.
 - [ ] `start.py` is the new entry point (it now sets `proxy_headers=True`).
-- [ ] All 9 production secrets are set: `SECRET_KEY`, `ENCRYPTION_KEYS`, `SENTRY_DSN`, `STRIPE_WEBHOOK_SECRET`, `REDIS_URL`, `SMTP_USER`, `AWS_S3_BUCKET`, `ALLOWED_HOSTS`, `CORS_ORIGINS`.
+- [ ] All fail-closed production config checks pass (13 groups — boot fails loudly listing any missing/placeholder value, see `docs/PRODUCTION_REQUIRED_ENV.md`): `SECRET_KEY`, `ENCRYPTION_KEYS`, `SEARCH_INDEX_KEY`, `KMS_BACKEND` (+ `AWS_KMS_KEY_ARN` and an `aws:` data-key entry when `KMS_BACKEND=aws`), `SENTRY_DSN`, `STRIPE_WEBHOOK_SECRET`, `REDIS_URL`, `TRUSTED_PROXIES`, `MONITORING_TOKEN`, `SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD`, `AWS_S3_BUCKET`, `ALLOWED_HOSTS`, `CORS_ORIGINS`.
 - [ ] Celery worker is running: `celery -A app.core.celery_app worker -Q default,communications,reminders,emails -l info` (the new `emails` queue is for `email_tasks`).
 - [ ] BAAs signed with: Railway, Sentry, Stripe, Twilio, AWS.
 - [ ] Healthcare-attorney-reviewed privacy policy.
@@ -93,13 +96,47 @@ This is the single source of truth for CoreDent's production readiness. All othe
 
 ## What is still NOT done (for the open market)
 
-These require external human work that cannot be done in code:
+These require external human work, external systems integration, or broader product and operational work that is not yet implemented:
 
-- **First external pen-test** — scope is ready (`docs/PENTEST_SCOPE.md`), but the engagement itself is an external vendor contract. Recommended budget: $15k–$25k.
-- **Healthcare-attorney review of the privacy policy / TOS** — needs an actual lawyer licensed in the customer's jurisdiction.
-- **Real BAA signatures** from Railway, Sentry, Stripe, Twilio, AWS — commercial paperwork.
-- **First SRA + access review** — operational exercise, not code.
-- **Workforce training** — people, not code. The training policy is in `docs/HIPAA_COMPLIANCE_PROGRAM.md` § 2.4; the actual training is delivered by HR.
-- **KMS cutover to AWS** — the integration is ready, but the data-key generation + BAA + first key rotation needs a runbook (`scripts/generate_aws_data_key.py` referenced by the KMS module is the next thing to write).
+### Missing Integrations & Broader Product Features
+- **DICOM/TWAIN Capture & AI Imaging**: Imaging hub supports basic API-backed upload and viewing, but direct DICOM/TWAIN workstation capture and AI-driven imaging interpretation are not connected.
+- **Real Insurance Clearinghouse (DentalXChange/ERA/Denial workflows)**: Real clearinghouse connections, electronic remittance advice (ERA) flows, and automated denial management are stubs/mocks.
+- **Live Infrastructure/Staging Validation**: Verification with live staging accounts is still pending for Stripe, SMTP, Twilio/SendGrid, S3, Redis, and Celery.
+- **Dentrix/Open Dental Migration Tools**: Automated migration utilities to ingest patient databases from legacy systems like Dentrix and Open Dental are not built.
+- **E-Prescribing & Advanced Intake Forms**: Integrated e-prescribing and dynamic consent/intake form builders are missing.
+- **True Multi-Location/DSO Data Model**: The tenancy model limits database operations to single isolated practices; multi-location consolidation (DSO view) is not supported.
+
+### Legal, Administrative, & Security Programs (Operational Compliance)
+- **Vendor BAAs**: Completed Business Associate Agreements (BAAs) with Railway, Sentry, Stripe, Twilio, and AWS.
+- **Healthcare-Attorney Review**: Privacy policy, terms of service, and clinical consent workflows need specialized attorney sign-off.
+- **SRA, Training, & Testing**: A formal Security Risk Assessment (SRA), workforce security training, professional penetration testing, and disaster-recovery/business-continuity exercises are still outstanding.
 
 Everything else (code, tests, configuration, documentation) is now in place for a defensible closed beta.
+
+---
+
+## Verified locally (last full backend rerun: 2026-08-19)
+
+- Backend: 760 tests passed, 2 skipped; 61.03% coverage (60% gate).
+  Full rerun after the late-fee fix (`mark_overdue_invoices`) is green — 1470.63s
+  (0:24:30) on 2026-08-19. Targeted gates also green: `test_plan_quota` (8),
+  `test_payment_methods` (3), billing late-fee test, `test_overdue_invoice_sweep` (3).
+- Alembic: the full migration chain (25 revisions) renders a complete offline
+  script (`upgrade head --sql`, static DDL with embedded operator warnings for
+  data-dependent checks) and upgrades a fresh SQLite DB online; real-PostgreSQL migration and concurrency validation
+  (advisory-lock invoice numbers, `FOR UPDATE` double-payment guard) run in CI on
+  `postgres:16-alpine` via `.github/workflows/ci.yml`.
+- Frontend: 1,031 tests passed and the 80% coverage gate passed.
+- Frontend TypeScript and ESLint gates passed.
+- `npm audit --audit-level=moderate`: no vulnerabilities.
+- `pip-audit --strict -r requirements.txt`: no known vulnerabilities.
+- Railway JSON and production Compose YAML parse successfully.
+- Production API traffic is `NetworkOnly` in the service worker and is not
+  written to browser Cache Storage.
+- Production Compose now includes one-shot migrations, API, PostgreSQL 16,
+  Redis, Celery worker, Celery Beat, ClamAV, and hourly database backups.
+
+Docker is not installed in the review workstation, so the container topology
+still requires a staging runtime smoke test before deployment. External BAAs,
+legal review, live integration credentials, an SRA, and a professional
+penetration test remain non-code launch requirements.

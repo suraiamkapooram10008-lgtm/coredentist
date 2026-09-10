@@ -1,6 +1,13 @@
 import { toURLSearchParams } from '@/lib/utils';
 import { getCsrfHeader } from '@/lib/csrf';
 import { logger } from '@/lib/logger';
+import type { z } from 'zod';
+import { validateApiResponse } from '@/lib/apiValidation';
+import {
+  normalizeRequestPayload,
+  normalizeResponsePayload,
+  shouldNormalizeContract,
+} from '@/lib/domainContract';
 
 // ... existing imports ...
 import type {
@@ -15,14 +22,10 @@ import type {
   AppointmentListParams,
   DentalChart,
   ClinicalNote,
-  TreatmentPlan,
-  Invoice,
-  Payment,
   ReportParams,
   ProductionReport,
   AppointmentReport,
   ApiResponse,
-  NotificationSummary,
 } from '@/types/api';
 import type { BillingPreferences } from '@/types/settings';
 
@@ -32,31 +35,58 @@ import type { BillingPreferences } from '@/types/settings';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
+type ApiRecord = Record<string, unknown>;
+
+function asApiRecord(value: unknown): ApiRecord | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as ApiRecord
+    : null;
+}
+
+function getApiErrorMessage(value: unknown, fallback: string): string {
+  if (typeof value === 'string' && value.trim()) return value;
+  const payload = asApiRecord(value);
+  for (const key of ['message', 'detail', 'error']) {
+    const candidate = payload?.[key];
+    if (typeof candidate === 'string' && candidate.trim()) return candidate;
+  }
+  return fallback;
+}
+
+async function readResponseBody(response: Response): Promise<unknown> {
+  if (response.status === 204) return null;
+  const text = await response.text();
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
 // ============================================
 // HTTP Client
 // ============================================
 
-// SECURITY: Refresh token is persisted in sessionStorage (NOT localStorage).
-// sessionStorage survives page reloads within the same tab but is cleared when
-// the tab closes, which keeps clinical sessions alive across refreshes while
-// limiting the exposure window compared to localStorage. The short-lived access
-// token remains in memory only.
-const REFRESH_TOKEN_KEY = 'cd_rt';
+// SECURITY: Access tokens live in memory. Refresh credentials are issued only
+// as HttpOnly cookies and are never exposed to or retained by JavaScript.
+const REFRESH_TOKEN_KEY = 'cd_rt'; // retained for migration clean-up only
 
 class ApiClient {
   private baseUrl: string;
   private token: string | null = null;
-  private refreshToken: string | null = null;
   private isRefreshing = false;
   private refreshPromise: Promise<string | null> | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
-    // Rehydrate refresh token from sessionStorage on construction
+    // Clean up any token left over from a previous build that stored it in
+    // sessionStorage. This ensures upgrading users are not left with an
+    // XSS-accessible token in storage.
     try {
-      this.refreshToken = sessionStorage.getItem(REFRESH_TOKEN_KEY);
+      sessionStorage.removeItem(REFRESH_TOKEN_KEY);
     } catch {
-      this.refreshToken = null;
+      // sessionStorage unavailable — nothing to clean up
     }
   }
 
@@ -68,21 +98,12 @@ class ApiClient {
     return this.token;
   }
 
-  setRefreshToken(token: string | null) {
-    this.refreshToken = token;
-    try {
-      if (token) {
-        sessionStorage.setItem(REFRESH_TOKEN_KEY, token);
-      } else {
-        sessionStorage.removeItem(REFRESH_TOKEN_KEY);
-      }
-    } catch {
-      // sessionStorage unavailable (e.g. SSR/private mode) - fall back to memory only
-    }
-  }
+  // Compatibility no-ops for callers compiled against older clients. The
+  // refresh credential is intentionally inaccessible to JavaScript.
+  setRefreshToken(_token: string | null) {}
 
-  getRefreshToken(): string | null {
-    return this.refreshToken;
+  getRefreshToken(): null {
+    return null;
   }
 
   /**
@@ -91,9 +112,8 @@ class ApiClient {
    * Returns true if a valid access token was obtained.
    */
   async restoreSession(): Promise<boolean> {
-    if (!this.refreshToken) {
-      return false;
-    }
+    // The durable credential is an HttpOnly cookie. The in-memory token is
+    // only an optional compatibility fallback for an already-open tab.
     const newToken = await this.refreshAccessToken();
     return !!newToken;
   }
@@ -101,7 +121,8 @@ class ApiClient {
   private async request<T>(
     endpoint: string,
     options: RequestInit = {},
-    retry = true
+    retry = true,
+    schema?: z.ZodSchema<T>
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseUrl}${endpoint}`;
     const isFormData = options.body instanceof FormData;
@@ -109,7 +130,7 @@ class ApiClient {
       ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...options.headers,
     };
-    
+
     // CRIT-01/CRIT-06 FIX: Use Bearer token authentication for cross-origin deployment
     // Tokens are stored in memory only (NOT localStorage, NOT cookies)
     if (this.token) {
@@ -117,7 +138,7 @@ class ApiClient {
         'Authorization': `Bearer ${this.token}`,
       });
     }
-    
+
     // Add CSRF token for state-changing requests
     if (options.method && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(options.method)) {
       Object.assign(headers, getCsrfHeader());
@@ -135,7 +156,7 @@ class ApiClient {
         // FIX: Use 'include' for cross-origin cookie support (CSRF + refresh tokens)
         credentials: 'include',
       });
-      
+
       clearTimeout(timeoutId);
 
       // Handle 401 Unauthorized - session expired
@@ -144,11 +165,12 @@ class ApiClient {
         if (retry) {
           const newToken = await this.refreshAccessToken();
           if (newToken) {
-            return this.request<T>(endpoint, options, false);
+            // Pass the schema through — dropping it here meant retried
+            // validated calls returned UNVALIDATED data with success: true.
+            return this.request<T>(endpoint, options, false, schema);
           }
         }
         this.token = null;
-        this.refreshToken = null;
         // Note: Tokens are in httpOnly cookies - cannot clear from client.
         // AuthProvider owns application state and route guards own navigation.
         window.dispatchEvent(new CustomEvent('auth:logout'));
@@ -164,12 +186,12 @@ class ApiClient {
 
       // For login endpoint with 401, return invalid credentials error
       if (response.status === 401 && endpoint.includes('/auth/login')) {
-        const data = await response.json().catch(() => ({}));
+        const data = await readResponseBody(response);
         return {
           success: false,
           error: {
             code: 'INVALID_CREDENTIALS',
-            message: data.message || 'Invalid credentials',
+            message: getApiErrorMessage(data, 'Invalid credentials'),
           },
         };
       }
@@ -186,31 +208,59 @@ class ApiClient {
         };
       }
 
-      const data = await response.json();
+      const data = await readResponseBody(response)
 
       if (!response.ok) {
+        const errorPayload = asApiRecord(data);
+        const errorCode = typeof errorPayload?.code === 'string' ? errorPayload.code : 'API_ERROR';
         logger.error(`API error: ${endpoint}`, undefined, {
           endpoint,
           status: response.status,
-          error: data,
+          errorCode,
         });
         return {
           success: false,
           error: {
-            code: data.code || 'API_ERROR',
-            message: data.message || 'An error occurred',
-            details: data.details,
+            code: errorCode,
+            message: getApiErrorMessage(data, 'An error occurred'),
+            details: errorPayload?.details && typeof errorPayload.details === 'object' && !Array.isArray(errorPayload.details)
+              ? errorPayload.details as Record<string, string[]>
+              : undefined,
           },
         };
       }
 
+      // Contract normalization: the backend returns snake_case keys for the
+      // core data domains; expose the stable camelCase shape to React.
+      const normalizedData = shouldNormalizeContract(endpoint)
+        ? normalizeResponsePayload(endpoint, data)
+        : data;
+
+      // Fail-closed: if a Zod schema is provided, validate before returning.
+      // On validation failure the API surface is treated as broken — we
+      // surface a structured error rather than passing malformed data into
+      // the React tree.
+      if (schema) {
+        const validated = validateApiResponse<T>(normalizedData, schema, endpoint);
+        if (validated === null) {
+          return {
+            success: false,
+            error: {
+              code: 'SCHEMA_VALIDATION_FAILED',
+              message: `API response for ${endpoint} did not match the expected schema.`,
+            },
+          };
+        }
+        return { success: true, data: validated };
+      }
+
       return {
         success: true,
-        data: data as T,
+        data: normalizedData as T,
       };
     } catch (error) {
       clearTimeout(timeoutId);
-      
+
       // Handle timeout
       if (error instanceof Error && error.name === 'AbortError') {
         logger.error('Request timeout', error, { endpoint });
@@ -222,7 +272,7 @@ class ApiClient {
           },
         };
       }
-      
+
       logger.error('Network error', error as Error, { endpoint });
       return {
         success: false,
@@ -236,6 +286,7 @@ class ApiClient {
 
   async get<T>(endpoint: string, params?: Record<string, unknown>): Promise<ApiResponse<T>> {
     let url = endpoint;
+    params = params && shouldNormalizeContract(endpoint) ? normalizeRequestPayload(endpoint, params) : params;
     if (params) {
       const queryString = toURLSearchParams(params).toString();
       if (queryString) {
@@ -245,24 +296,75 @@ class ApiClient {
     return this.request<T>(url, { method: 'GET' });
   }
 
+  /**
+   * GET with a Zod schema guard. On schema mismatch the response is rejected
+   * with `code: 'SCHEMA_VALIDATION_FAILED'` instead of flowing malformed data
+   * into the app. Use this for endpoints where a strict runtime contract
+   * matters (financial, clinical, or auth-related responses).
+   */
+  async getValidated<T>(
+    endpoint: string,
+    schema: z.ZodSchema<T>,
+    params?: Record<string, unknown>
+  ): Promise<ApiResponse<T>> {
+    let url = endpoint;
+    params = params && shouldNormalizeContract(endpoint) ? normalizeRequestPayload(endpoint, params) : params;
+    if (params) {
+      const queryString = toURLSearchParams(params).toString();
+      if (queryString) {
+        url += `?${queryString}`;
+      }
+    }
+    return this.request<T>(url, { method: 'GET' }, true, schema);
+  }
+
   async post<T>(endpoint: string, body?: unknown): Promise<ApiResponse<T>> {
-    const requestBody = body instanceof FormData ? body : body ? JSON.stringify(body) : undefined;
+    const normalized = shouldNormalizeContract(endpoint) ? normalizeRequestPayload(endpoint, body) : body;
+    const requestBody = normalized instanceof FormData ? normalized : normalized ? JSON.stringify(normalized) : undefined;
     return this.request<T>(endpoint, {
       method: 'POST',
       body: requestBody,
     });
   }
 
+  async postValidated<T>(
+    endpoint: string,
+    schema: z.ZodSchema<T>,
+    body?: unknown
+  ): Promise<ApiResponse<T>> {
+    const normalized = shouldNormalizeContract(endpoint) ? normalizeRequestPayload(endpoint, body) : body;
+    const requestBody = normalized instanceof FormData ? normalized : normalized ? JSON.stringify(normalized) : undefined;
+    return this.request<T>(endpoint, { method: 'POST', body: requestBody }, true, schema);
+  }
+
   async put<T>(endpoint: string, body?: unknown): Promise<ApiResponse<T>> {
-    const requestBody = body instanceof FormData ? body : body ? JSON.stringify(body) : undefined;
+    const normalized = shouldNormalizeContract(endpoint) ? normalizeRequestPayload(endpoint, body) : body;
+    const requestBody = normalized instanceof FormData ? normalized : normalized ? JSON.stringify(normalized) : undefined;
     return this.request<T>(endpoint, {
       method: 'PUT',
       body: requestBody,
     });
   }
 
+  async putValidated<T>(
+    endpoint: string,
+    schema: z.ZodSchema<T>,
+    body?: unknown
+  ): Promise<ApiResponse<T>> {
+    const normalized = shouldNormalizeContract(endpoint) ? normalizeRequestPayload(endpoint, body) : body;
+    const requestBody = normalized instanceof FormData ? normalized : normalized ? JSON.stringify(normalized) : undefined;
+    return this.request<T>(endpoint, { method: 'PUT', body: requestBody }, true, schema);
+  }
+
   async delete<T>(endpoint: string): Promise<ApiResponse<T>> {
     return this.request<T>(endpoint, { method: 'DELETE' });
+  }
+
+  async deleteValidated<T>(
+    endpoint: string,
+    schema: z.ZodSchema<T>
+  ): Promise<ApiResponse<T>> {
+    return this.request<T>(endpoint, { method: 'DELETE' }, true, schema);
   }
 
   private async refreshAccessToken(): Promise<string | null> {
@@ -288,32 +390,23 @@ class ApiClient {
           // FIX: Use 'include' for cross-origin cookie support
           credentials: 'include',
           signal: controller.signal,
-          body: JSON.stringify({
-             // Primary: httpOnly cookie (sent automatically with credentials:'include')
-             // Fallback: in-memory refresh token for backends that read from body
-             refresh_token: this.refreshToken,
-          })
         });
 
         clearTimeout(timeoutId);
 
         if (response.ok) {
-          const result = await response.json();
+          const result = await response.json().catch(() => null) as {
+            access_token?: unknown;
+          } | null;
+          if (!result || typeof result.access_token !== 'string' || !result.access_token) {
+            return null;
+          }
           this.token = result.access_token;
 
-          // CRITICAL FIX: Persist rotated refresh token.
-          // Backend performs refresh-token rotation — the old token is
-          // permanently invalidated.  Failing to save the new one means
-          // the next 401 → refresh will be rejected and the user is
-          // force-logged-out after one access-token TTL (~15 min).
-          if (result.refresh_token) {
-            this.setRefreshToken(result.refresh_token);
-          }
-
-          // getCsrfHeader will pick up the new CSRF from cookie automatically
+          // The rotated refresh token arrives only through Set-Cookie.
           return this.token;
         }
-        
+
         return null;
       } catch (err) {
         // Handle timeout specifically
@@ -336,12 +429,73 @@ class ApiClient {
 export const apiClient = new ApiClient(API_BASE_URL);
 
 // ============================================
+// Zod schemas for security-sensitive responses
+// ============================================
+// Keep these co-located with the api client; only the responses we want to
+// validate strictly are listed here.
+
+import { z as zod } from 'zod';
+
+const loginResponseSchema = zod.object({
+  access_token: zod.string().min(1),
+  refresh_token: zod.string().min(1).optional(),
+  token_type: zod.string().min(1),
+  expires_in: zod.number().int().positive(),
+  csrf_token: zod.string().min(1),
+  must_change_password: zod.boolean().optional(),
+});
+
+// The backend serializes ORM/Pydantic fields in snake_case. Accept both
+// shapes at this boundary and expose one stable camelCase shape to React.
+const userSchema = zod.object({
+  id: zod.string().min(1),
+  email: zod.string().email(),
+  firstName: zod.string().min(1).optional(),
+  first_name: zod.string().min(1).optional(),
+  lastName: zod.string().min(1).optional(),
+  last_name: zod.string().min(1).optional(),
+  full_name: zod.string().min(1).optional(),
+  role: zod.string().min(1),
+  practiceId: zod.string().min(1).optional(),
+  practice_id: zod.string().min(1).optional(),
+  practiceName: zod.string().optional(),
+  practice_name: zod.string().optional(),
+  practiceCountry: zod.string().optional(),
+  practice_country: zod.string().optional(),
+  practiceCurrency: zod.string().optional(),
+  practice_currency: zod.string().optional(),
+}).passthrough()
+  .superRefine((raw, ctx) => {
+    if (!(raw.firstName ?? raw.first_name) || !(raw.lastName ?? raw.last_name)) {
+      ctx.addIssue({ code: zod.ZodIssueCode.custom, message: 'User name is missing' });
+    }
+    if (!(raw.practiceId ?? raw.practice_id)) {
+      ctx.addIssue({ code: zod.ZodIssueCode.custom, message: 'Practice id is missing' });
+    }
+  })
+  .transform((raw) => ({
+    ...raw,
+    firstName: raw.firstName ?? raw.first_name!,
+    lastName: raw.lastName ?? raw.last_name!,
+    role: raw.role.toLowerCase(),
+    practiceId: raw.practiceId ?? raw.practice_id!,
+    practiceName: raw.practiceName ?? raw.practice_name ?? '',
+    practiceCountry: raw.practiceCountry ?? raw.practice_country ?? 'US',
+    practiceCurrency: raw.practiceCurrency ?? raw.practice_currency ?? undefined,
+    mustChangePassword: raw.must_change_password ?? raw.mustChangePassword ?? false,
+  }));
+
+// ============================================
 // Auth API
 // ============================================
 
 export const authApi = {
-  login: (credentials: LoginCredentials) => 
-    apiClient.post<LoginResponse>('/auth/login', credentials),
+  login: (credentials: LoginCredentials) =>
+    apiClient.postValidated<LoginResponse>(
+      '/auth/login',
+      loginResponseSchema as unknown as zod.ZodType<LoginResponse>,
+      credentials,
+    ),
 
   register: (data: {
     practice_name: string;
@@ -351,16 +505,18 @@ export const authApi = {
     password: string;
     country?: string;
     phone?: string;
-  }) =>
-    apiClient.post<LoginResponse>('/auth/register', data),
-  
-  logout: () => 
-    apiClient.post<void>('/auth/logout', {}), // Token from httpOnly cookie
-  
-  getCurrentUser: () => 
-    apiClient.get<User>('/auth/me'),
+  }) => apiClient.post<{ message: string }>('/auth/register', data),
 
-  // Restore session after a page reload using the persisted refresh token
+  logout: () =>
+    apiClient.post<void>('/auth/logout', {}), // Token from httpOnly cookie
+
+  getCurrentUser: () =>
+    apiClient.getValidated<User>('/auth/me', userSchema as unknown as zod.ZodType<User>),
+
+  getCsrf: () =>
+    apiClient.get<{ csrf_token: string }>('/auth/csrf'),
+
+  // Restore session after a page reload using the HttpOnly refresh cookie
   restoreSession: () =>
     apiClient.restoreSession(),
 
@@ -374,7 +530,7 @@ export const authApi = {
     apiClient.getRefreshToken(),
 
   validateInvitation: (token: string) =>
-    apiClient.get<InvitationDetails>('/auth/invitations/validate', { token }),
+    apiClient.post<InvitationDetails>('/auth/invitations/validate', { token }),
 
   acceptInvitation: (data: { token: string; password: string }) =>
     apiClient.post<void>('/auth/invitations/accept', data),
@@ -384,6 +540,16 @@ export const authApi = {
 
   resetPassword: (data: { token: string; password: string }) =>
     apiClient.post<void>('/auth/reset-password', data),
+
+  verifyEmail: (token: string) =>
+    apiClient.post<{ message: string }>('/auth/verify-email', { token }),
+
+  changePassword: (data: { current_password: string; new_password: string }) =>
+    apiClient.postValidated<LoginResponse>(
+      '/auth/change-password',
+      loginResponseSchema as unknown as zod.ZodType<LoginResponse>,
+      data,
+    ),
 };
 
 export const settingsApi = {
@@ -394,30 +560,41 @@ export const settingsApi = {
     apiClient.put<BillingPreferences>('/settings/billing', data),
 };
 
-export const notificationsApi = {
-  getUnreadCount: () =>
-    apiClient.get<NotificationSummary>('/notifications/unread-count'),
-};
+// M6 FIX: notificationsApi removed — it called /notifications/unread-count,
+// a route that has never existed in the backend router registry.
 
 // ============================================
 // Patients API
 // ============================================
 
 export const patientsApi = {
-  list: (params?: PatientListParams) => 
-    apiClient.get<PaginatedResponse<Patient>>('/patients', params as unknown as Record<string, unknown>),
-  
-  getById: (id: string) => 
+  list: (params?: PatientListParams) => {
+    // The backend list endpoint reads `query` (not `search`); translate at
+    // this boundary so patient pickers actually filter instead of showing the
+    // practice's first page regardless of the typed term.
+    const { search, ...rest } = params ?? {};
+    return apiClient.get<PaginatedResponse<Patient>>(
+      '/patients',
+      (search ? { query: search, ...rest } : rest) as unknown as Record<string, unknown>,
+    );
+  },
+
+  getById: (id: string) =>
     apiClient.get<Patient>(`/patients/${id}`),
-  
-  create: (patient: Omit<Patient, 'id' | 'createdAt' | 'updatedAt'>) => 
+
+  create: (patient: Omit<Patient, 'id' | 'createdAt' | 'updatedAt'>) =>
     apiClient.post<Patient>('/patients', patient),
-  
-  update: (id: string, patient: Partial<Patient>) => 
+
+  update: (id: string, patient: Partial<Patient>) =>
     apiClient.put<Patient>(`/patients/${id}`, patient),
-  
-  delete: (id: string) => 
+
+  delete: (id: string) =>
     apiClient.delete<void>(`/patients/${id}`),
+
+  // L3 FIX: typed as a structural record instead of `any` — the backend
+  // returns PatientExportResponse (patient + related collections).
+  exportData: (id: string) =>
+    apiClient.get<Record<string, unknown>>(`/patients/${id}/export`),
 };
 
 // ============================================
@@ -425,19 +602,29 @@ export const patientsApi = {
 // ============================================
 
 export const appointmentsApi = {
-  list: (params: AppointmentListParams) => 
-    apiClient.get<Appointment[]>('/appointments', params as unknown as Record<string, unknown>),
-  
-  getById: (id: string) => 
+  list: async (params: AppointmentListParams) => {
+    // The backend list endpoint returns the `{ appointments, count }` envelope;
+    // unwrap it to the `Appointment[]` the scheduling/dashboard hooks consume.
+    const res = await apiClient.get<{ appointments: Appointment[]; count: number }>(
+      '/appointments',
+      params as unknown as Record<string, unknown>,
+    );
+    if (res.success && res.data && Array.isArray(res.data.appointments)) {
+      return { ...res, data: res.data.appointments };
+    }
+    return { ...res, data: [] as Appointment[] };
+  },
+
+  getById: (id: string) =>
     apiClient.get<Appointment>(`/appointments/${id}`),
-  
-  create: (appointment: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'>) => 
+
+  create: (appointment: Omit<Appointment, 'id' | 'createdAt' | 'updatedAt'>) =>
     apiClient.post<Appointment>('/appointments', appointment),
-  
-  update: (id: string, appointment: Partial<Appointment>) => 
+
+  update: (id: string, appointment: Partial<Appointment>) =>
     apiClient.put<Appointment>(`/appointments/${id}`, appointment),
-  
-  delete: (id: string) => 
+
+  delete: (id: string) =>
     apiClient.delete<void>(`/appointments/${id}`),
 };
 
@@ -446,10 +633,10 @@ export const appointmentsApi = {
 // ============================================
 
 export const dentalChartApi = {
-  getByPatientId: (patientId: string) => 
+  getByPatientId: (patientId: string) =>
     apiClient.get<DentalChart>(`/patients/${patientId}/chart`),
-  
-  update: (patientId: string, chart: Partial<DentalChart>) => 
+
+  update: (patientId: string, chart: Partial<DentalChart>) =>
     apiClient.put<DentalChart>(`/patients/${patientId}/chart`, chart),
 };
 
@@ -458,69 +645,38 @@ export const dentalChartApi = {
 // ============================================
 
 export const clinicalNotesApi = {
-  listByPatient: (patientId: string) => 
+  listByPatient: (patientId: string) =>
     apiClient.get<ClinicalNote[]>(`/patients/${patientId}/notes`),
-  
-  getById: (id: string) => 
+
+  getById: (id: string) =>
     apiClient.get<ClinicalNote>(`/notes/${id}`),
-  
-  create: (note: Omit<ClinicalNote, 'id' | 'createdAt' | 'updatedAt'>) => 
+
+  create: (note: Omit<ClinicalNote, 'id' | 'createdAt' | 'updatedAt'>) =>
     apiClient.post<ClinicalNote>('/notes', note),
-  
-  update: (id: string, note: Partial<ClinicalNote>) => 
+
+  update: (id: string, note: Partial<ClinicalNote>) =>
     apiClient.put<ClinicalNote>(`/notes/${id}`, note),
 
-  delete: (id: string) => 
+  delete: (id: string) =>
     apiClient.delete<void>(`/notes/${id}`),
 };
 
-// ============================================
-// Treatment Plans API
-// ============================================
-
-export const treatmentPlansApi = {
-  listByPatient: (patientId: string) => 
-    apiClient.get<TreatmentPlan[]>(`/patients/${patientId}/treatment-plans`),
-  
-  getById: (id: string) => 
-    apiClient.get<TreatmentPlan>(`/treatment-plans/${id}`),
-  
-  create: (plan: Omit<TreatmentPlan, 'id' | 'createdAt' | 'updatedAt'>) => 
-    apiClient.post<TreatmentPlan>('/treatment-plans', plan),
-  
-  update: (id: string, plan: Partial<TreatmentPlan>) => 
-    apiClient.put<TreatmentPlan>(`/treatment-plans/${id}`, plan),
-};
-
-// ============================================
-// Billing API
-// ============================================
-
-export const billingApi = {
-  listInvoices: (patientId?: string) => 
-    apiClient.get<Invoice[]>('/invoices', { patientId }),
-  
-  getInvoice: (id: string) => 
-    apiClient.get<Invoice>(`/invoices/${id}`),
-  
-  createInvoice: (invoice: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'>) => 
-    apiClient.post<Invoice>('/invoices', invoice),
-  
-  createPayment: (payment: Omit<Payment, 'id'>) => 
-    apiClient.post<Payment>('/payments', payment),
-  
-  getPatientLedger: (patientId: string) => 
-    apiClient.get<{ invoices: Invoice[]; payments: Payment[] }>(`/patients/${patientId}/ledger`),
-};
+// Treatment plans use the explicit wire adapters in services/treatmentPlanApi.ts.
+// Keeping a second generic API here previously exposed routes that do not exist.
 
 // ============================================
 // Reports API
 // ============================================
 
 export const reportsApi = {
-  getProduction: (params: ReportParams) => 
+  getProduction: (params: ReportParams) =>
     apiClient.get<ProductionReport>('/reports/production', params as unknown as Record<string, unknown>),
-  
-  getAppointments: (params: ReportParams) => 
+
+  getAppointments: (params: ReportParams) =>
     apiClient.get<AppointmentReport>('/reports/appointments', params as unknown as Record<string, unknown>),
 };
+
+// L3 FIX: the legacy billingApi block (POST /invoices, /payments,
+// /patients/{id}/ledger) was removed — those paths do not exist in the
+// backend (billing lives under /billing/...) and no page imported this
+// object; the live client is src/services/billingApi.ts.

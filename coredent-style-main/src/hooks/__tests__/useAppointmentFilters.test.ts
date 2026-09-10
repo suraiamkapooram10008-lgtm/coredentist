@@ -8,9 +8,9 @@ import type { Appointment } from '@/services/appointmentsApi';
 
 describe('useAppointmentFilters', () => {
   const mockAppointments: Appointment[] = [
-    { id: '1', patient: 'John Doe', patientName: 'John Doe', status: 'Confirmed', time: '9:00', type: 'Checkup', dentist: 'Dr. Smith', duration: '30' },
-    { id: '2', patient: 'Jane Smith', patientName: 'Jane Smith', status: 'Pending', time: '10:00', type: 'Cleaning', dentist: 'Dr. Jones', duration: '45' },
-    { id: '3', patient: 'Bob Johnson', patientName: 'Bob Johnson', status: 'Confirmed', time: '11:00', type: 'Checkup', dentist: 'Dr. Smith', duration: '30' },
+    { id: '1', patientId: 'p1', patient: 'John Doe', patientName: 'John Doe', providerId: 'd1', providerName: 'Dr. Smith', startTime: '2026-08-12T13:00:00.000Z', endTime: '2026-08-12T13:30:00.000Z', status: 'confirmed', time: '9:00', type: 'Checkup', dentist: 'Dr. Smith', duration: '30' },
+    { id: '2', patientId: 'p2', patient: 'Jane Smith', patientName: 'Jane Smith', providerId: 'd2', providerName: 'Dr. Jones', startTime: '2026-08-12T14:00:00.000Z', endTime: '2026-08-12T14:45:00.000Z', status: 'scheduled', time: '10:00', type: 'Cleaning', dentist: 'Dr. Jones', duration: '45' },
+    { id: '3', patientId: 'p3', patient: 'Bob Johnson', patientName: 'Bob Johnson', providerId: 'd1', providerName: 'Dr. Smith', startTime: '2026-08-12T15:00:00.000Z', endTime: '2026-08-12T15:30:00.000Z', status: 'confirmed', time: '11:00', type: 'Checkup', dentist: 'Dr. Smith', duration: '30' },
   ];
 
   it('should return all appointments when no filters applied', () => {
@@ -30,11 +30,11 @@ describe('useAppointmentFilters', () => {
 
   it('should filter appointments by status', () => {
     const { result } = renderHook(() =>
-      useAppointmentFilters(mockAppointments, { status: 'Confirmed' })
+      useAppointmentFilters(mockAppointments, { status: 'confirmed' })
     );
 
     expect(result.current).toHaveLength(2);
-    expect(result.current.every((apt) => apt.status === 'Confirmed')).toBe(true);
+    expect(result.current.every((apt) => apt.status === 'confirmed')).toBe(true);
   });
 
   it('should filter appointments by dentist', () => {
@@ -78,9 +78,9 @@ describe('useAppointmentFilters', () => {
 describe('useUniqueDentists', () => {
   it('should return unique dentists sorted alphabetically', () => {
     const appointments: Appointment[] = [
-      { id: '1', patient: 'John', patientName: 'John', status: 'Confirmed', time: '9:00', type: 'Checkup', dentist: 'Dr. Smith', duration: '30' },
-      { id: '2', patient: 'Jane', patientName: 'Jane', status: 'Pending', time: '10:00', type: 'Cleaning', dentist: 'Dr. Jones', duration: '45' },
-      { id: '3', patient: 'Bob', patientName: 'Bob', status: 'Confirmed', time: '11:00', type: 'Checkup', dentist: 'Dr. Smith', duration: '30' },
+      { id: '1', patientId: 'p1', patient: 'John', patientName: 'John', providerId: 'd1', providerName: 'Dr. Smith', startTime: '2026-08-12T13:00:00.000Z', endTime: '2026-08-12T13:30:00.000Z', status: 'confirmed', time: '9:00', type: 'Checkup', dentist: 'Dr. Smith', duration: '30' },
+      { id: '2', patientId: 'p2', patient: 'Jane', patientName: 'Jane', providerId: 'd2', providerName: 'Dr. Jones', startTime: '2026-08-12T14:00:00.000Z', endTime: '2026-08-12T14:45:00.000Z', status: 'scheduled', time: '10:00', type: 'Cleaning', dentist: 'Dr. Jones', duration: '45' },
+      { id: '3', patientId: 'p3', patient: 'Bob', patientName: 'Bob', providerId: 'd1', providerName: 'Dr. Smith', startTime: '2026-08-12T15:00:00.000Z', endTime: '2026-08-12T15:30:00.000Z', status: 'confirmed', time: '11:00', type: 'Checkup', dentist: 'Dr. Smith', duration: '30' },
     ];
 
     const { result } = renderHook(() => useUniqueDentists(appointments));

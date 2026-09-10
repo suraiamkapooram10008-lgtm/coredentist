@@ -77,4 +77,14 @@ export const rolePermissions: Record<UserRole, RolePermissionDetails> = {
     color: 'bg-purple-500/10 text-purple-500 hover:bg-purple-500/20 border-purple-500/20',
     permissions: ['scheduling', 'patients', 'billing_limited'],
   },
+  group_owner: {
+    label: 'Group Owner',
+    color: 'bg-indigo-500/10 text-indigo-500 hover:bg-indigo-500/20 border-indigo-500/20',
+    permissions: ['enterprise_analytics', 'enterprise_locations'],
+  },
+  group_admin: {
+    label: 'Group Administrator',
+    color: 'bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 border-blue-500/20',
+    permissions: ['enterprise_analytics', 'enterprise_locations'],
+  },
 };

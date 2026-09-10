@@ -3,7 +3,6 @@ Comprehensive booking endpoint tests.
 """
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.booking import BookingPage, BookingPageStatus
 

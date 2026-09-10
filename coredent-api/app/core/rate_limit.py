@@ -21,9 +21,9 @@ Usage::
     @user_rate_limit("30/minute")  # 30 list-requests per minute per user
     async def list_patients(...): ...
 
-If Redis is unavailable, the limiter fails OPEN (no 429) rather
-than locking all users out.  A Sentry warning is emitted so the
-on-call engineer can restore Redis.
+In production, Redis loss fails CLOSED with HTTP 503 so protected PHI
+routes cannot silently lose their per-user control. Development and test
+environments retain a logged fail-open fallback for local usability.
 """
 from __future__ import annotations
 
@@ -40,6 +40,15 @@ from fastapi import Request, HTTPException, status
 from app.core.config_simple import settings
 
 logger = logging.getLogger(__name__)
+
+
+class RateLimitBackendUnavailable(RuntimeError):
+    """Raised when production rate-limit state cannot be accessed safely."""
+
+
+def _fail_open_allowed() -> bool:
+    """Only non-production environments may continue without Redis."""
+    return settings.ENVIRONMENT != "production"
 
 
 # ---------------------------------------------------------------------------
@@ -72,9 +81,7 @@ def _get_redis():
         _redis_client = client
         return client
     except Exception as exc:
-        logger.warning(
-            "Per-user rate limit: Redis unavailable, failing OPEN. %s", exc
-        )
+        logger.warning("Per-user rate limit Redis connection failed: %s", exc)
         return None
 
 
@@ -89,8 +96,13 @@ def _user_key(request: Request) -> str:
 
     Order of preference:
       1. JWT subject (best — one bucket per logged-in user).
-      2. (X-Forwarded-For client IP) for anonymous endpoints.
-      3. ``request.client.host`` for anonymous endpoints (no proxy).
+      2. Trusted client IP for anonymous endpoints.
+
+    M-23 FIX: the IP is resolved by ``app.core.client_ip.get_client_ip``, which
+    only honours ``X-Forwarded-For`` when the direct peer is a configured
+    trusted proxy. This function previously took the leftmost value of that
+    header unconditionally — a client-settable value — so a caller could rotate
+    the header and get a fresh bucket on every request, evading the limiter.
     """
     auth = request.headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
@@ -103,14 +115,9 @@ def _user_key(request: Request) -> str:
         except Exception:
             pass
 
-    # Fallback to IP.  The proxy-headers fix in start.py makes this
-    # the real client IP, not the load balancer.
-    client_ip = request.client.host if request.client else "unknown"
-    fwd = request.headers.get("X-Forwarded-For")
-    if fwd:
-        # Take the first (leftmost) IP — that's the original client.
-        client_ip = fwd.split(",")[0].strip()
-    return f"ip:{client_ip}"
+    from app.core.client_ip import get_client_ip
+
+    return f"ip:{get_client_ip(request)}"
 
 
 # ---------------------------------------------------------------------------
@@ -154,9 +161,12 @@ def _check_and_incr(key_suffix: str, rate: str) -> tuple[bool, int, int]:
     redis_key = f"{bucket}:{window_start}"
 
     if client is None:
-        # Fail OPEN.  Better to over-serve than to lock everyone out
-        # because Redis is down.  Sentry warning already logged.
-        return True, count, 0
+        if _fail_open_allowed():
+            logger.warning(
+                "Per-user rate limit unavailable; allowing request outside production"
+            )
+            return True, count, 0
+        raise RateLimitBackendUnavailable("Redis rate-limit backend unavailable")
 
     try:
         # INCR is atomic; first call returns 1, then 2, ...
@@ -170,8 +180,16 @@ def _check_and_incr(key_suffix: str, rate: str) -> tuple[bool, int, int]:
             return False, 0, retry_after
         return True, max(0, count - current), 0
     except Exception as exc:
-        logger.warning("Per-user rate limit Redis error, failing OPEN: %s", exc)
-        return True, count, 0
+        if _fail_open_allowed():
+            logger.warning(
+                "Per-user rate limit Redis error; allowing request outside production: %s",
+                exc,
+            )
+            return True, count, 0
+        logger.error("Per-user rate limit Redis error in production: %s", exc)
+        raise RateLimitBackendUnavailable(
+            "Redis rate-limit backend unavailable"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -201,11 +219,29 @@ def user_rate_limit(rate: str):
                         request = a
                         break
             if request is None:
-                # No request found — skip the limit (defensive).
-                return await func(*args, **kwargs)
+                # L-15 FIX: fail closed on programmer error — a forgotten
+                # `request: Request` param must not silently disable the
+                # per-user PHI cap. Log loudly so it surfaces in dev/CI.
+                import logging as _logging
+
+                _logging.getLogger(__name__).error(
+                    "user_rate_limit: no Request found on %s — refusing to "
+                    "run without a rate-limit key (add `request: Request`).",
+                    getattr(func, "__name__", func),
+                )
+                raise RuntimeError(
+                    "user_rate_limit requires `request: Request` on the route"
+                )
 
             key = _user_key(request)
-            allowed, remaining, retry_after = _check_and_incr(key, rate)
+            try:
+                allowed, remaining, retry_after = _check_and_incr(key, rate)
+            except RateLimitBackendUnavailable as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Rate limiting service unavailable. Please retry shortly.",
+                    headers={"Retry-After": "5"},
+                ) from exc
             if not allowed:
                 # Emit a Sentry breadcrumb so on-call can see who is
                 # being throttled.

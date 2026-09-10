@@ -1,9 +1,9 @@
 # CoreDent — Honest Production Readiness Review (Re-Assessment)
 
-**Date:** 2026-06-02
-**Reviewer stance:** Reviewing the actual code on disk, not the marketing docs. The previous `HONEST_PRODUCTION_REVIEW.md` (P0 dated Jan 2026) is largely fixed — but a fresh, current assessment is needed because some new issues have appeared, several P1 issues remain, and the marketing files (`PRODUCTION_READY_SUMMARY.md`, `MISSION_ACCOMPLISHED.md`, `ALL_FIXES_COMPLETE.md`, etc.) overstate reality.
+**Date:** 2026-07-11
+**Reviewer stance:** Reviewing the actual code on disk, not the marketing docs. The previous `HONEST_PRODUCTION_REVIEW.md` (P0 dated Jan 2026) is largely fixed — but a fresh, current assessment is needed because some new issues have appeared, several P1 issues remain, and the marketing files overstate reality.
 
-**Verdict: CONDITIONAL GO — defensible for a closed-beta of friendly customers, NOT yet for the open market, US healthcare, or any environment with real PHI / ePHI liability.** The hard technical blockers from the prior review are mostly resolved. The remaining issues are: outdated Python dependencies with known CVEs, the absence of a real cross-tenant isolation test, race conditions in billing, an unmaintained JWT library, and a documentation/culture gap that calls itself "production ready" while shipping a `HONEST_PRODUCTION_REVIEW.md` that says otherwise.
+**Verdict: CONDITIONAL GO — defensible for a closed-beta of friendly customers, NOT yet for the open market, US healthcare, or any environment with real PHI / ePHI liability.** The hard technical blockers from the prior review are mostly resolved, and the four fake dashboards are fixed, making the SaaS more honest and beta-ready. However, it is still not a complete open-market dental platform. The remaining code-level issues are: outdated Python dependencies with known CVEs, the absence of a real cross-tenant isolation test, race conditions in billing, and an unmaintained JWT library.
 
 ---
 

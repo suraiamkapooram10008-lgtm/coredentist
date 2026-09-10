@@ -10,42 +10,42 @@ import type { ApiResponse } from '@/types/api';
 export const clinicApi = {
   // Get clinic settings
   getSettings: () =>
-    apiClient.get<ClinicSettings>('/clinic/settings'),
+    apiClient.get<ClinicSettings>('/settings'),
 
   // Update clinic settings
   updateSettings: (settings: Partial<ClinicSettings>) =>
-    apiClient.put<ClinicSettings>('/clinic/settings', settings),
+    apiClient.put<ClinicSettings>('/settings', settings),
 
   // Upload clinic logo (returns URL from blob storage)
   uploadLogo: async (file: File): Promise<ApiResponse<{ url: string }>> => {
     const formData = new FormData();
     formData.append('logo', file);
-    return apiClient.post<{ url: string }>('/clinic/logo', formData);
+    return apiClient.post<{ url: string }>('/settings/logo', formData);
   },
 
   // Appointment Types CRUD
   getAppointmentTypes: () =>
-    apiClient.get<AppointmentTypeConfig[]>('/clinic/appointment-types'),
+    apiClient.get<AppointmentTypeConfig[]>('/appointment-types'),
 
   createAppointmentType: (type: Omit<AppointmentTypeConfig, 'id'>) =>
-    apiClient.post<AppointmentTypeConfig>('/clinic/appointment-types', type),
+    apiClient.post<AppointmentTypeConfig>('/appointment-types', type),
 
   updateAppointmentType: (id: string, type: Partial<AppointmentTypeConfig>) =>
-    apiClient.put<AppointmentTypeConfig>(`/clinic/appointment-types/${id}`, type),
+    apiClient.put<AppointmentTypeConfig>(`/appointment-types/${id}`, type),
 
   deleteAppointmentType: (id: string) =>
-    apiClient.delete<void>(`/clinic/appointment-types/${id}`),
+    apiClient.delete<void>(`/appointment-types/${id}`),
 
   // Chairs/Operatories CRUD
   getChairs: () =>
-    apiClient.get<Chair[]>('/clinic/chairs'),
+    apiClient.get<Chair[]>('/chairs'),
 
   createChair: (chair: Omit<Chair, 'id'>) =>
-    apiClient.post<Chair>('/clinic/chairs', chair),
+    apiClient.post<Chair>('/chairs', chair),
 
   updateChair: (id: string, chair: Partial<Chair>) =>
-    apiClient.put<Chair>(`/clinic/chairs/${id}`, chair),
+    apiClient.put<Chair>(`/chairs/${id}`, chair),
 
   deleteChair: (id: string) =>
-    apiClient.delete<void>(`/clinic/chairs/${id}`),
+    apiClient.delete<void>(`/chairs/${id}`),
 };

@@ -23,7 +23,7 @@ import type { TreatmentPlan } from '@/types/treatmentPlan';
 
 const planSchema = z.object({
   title: z.string().trim().min(1, 'Title is required').max(100, 'Title too long'),
-  description: z.string().trim().max(500, 'Description too long').optional(),
+  treatmentGoals: z.string().trim().max(2000, 'Treatment goals too long').optional(),
   patientId: z.string().min(1, 'Patient is required'),
   patientName: z.string().min(1, 'Patient name is required'),
   notes: z.string().trim().max(1000, 'Notes too long').optional(),
@@ -51,7 +51,7 @@ export const TreatmentPlanForm = React.memo(function TreatmentPlanForm({
     resolver: zodResolver(planSchema),
     defaultValues: {
       title: plan?.title || '',
-      description: plan?.description || '',
+      treatmentGoals: plan?.treatmentGoals || '',
       patientId: plan?.patientId || '',
       patientName: plan?.patientName || '',
       notes: plan?.notes || '',
@@ -62,7 +62,7 @@ export const TreatmentPlanForm = React.memo(function TreatmentPlanForm({
   React.useEffect(() => {
     form.reset({
       title: plan?.title || '',
-      description: plan?.description || '',
+      treatmentGoals: plan?.treatmentGoals || '',
       patientId: plan?.patientId || '',
       patientName: plan?.patientName || '',
       notes: plan?.notes || '',
@@ -109,13 +109,13 @@ export const TreatmentPlanForm = React.memo(function TreatmentPlanForm({
 
         <FormField
           control={form.control}
-          name="description"
+          name="treatmentGoals"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Description (optional)</FormLabel>
+              <FormLabel>Treatment Goals (optional)</FormLabel>
               <FormControl>
                 <Textarea
-                  placeholder="Brief description of the treatment plan..."
+                  placeholder="Clinical goals for this treatment plan..."
                   className="resize-none"
                   rows={3}
                   {...field}

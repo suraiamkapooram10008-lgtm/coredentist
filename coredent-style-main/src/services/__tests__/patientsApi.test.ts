@@ -71,7 +71,9 @@ describe('patientsApi', () => {
       server.use(
         http.get('/api/v1/patients', ({ request }) => {
           const url = new URL(request.url);
-          expect(url.searchParams.get('search')).toBe('John');
+          // The wire param is `query` — the backend ignores `search`.
+          expect(url.searchParams.get('query')).toBe('John');
+          expect(url.searchParams.get('search')).toBeNull();
           expect(url.searchParams.get('page')).toBe('1');
           return HttpResponse.json(mockResponse);
         })
@@ -142,8 +144,28 @@ describe('patientsApi', () => {
 
       server.use(
         http.post('/api/v1/patients', async ({ request }) => {
-          const body = await request.json();
-          expect(body).toEqual(newPatient);
+          const body = await request.json() as Record<string, unknown>;
+          // The FastAPI wire contract is snake_case; the React layer exposes
+          // camelCase and the boundary converts it (see docs/PAYLOAD_CONTRACT_AUDIT.md).
+          expect(body).toEqual({
+            first_name: 'Jane',
+            last_name: 'Smith',
+            email: 'jane.smith@example.com',
+            phone: '+1987654321',
+            date_of_birth: '1985-05-15',
+            gender: 'female',
+            address_street: '123 Main St',
+            address_city: 'City',
+            address_state: 'CA',
+            address_zip: '54321',
+            emergency_contact: {
+              name: 'Jane Doe',
+              relationship: 'spouse',
+              phone: '+15555555555',
+            },
+            medical_alerts: [],
+            status: 'active',
+          });
           return HttpResponse.json(createdPatient, { status: 201 });
         })
       );
@@ -192,8 +214,15 @@ describe('patientsApi', () => {
 
       server.use(
         http.put('/api/v1/patients/patient-1', async ({ request }) => {
-          const body = await request.json();
-          expect(body).toEqual(updates);
+          const body = await request.json() as Record<string, unknown>;
+          // camelCase React update -> snake_case wire payload.
+          expect(body).toEqual({
+            phone: '+1111111111',
+            address_street: '123 Main St',
+            address_city: 'City',
+            address_state: 'CA',
+            address_zip: '67890',
+          });
           return HttpResponse.json(updatedPatient);
         })
       );

@@ -4,7 +4,7 @@
 // ============================================
 
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/auth-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,8 +25,16 @@ export default function Login() {
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   
-  const { login } = useAuth();
+  const { login, mustChangePassword } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // ProtectedRoute stores the blocked location so a deep link (e.g.
+  // /patients/123) survives the login round-trip instead of always
+  // landing on /dashboard.
+  const from =
+    (location.state as { from?: { pathname?: string } } | null | undefined)?.from?.pathname ??
+    '/dashboard';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,7 +42,7 @@ export default function Login() {
 
     // Validate input
     const result = loginSchema.safeParse({ email, password });
-    
+
     if (!result.success) {
       const fieldErrors: { email?: string; password?: string } = {};
       result.error.issues.forEach((issue) => {
@@ -46,13 +54,16 @@ export default function Login() {
     }
 
     setIsSubmitting(true);
-    
+
     const success = await login({ email, password });
-    
+
     if (success) {
-      navigate('/dashboard');
+      // After login, the auth context has the up-to-date mustChangePassword flag.
+      // Route directly to the force-change screen if armed; the ProtectedRoute
+      // is the security backstop if the flag is set after a re-render.
+      navigate(mustChangePassword ? '/force-change-password' : from, { replace: true });
     }
-    
+
     setIsSubmitting(false);
   };
 

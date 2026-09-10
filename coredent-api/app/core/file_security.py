@@ -21,6 +21,9 @@ ALLOWED_MIME_TYPES = {
     'image/png': [b'\x89\x50\x4E\x47\x0D\x0A\x1A\x0A'],
     'image/gif': [b'GIF87a', b'GIF89a'],
     'image/webp': [b'RIFF', b'WEBP'],
+    'image/bmp': [b'BM'],
+    'image/tiff': [b'II*\x00', b'MM\x00*'],
+    'image/x-tiff': [b'II*\x00', b'MM\x00*'],
 
     # Documents
     'application/pdf': [b'%PDF-'],
@@ -40,6 +43,9 @@ FILE_SIZE_LIMITS = {
     'image/png': 10 * 1024 * 1024,   # 10MB
     'image/gif': 5 * 1024 * 1024,    # 5MB
     'image/webp': 10 * 1024 * 1024,  # 10MB
+    'image/bmp': 10 * 1024 * 1024,   # 10MB
+    'image/tiff': 20 * 1024 * 1024,  # 20MB
+    'image/x-tiff': 20 * 1024 * 1024,  # 20MB
     'application/pdf': 20 * 1024 * 1024,  # 20MB
     'application/msword': 10 * 1024 * 1024,  # 10MB
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 10 * 1024 * 1024,  # 10MB
@@ -110,6 +116,16 @@ def validate_magic_number(file_content: bytes, expected_mime_type: str) -> bool:
     # Text files don't have magic numbers
     if not magic_numbers:
         return True
+
+    # WebP is a RIFF container; a bare ``RIFF`` prefix (also used by WAV/AVI)
+    # is not sufficient proof. Require the ``WEBP`` fourcc at offset 8.
+    if expected_mime_type == 'image/webp':
+        if file_content.startswith(b'RIFF') and file_content[8:12] == b'WEBP':
+            return True
+        raise FileSecurityError(
+            "File content does not match expected type 'image/webp'. "
+            "Possible file type mismatch or malicious upload attempt."
+        )
 
     # Check if file starts with any of the expected magic numbers
     for magic_num in magic_numbers:
@@ -336,13 +352,13 @@ def validate_file_upload(
     except FileSecurityError as e:
         logger.warning(
             f"File validation failed: {filename}",
-            extra={"filename": filename, "error": str(e)}
+            extra={"original_filename": filename, "error": str(e)},
         )
         raise
     except Exception as e:
         logger.error(
             f"Unexpected error during file validation: {e}",
-            extra={"filename": filename}
+            extra={"original_filename": filename},
         )
         raise FileSecurityError(f"File validation error: {str(e)}")
 
@@ -391,7 +407,14 @@ class VirusScanner:
         """Initialize ClamAV connection if available"""
         try:
             import clamd
-            self._clamd = clamd.ClamdUnixSocket()
+            clamav_host = os.getenv("CLAMAV_HOST")
+            if clamav_host:
+                self._clamd = clamd.ClamdNetworkSocket(
+                    host=clamav_host,
+                    port=int(os.getenv("CLAMAV_PORT", "3310")),
+                )
+            else:
+                self._clamd = clamd.ClamdUnixSocket()
             self._clamd.ping()
             self._clamav_available = True
             logger.info("ClamAV virus scanner initialized successfully")
@@ -422,7 +445,10 @@ class VirusScanner:
         if self._clamav_available and self._clamd:
             result = await self._scan_with_clamav(file_content, filename)
             scan_results.append(result.to_dict())
-            if result.is_clean:
+            # Return immediately on a clean scan OR a confirmed threat.
+            # Only fall through to VirusTotal when ClamAV errored — otherwise
+            # a VT error path (which fails open) could override a detection.
+            if result.is_clean or not result.error:
                 return result
 
         if enable_virustotal:
@@ -430,12 +456,13 @@ class VirusScanner:
             scan_results.append(result.to_dict())
             return result
 
+        is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
         logger.warning(
-            f"No virus scanners available, assuming clean: {filename}",
-            extra={"filename": filename, "results": scan_results}
+            f"No virus scanners available: {filename}",
+            extra={"original_filename": filename, "results": scan_results}
         )
         return VirusScanResult(
-            is_clean=True,
+            is_clean=not is_production,
             scanner="none",
             error="No scanners available"
         )
@@ -455,7 +482,7 @@ class VirusScanner:
                     if threat_status == "FOUND":
                         logger.warning(
                             f"Virus detected by ClamAV: {threat_name}",
-                            extra={"filename": filename, "threat": threat_name}
+                            extra={"original_filename": filename, "threat": threat_name}
                         )
                         return VirusScanResult(
                             is_clean=False,
@@ -467,8 +494,10 @@ class VirusScanner:
 
         except Exception as e:
             logger.error(f"ClamAV scan failed: {e}")
+            is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
+            # Fail closed in production: an errored scan must not pass files.
             return VirusScanResult(
-                is_clean=True,
+                is_clean=not is_production,
                 scanner="clamav",
                 error=str(e)
             )
@@ -483,9 +512,11 @@ class VirusScanner:
 
         api_key = getattr(settings, 'VIRUSTOTAL_API_KEY', None) or os.getenv('VIRUSTOTAL_API_KEY')
 
+        is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
+
         if not api_key:
             return VirusScanResult(
-                is_clean=True,
+                is_clean=not is_production,
                 scanner="virustotal",
                 error="VirusTotal API key not configured"
             )
@@ -527,7 +558,7 @@ class VirusScanner:
 
                     logger.warning(
                         f"Threats detected by VirusTotal: {malicious_count + suspicious_count}",
-                        extra={"filename": filename, "threats": threats[:10]}
+                        extra={"original_filename": filename, "threats": threats[:10]}
                     )
 
                     return VirusScanResult(
@@ -546,13 +577,13 @@ class VirusScanner:
             elif response.status_code == 429:
                 logger.warning("VirusTotal rate limit exceeded")
                 return VirusScanResult(
-                    is_clean=True,
+                    is_clean=not is_production,
                     scanner="virustotal",
                     error="Rate limited"
                 )
             else:
                 return VirusScanResult(
-                    is_clean=True,
+                    is_clean=not is_production,
                     scanner="virustotal",
                     error=f"API returned {response.status_code}"
                 )
@@ -560,14 +591,14 @@ class VirusScanner:
         except ImportError:
             logger.warning("requests or requests_toolbelt not installed")
             return VirusScanResult(
-                is_clean=True,
+                is_clean=not is_production,
                 scanner="virustotal",
                 error="Dependencies not installed"
             )
         except Exception as e:
             logger.error(f"VirusTotal scan failed: {e}")
             return VirusScanResult(
-                is_clean=True,
+                is_clean=not is_production,
                 scanner="virustotal",
                 error=str(e)
             )
@@ -649,9 +680,17 @@ async def scan_and_validate_file(
     except FileSecurityError:
         raise
     except Exception as e:
-        logger.error(f"Virus scan error (file may still be clean): {e}")
+        logger.error(f"Virus scan error: {e}")
+        # Fail closed in production: an errored/unavailable scanner must not
+        # silently pass a file through. In development we record the failure
+        # but allow the upload so local workflows keep working.
+        is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
+        if is_production:
+            raise FileSecurityError(
+                f"File rejected: virus scan could not be completed ({e})"
+            )
         validation_result["virus_scan"] = {
-            "is_clean": None,
+            "is_clean": False,
             "scanner": "unknown",
             "error": str(e)
         }

@@ -5,10 +5,10 @@ CRUD operations for insurance management
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from datetime import datetime, date
+from sqlalchemy import select, func, text
+from datetime import datetime, date, timezone
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 import json
 import httpx
 
@@ -17,6 +17,11 @@ from app.core.config_simple import settings
 from app.models.user import User, UserRole
 from app.api.deps import get_current_user, require_role, verify_csrf
 from app.core.audit import log_audit_event
+from app.core.business_time import (
+    DateRangeError,
+    get_practice_timezone,
+    resolve_date_range,
+)
 from app.models.insurance import (
     InsuranceCarrier,
     PatientInsurance,
@@ -25,9 +30,19 @@ from app.models.insurance import (
     ClaimStatus,
     Eligibility,
     ExplanationOfBenefits,
+    FeeSchedule,
+    FeeScheduleEntry,
 )
 from app.models.patient import Patient
+from app.services.tenant_refs import (
+    require_carrier,
+    require_patient_insurance,
+    require_pre_authorization,
+)
 from app.schemas.insurance import (
+    FeeScheduleCreate,
+    FeeScheduleResponse,
+    FeeScheduleListResponse,
     InsuranceCarrierCreate,
     InsuranceCarrierUpdate,
     InsuranceCarrierResponse,
@@ -44,10 +59,10 @@ from app.schemas.insurance import (
     PreAuthorizationUpdate,
     PreAuthorizationResponse,
     PreAuthorizationListResponse,
+    PreAuthorizationStatus,
     EligibilityListResponse,
     ExplanationOfBenefitsListResponse,
 )
-from app.api.deps import verify_csrf
 
 router = APIRouter()
 
@@ -64,13 +79,18 @@ async def list_carriers(
     """
     List insurance carriers
     """
-    query = select(InsuranceCarrier)
+    from sqlalchemy import or_
+    query = select(InsuranceCarrier).where(
+        or_(
+            InsuranceCarrier.practice_id.is_(None),
+            InsuranceCarrier.practice_id == current_user.practice_id,
+        )
+    )
 
     if is_active is not None:
         query = query.where(InsuranceCarrier.is_active == is_active)
 
     if search:
-        # Use parameterized query to prevent SQL injection
         search_pattern = f"%{search}%"
         query = query.where(InsuranceCarrier.name.ilike(search_pattern))
 
@@ -94,8 +114,15 @@ async def get_carrier(
     """
     Get insurance carrier by ID
     """
+    from sqlalchemy import or_
     result = await db.execute(
-        select(InsuranceCarrier).where(InsuranceCarrier.id == carrier_id)
+        select(InsuranceCarrier).where(
+            InsuranceCarrier.id == carrier_id,
+            or_(
+                InsuranceCarrier.practice_id.is_(None),
+                InsuranceCarrier.practice_id == current_user.practice_id,
+            ),
+        )
     )
     carrier = result.scalar_one_or_none()
 
@@ -118,10 +145,17 @@ async def create_carrier(
     """
     Create new insurance carrier
     """
-    # Check for duplicate payer_id
+    from sqlalchemy import or_
+    # Check for duplicate payer_id within practice or global
     if carrier_data.payer_id:
         result = await db.execute(
-            select(InsuranceCarrier).where(InsuranceCarrier.payer_id == carrier_data.payer_id)
+            select(InsuranceCarrier).where(
+                InsuranceCarrier.payer_id == carrier_data.payer_id,
+                or_(
+                    InsuranceCarrier.practice_id.is_(None),
+                    InsuranceCarrier.practice_id == current_user.practice_id,
+                ),
+            )
         )
         existing = result.scalar_one_or_none()
         if existing:
@@ -130,7 +164,10 @@ async def create_carrier(
                 detail="Carrier with this payer ID already exists",
             )
 
-    carrier = InsuranceCarrier(**carrier_data.dict())
+    carrier = InsuranceCarrier(
+        practice_id=current_user.practice_id,
+        **carrier_data.dict()
+    )
     db.add(carrier)
     await db.commit()
     await db.refresh(carrier)
@@ -150,14 +187,17 @@ async def update_carrier(
     Update insurance carrier
     """
     result = await db.execute(
-        select(InsuranceCarrier).where(InsuranceCarrier.id == carrier_id)
+        select(InsuranceCarrier).where(
+            InsuranceCarrier.id == carrier_id,
+            InsuranceCarrier.practice_id == current_user.practice_id,
+        )
     )
     carrier = result.scalar_one_or_none()
 
     if not carrier:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Insurance carrier not found",
+            detail="Insurance carrier not found or cannot be modified",
         )
 
     update_data = carrier_data.dict(exclude_unset=True)
@@ -174,7 +214,7 @@ async def update_carrier(
 
 @router.get("/patients/{patient_id}/policies", response_model=PatientInsuranceListResponse)
 async def list_patient_insurance(
-    patient_id: str,
+    patient_id: UUID,
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     request: Request = None,
     current_user: User = Depends(get_current_user),
@@ -198,12 +238,25 @@ async def list_patient_insurance(
             detail="Patient not found",
         )
 
-    query = select(PatientInsurance).where(PatientInsurance.patient_id == patient_id)
+    # L-11 hardening: join through Patient so the policy list is proven
+    # practice-scoped in one query (patient gate above already 404s cross-tenant).
+    query = (
+        select(PatientInsurance)
+        .join(Patient, Patient.id == PatientInsurance.patient_id)
+        .where(
+            PatientInsurance.patient_id == patient_id,
+            Patient.practice_id == current_user.practice_id,
+        )
+    )
 
     if is_active is not None:
         query = query.where(PatientInsurance.is_active == is_active)
 
-    query = query.order_by(PatientInsurance.insurance_type)
+    query = query.order_by(
+        PatientInsurance.is_primary.desc(),
+        PatientInsurance.created_at.desc(),
+        PatientInsurance.id.desc(),
+    )
 
     result = await db.execute(query)
     insurances = result.scalars().all()
@@ -222,7 +275,7 @@ async def list_patient_insurance(
 
 @router.post("/patients/{patient_id}/policies", response_model=PatientInsuranceResponse)
 async def create_patient_insurance(
-    patient_id: str,
+    patient_id: UUID,
     insurance_data: PatientInsuranceCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -246,21 +299,15 @@ async def create_patient_insurance(
             detail="Patient not found",
         )
 
-    # Verify carrier exists
-    result = await db.execute(
-        select(InsuranceCarrier).where(InsuranceCarrier.id == insurance_data.carrier_id)
-    )
-    carrier = result.scalar_one_or_none()
-
-    if not carrier:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Insurance carrier not found",
-        )
+    # M-10 FIX: the carrier must be global (practice_id IS NULL) or owned by
+    # this practice. Loading it by id alone let a patient policy hold a foreign
+    # key into another tenant's carrier row, which then surfaced that carrier's
+    # name, payer id and fee schedule through every policy read.
+    await require_carrier(db, insurance_data.carrier_id, current_user.practice_id)
 
     insurance = PatientInsurance(
         patient_id=patient_id,
-        **insurance_data.dict()
+        **insurance_data.model_dump(),
     )
 
     db.add(insurance)
@@ -272,42 +319,26 @@ async def create_patient_insurance(
 
 @router.put("/policies/{policy_id}", response_model=PatientInsuranceResponse)
 async def update_patient_insurance(
-    policy_id: str,
+    policy_id: UUID,
     insurance_data: PatientInsuranceUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> PatientInsuranceResponse:
-    """
-    Update patient insurance policy
-    """
-    result = await db.execute(
-        select(PatientInsurance).where(PatientInsurance.id == policy_id)
+    """Update a patient insurance policy owned by the current practice."""
+    insurance = await require_patient_insurance(
+        db, policy_id, current_user.practice_id
     )
-    insurance = result.scalar_one_or_none()
 
-    if not insurance:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Insurance policy not found",
-        )
-
-    # Verify patient belongs to practice
-    result = await db.execute(
-        select(Patient).where(
-            Patient.id == insurance.patient_id,
-            Patient.practice_id == current_user.practice_id,
-        )
-    )
-    patient = result.scalar_one_or_none()
-
-    if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied",
-        )
-
-    update_data = insurance_data.dict(exclude_unset=True)
+    update_data = insurance_data.model_dump(exclude_unset=True)
+    # M-10 FIX: the update path accepted carrier_id with no ownership check,
+    # so a policy could be repointed at another tenant's carrier after
+    # creation even once creation was hardened.
+    if "carrier_id" in update_data and update_data["carrier_id"] is not None:
+        await require_carrier(db, update_data["carrier_id"], current_user.practice_id)
+    # patient_id is not client-reassignable: moving a policy to another patient
+    # would silently transfer coverage records.
+    update_data.pop("patient_id", None)
     for field, value in update_data.items():
         setattr(insurance, field, value)
 
@@ -319,38 +350,36 @@ async def update_patient_insurance(
 
 @router.delete("/policies/{policy_id}")
 async def delete_patient_insurance(
-    policy_id: str,
+    policy_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
-) -> PatientInsuranceResponse:
-    """
-    Delete patient insurance policy
-    """
-    result = await db.execute(
-        select(PatientInsurance).where(PatientInsurance.id == policy_id)
+) -> dict[str, str]:
+    """Delete an unreferenced policy owned by the current practice."""
+    insurance = await require_patient_insurance(
+        db, policy_id, current_user.practice_id
     )
-    insurance = result.scalar_one_or_none()
 
-    if not insurance:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Insurance policy not found",
+    # Preserve referential integrity: policies with claims or pre-authorizations
+    # are historical financial records and cannot be physically removed.
+    claim_count = (
+        await db.execute(
+            select(func.count(InsuranceClaim.id)).where(
+                InsuranceClaim.patient_insurance_id == insurance.id
+            )
         )
-
-    # Verify patient belongs to practice
-    result = await db.execute(
-        select(Patient).where(
-            Patient.id == insurance.patient_id,
-            Patient.practice_id == current_user.practice_id,
+    ).scalar_one()
+    pre_auth_count = (
+        await db.execute(
+            select(func.count(InsurancePreAuthorization.id)).where(
+                InsurancePreAuthorization.patient_insurance_id == insurance.id
+            )
         )
-    )
-    patient = result.scalar_one_or_none()
-
-    if not patient:
+    ).scalar_one()
+    if claim_count or pre_auth_count:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied",
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Insurance policy with claims or pre-authorizations cannot be deleted; mark it inactive instead",
         )
 
     await db.delete(insurance)
@@ -367,29 +396,47 @@ async def list_claims(
     patient_id: Optional[str] = Query(None, description="Filter by patient"),
     start_date: Optional[date] = Query(None, description="Start date"),
     end_date: Optional[date] = Query(None, description="End date"),
+    limit: int = Query(50, ge=1, le=200, description="Page limit"),
+    offset: int = Query(0, ge=0, description="Page offset"),
     request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> InsuranceClaimListResponse:
-    """
-    List insurance claims
-    """
-    query = select(InsuranceClaim).where(InsuranceClaim.practice_id == current_user.practice_id)
+    """List insurance claims within a bounded practice-local date range."""
+    practice_tz = await get_practice_timezone(db, current_user.practice_id)
+    try:
+        date_range = resolve_date_range(
+            practice_tz,
+            start_date,
+            end_date,
+            default_days=366,
+        )
+    except DateRangeError as exc:
+        # ``status`` is a legacy public query parameter in this handler.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    # ``service_date`` is a date-only column, so use the resolver's inclusive
+    # practice-local calendar dates rather than its UTC timestamp bounds.
+    filters = [
+        InsuranceClaim.practice_id == current_user.practice_id,
+        InsuranceClaim.service_date >= date_range.start_date,
+        InsuranceClaim.service_date <= date_range.end_date,
+    ]
     if status:
-        query = query.where(InsuranceClaim.status == status)
-
+        filters.append(InsuranceClaim.status == status)
     if patient_id:
-        query = query.where(InsuranceClaim.patient_id == patient_id)
+        filters.append(InsuranceClaim.patient_id == patient_id)
 
-    if start_date:
-        query = query.where(InsuranceClaim.service_date >= start_date)
-
-    if end_date:
-        query = query.where(InsuranceClaim.service_date <= end_date)
-
-    query = query.order_by(InsuranceClaim.service_date.desc())
-
+    total = (
+        await db.execute(select(func.count(InsuranceClaim.id)).where(*filters))
+    ).scalar_one()
+    query = (
+        select(InsuranceClaim)
+        .where(*filters)
+        .order_by(InsuranceClaim.service_date.desc(), InsuranceClaim.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     result = await db.execute(query)
     claims = result.scalars().all()
 
@@ -399,9 +446,14 @@ async def list_claims(
     )
     await db.commit()
 
+    page_count = len(claims)
     return InsuranceClaimListResponse(
         claims=claims,
-        count=len(claims),
+        count=page_count,
+        total=total,
+        limit=limit,
+        offset=offset,
+        next_offset=offset + page_count if offset + page_count < total else None,
     )
 
 
@@ -415,44 +467,58 @@ async def create_claim(
     """
     Create insurance claim
     """
-    # Get patient insurance
-    result = await db.execute(
-        select(PatientInsurance).where(PatientInsurance.id == claim_data.patient_insurance_id)
+    # Ownership: the policy must belong to a patient in this practice.
+    # patient_id and carrier_id are derived from the policy rather than taken
+    # from the request, so the claim cannot pair mismatched entities.
+    patient_insurance = await require_patient_insurance(
+        db, claim_data.patient_insurance_id, current_user.practice_id
     )
-    patient_insurance = result.scalar_one_or_none()
+    # Generate the claim number under a per-practice advisory lock (same
+    # concurrency-safety pattern as billing invoice numbers — count+1
+    # numbering raced on uq_practice_claim_number under concurrent creates).
+    from app.core.database import row_locks_supported
+    is_postgres = row_locks_supported()
+    from app.core.business_time import business_date, day_bounds_utc
 
-    if not patient_insurance:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Patient insurance not found",
-        )
+    practice_tz = await get_practice_timezone(db, current_user.practice_id)
+    business_day = business_date(practice_tz)
+    day_start_utc, day_end_utc = day_bounds_utc(practice_tz, business_day)
 
-    # Verify patient belongs to practice
-    result = await db.execute(
-        select(Patient).where(
-            Patient.id == patient_insurance.patient_id,
-            Patient.practice_id == current_user.practice_id,
-        )
-    )
-    patient = result.scalar_one_or_none()
+    if is_postgres:
+        day_key = int(business_day.strftime("%Y%m%d"))
+        practice_int = int.from_bytes(
+            current_user.practice_id.bytes[:8], byteorder="big", signed=False
+        ) & 0x7FFFFFFFFFFFFFFF
+        lock_key = (practice_int ^ day_key) & 0x7FFFFFFFFFFFFFFF
+        await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
 
-    if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied",
-        )
-
-    # Generate claim number
-    today = datetime.now()
     claim_count = await db.execute(
         select(func.count(InsuranceClaim.id)).where(
             InsuranceClaim.practice_id == current_user.practice_id,
-            func.date(InsuranceClaim.created_at) == today.date()
+            InsuranceClaim.created_at >= day_start_utc,
+            InsuranceClaim.created_at < day_end_utc,
         )
     )
     count = claim_count.scalar() or 0
 
-    claim_number = f"CLM-{today.strftime('%Y%m%d')}-{count + 1:04d}"
+    seq = count + 1
+    while seq < count + 10000:
+        candidate = f"CLM-{business_day.strftime('%Y%m%d')}-{seq:04d}"
+        exists = await db.execute(
+            select(InsuranceClaim.id).where(
+                InsuranceClaim.practice_id == current_user.practice_id,
+                InsuranceClaim.claim_number == candidate,
+            )
+        )
+        if exists.scalar_one_or_none() is None:
+            claim_number = candidate
+            break
+        seq += 1
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not allocate a claim number",
+        )
 
     claim = InsuranceClaim(
         practice_id=current_user.practice_id,
@@ -474,16 +540,30 @@ async def create_claim(
     return claim
 
 
+_CLAIM_TRANSITIONS = {
+    ClaimStatus.DRAFT: {ClaimStatus.SUBMITTED, ClaimStatus.PENDING},
+    ClaimStatus.PENDING: {ClaimStatus.SUBMITTED, ClaimStatus.IN_REVIEW, ClaimStatus.DENIED},
+    ClaimStatus.SUBMITTED: {ClaimStatus.IN_REVIEW, ClaimStatus.APPROVED, ClaimStatus.PARTIALLY_APPROVED, ClaimStatus.DENIED, ClaimStatus.PAID},
+    ClaimStatus.IN_REVIEW: {ClaimStatus.APPROVED, ClaimStatus.PARTIALLY_APPROVED, ClaimStatus.DENIED, ClaimStatus.PAID},
+    ClaimStatus.APPROVED: {ClaimStatus.PAID, ClaimStatus.PARTIALLY_APPROVED},
+    ClaimStatus.PARTIALLY_APPROVED: {ClaimStatus.PAID, ClaimStatus.APPEALED},
+    ClaimStatus.DENIED: {ClaimStatus.APPEALED},
+    ClaimStatus.APPEALED: {ClaimStatus.IN_REVIEW, ClaimStatus.APPROVED, ClaimStatus.PARTIALLY_APPROVED, ClaimStatus.DENIED, ClaimStatus.PAID},
+    ClaimStatus.PAID: set(),  # Terminal state
+}
+
+
 @router.put("/claims/{claim_id}", response_model=InsuranceClaimResponse)
 async def update_claim(
     claim_id: UUID,
     claim_data: InsuranceClaimUpdate,
+    request: Request = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> InsuranceClaimResponse:
     """
-    Update insurance claim
+    Update insurance claim with strict status transition and amount bounds validation
     """
     result = await db.execute(
         select(InsuranceClaim).where(
@@ -500,8 +580,38 @@ async def update_claim(
         )
 
     update_data = claim_data.dict(exclude_unset=True)
+
+    # Validate status transitions
+    new_status = update_data.get("status")
+    if new_status and new_status != claim.status:
+        allowed = _CLAIM_TRANSITIONS.get(claim.status, set())
+        if new_status not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid claim status transition from {claim.status} to {new_status}",
+            )
+
+    # Validate paid_amount bounds
+    paid_amt = update_data.get("paid_amount")
+    if paid_amt is not None:
+        if paid_amt < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Paid amount cannot be negative",
+            )
+        if claim.billed_amount is not None and paid_amt > claim.billed_amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Paid amount cannot exceed billed amount",
+            )
+
     for field, value in update_data.items():
         setattr(claim, field, value)
+
+    # HIPAA: Audit log claim update before committing
+    await log_audit_event(
+        db, current_user, "update_insurance_claim", "insurance_claim", claim.id, request, update_data
+    )
 
     await db.commit()
     await db.refresh(claim)
@@ -549,17 +659,22 @@ async def submit_claim(
         )
     )
     patient = patient_result.scalar_one_or_none()
-    insurance_result = await db.execute(
-        select(PatientInsurance).where(
-            PatientInsurance.id == claim.patient_insurance_id,
-            PatientInsurance.patient_id == claim.patient_id,
+    # L-11 FIX: route linked rows through the tenant validators instead of
+    # bare id lookups — the policy must belong to this practice's patient
+    # (H-02) and the carrier must be global-or-mine (M-10).
+    from app.services.tenant_refs import require_carrier, require_patient_insurance
+
+    try:
+        patient_insurance = await require_patient_insurance(
+            db,
+            claim.patient_insurance_id,
+            current_user.practice_id,
+            patient_id=claim.patient_id,
         )
-    )
-    patient_insurance = insurance_result.scalar_one_or_none()
-    carrier_result = await db.execute(
-        select(InsuranceCarrier).where(InsuranceCarrier.id == claim.carrier_id)
-    )
-    carrier = carrier_result.scalar_one_or_none()
+        carrier = await require_carrier(db, claim.carrier_id, current_user.practice_id)
+    except HTTPException:
+        patient_insurance = None
+        carrier = None
 
     if not patient or not patient_insurance or not carrier:
         raise HTTPException(
@@ -659,7 +774,7 @@ async def submit_claim(
         )
 
     claim.status = ClaimStatus.SUBMITTED
-    claim.submission_date = datetime.now().date()
+    claim.submission_date = datetime.now(timezone.utc).date()
     claim.edi_transaction_id = str(external_claim_id)
     claim.confirmation_number = str(
         provider_data.get("confirmationNumber") or external_claim_id
@@ -679,29 +794,36 @@ async def submit_claim(
 @router.get("/eligibility/", response_model=EligibilityListResponse)
 async def list_eligibility(
     patient_id: Optional[str] = Query(None, description="Filter by patient"),
+    limit: int = Query(50, ge=1, le=200, description="Page limit"),
+    offset: int = Query(0, ge=0, description="Page offset"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
 ) -> EligibilityListResponse:
-    """
-    List eligibility records for the current practice
-    """
-    query = select(Eligibility)
+    """List paginated eligibility records for the current practice."""
+    # Tenant filter stays in SQL; apply the identical filters to the total and
+    # page queries so metadata cannot leak or overcount another practice.
+    filters = [Patient.practice_id == current_user.practice_id]
     if patient_id:
-        query = query.where(Eligibility.patient_id == patient_id)
+        filters.append(Eligibility.patient_id == patient_id)
+
+    total = (
+        await db.execute(
+            select(func.count(Eligibility.id))
+            .join(Patient, Eligibility.patient_id == Patient.id)
+            .where(*filters)
+        )
+    ).scalar_one()
+    query = (
+        select(Eligibility)
+        .join(Patient, Eligibility.patient_id == Patient.id)
+        .where(*filters)
+        .order_by(Eligibility.verified_at.desc(), Eligibility.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     result = await db.execute(query)
     eligibilities = result.scalars().all()
-    filtered = []
-    for e in eligibilities:
-        result = await db.execute(
-            select(Patient).where(
-                Patient.id == e.patient_id,
-                Patient.practice_id == current_user.practice_id,
-            )
-        )
-        patient = result.scalar_one_or_none()
-        if patient:
-            filtered.append(e)
 
     # HIPAA: Log eligibility access
     await log_audit_event(
@@ -709,39 +831,54 @@ async def list_eligibility(
     )
     await db.commit()
 
+    page_count = len(eligibilities)
     return EligibilityListResponse(
-        eligibilities=filtered,
-        count=len(filtered),
+        eligibilities=eligibilities,
+        count=page_count,
+        total=total,
+        limit=limit,
+        offset=offset,
+        next_offset=offset + page_count if offset + page_count < total else None,
     )
 
 # New Endpoints for Explanation of Benefits (EOB)
 @router.get("/eobs/", response_model=ExplanationOfBenefitsListResponse)
 async def list_eobs(
     claim_id: Optional[str] = Query(None, description="Filter by claim"),
+    limit: int = Query(50, ge=1, le=200, description="Page limit"),
+    offset: int = Query(0, ge=0, description="Page offset"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
 ) -> ExplanationOfBenefitsListResponse:
-    """
-    List Explanation of Benefits for the current practice
-    """
-    query = select(ExplanationOfBenefits)
+    """List paginated Explanation of Benefits for the current practice."""
+    filters = [InsuranceClaim.practice_id == current_user.practice_id]
     if claim_id:
-        query = query.where(ExplanationOfBenefits.claim_id == claim_id)
+        filters.append(ExplanationOfBenefits.claim_id == claim_id)
+
+    total = (
+        await db.execute(
+            select(func.count(ExplanationOfBenefits.id))
+            .join(
+                InsuranceClaim,
+                ExplanationOfBenefits.claim_id == InsuranceClaim.id,
+            )
+            .where(*filters)
+        )
+    ).scalar_one()
+    query = (
+        select(ExplanationOfBenefits)
+        .join(
+            InsuranceClaim,
+            ExplanationOfBenefits.claim_id == InsuranceClaim.id,
+        )
+        .where(*filters)
+        .order_by(ExplanationOfBenefits.generated_at.desc(), ExplanationOfBenefits.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     result = await db.execute(query)
     eobs = result.scalars().all()
-    filtered = []
-    for eob in eobs:
-        # Verify claim belongs to practice
-        result = await db.execute(
-            select(InsuranceClaim).where(
-                InsuranceClaim.id == eob.claim_id,
-                InsuranceClaim.practice_id == current_user.practice_id,
-            )
-        )
-        claim = result.scalar_one_or_none()
-        if claim:
-            filtered.append(eob)
 
     # HIPAA: Log EOB access
     await log_audit_event(
@@ -749,46 +886,61 @@ async def list_eobs(
     )
     await db.commit()
 
+    page_count = len(eobs)
     return ExplanationOfBenefitsListResponse(
-        eobs=filtered,
-        count=len(filtered),
+        eobs=eobs,
+        count=page_count,
+        total=total,
+        limit=limit,
+        offset=offset,
+        next_offset=offset + page_count if offset + page_count < total else None,
     )
 
 @router.get("/pre-auth/", response_model=PreAuthorizationListResponse)
 async def list_pre_authorizations(
     patient_id: Optional[str] = Query(None, description="Filter by patient"),
-    status: Optional[str] = Query(None, description="Filter by status"),
+    status: Optional[PreAuthorizationStatus] = Query(
+        None, description="Filter by status"
+    ),
+    limit: int = Query(50, ge=1, le=200, description="Page limit"),
+    offset: int = Query(0, ge=0, description="Page offset"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
 ) -> PreAuthorizationListResponse:
-    """
-    List pre-authorizations
-    """
-    query = select(InsurancePreAuthorization)
-
+    """List paginated pre-authorizations for the current practice."""
+    filters = [Patient.practice_id == current_user.practice_id]
     if patient_id:
-        query = query.where(InsurancePreAuthorization.patient_id == patient_id)
-
+        filters.append(InsurancePreAuthorization.patient_id == patient_id)
     if status:
-        query = query.where(InsurancePreAuthorization.status == status)
+        filters.append(InsurancePreAuthorization.status == status)
 
-    query = query.order_by(InsurancePreAuthorization.request_date.desc())
-
+    total = (
+        await db.execute(
+            select(func.count(InsurancePreAuthorization.id))
+            .join(
+                Patient,
+                InsurancePreAuthorization.patient_id == Patient.id,
+            )
+            .where(*filters)
+        )
+    ).scalar_one()
+    query = (
+        select(InsurancePreAuthorization)
+        .join(
+            Patient,
+            InsurancePreAuthorization.patient_id == Patient.id,
+        )
+        .where(*filters)
+        .order_by(
+            InsurancePreAuthorization.request_date.desc(),
+            InsurancePreAuthorization.id.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
+    )
     result = await db.execute(query)
     pre_auths = result.scalars().all()
-
-    # Filter by practice (through patient)
-    filtered_pre_auths = []
-    for pre_auth in pre_auths:
-        result = await db.execute(
-            select(Patient).where(
-                Patient.id == pre_auth.patient_id,
-                Patient.practice_id == current_user.practice_id,
-            )
-        )
-        if result.scalar_one_or_none():
-            filtered_pre_auths.append(pre_auth)
 
     # HIPAA: Log pre-auth access
     await log_audit_event(
@@ -796,9 +948,14 @@ async def list_pre_authorizations(
     )
     await db.commit()
 
+    page_count = len(pre_auths)
     return PreAuthorizationListResponse(
-        pre_authorizations=filtered_pre_auths,
-        count=len(filtered_pre_auths),
+        pre_authorizations=pre_auths,
+        count=page_count,
+        total=total,
+        limit=limit,
+        offset=offset,
+        next_offset=offset + page_count if offset + page_count < total else None,
     )
 
 
@@ -812,44 +969,27 @@ async def create_pre_authorization(
     """
     Create pre-authorization request
     """
-    # Get patient insurance
-    result = await db.execute(
-        select(PatientInsurance).where(PatientInsurance.id == pre_auth_data.patient_insurance_id)
+    # Ownership: the policy must belong to a patient in this practice.
+    # patient_id is derived from the policy, not the request.
+    patient_insurance = await require_patient_insurance(
+        db, pre_auth_data.patient_insurance_id, current_user.practice_id
     )
-    patient_insurance = result.scalar_one_or_none()
+    # Generate a collision-resistant authorization number. The stored number is
+    # a server identifier, not a user-supplied payer authorization value.
+    today = datetime.now(timezone.utc)
+    auth_number = f"PA-{today.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}"
 
-    if not patient_insurance:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Patient insurance not found",
-        )
-
-    # Verify patient belongs to practice
-    result = await db.execute(
-        select(Patient).where(
-            Patient.id == patient_insurance.patient_id,
-            Patient.practice_id == current_user.practice_id,
-        )
+    # The legacy model stores procedure codes as JSON text; normalize at the
+    # API boundary without changing the database representation.
+    procedure_codes_json = json.dumps(
+        [pc.model_dump(mode="json") for pc in pre_auth_data.procedure_codes]
     )
-    patient = result.scalar_one_or_none()
-
-    if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied",
-        )
-
-    # Generate authorization number
-    today = datetime.now()
-    auth_number = f"PA-{today.strftime('%Y%m%d')}-{patient_insurance.patient_id[:8]}"
-
-    # Convert procedure codes to JSON string
-    procedure_codes_json = json.dumps([pc.dict() for pc in pre_auth_data.procedure_codes])
 
     pre_auth = InsurancePreAuthorization(
         patient_id=patient_insurance.patient_id,
         patient_insurance_id=pre_auth_data.patient_insurance_id,
         authorization_number=auth_number,
+        request_date=pre_auth_data.request_date,
         procedure_codes=procedure_codes_json,
         estimated_cost=pre_auth_data.estimated_cost,
         notes=pre_auth_data.notes,
@@ -863,9 +1003,6 @@ async def create_pre_authorization(
 
 
 # Fee Schedule Endpoints
-
-from app.models.insurance import FeeSchedule, FeeScheduleEntry
-from app.schemas.insurance import FeeScheduleCreate, FeeScheduleResponse, FeeScheduleListResponse
 
 @router.get("/fee-schedules/", response_model=FeeScheduleListResponse)
 async def list_fee_schedules(
@@ -929,42 +1066,18 @@ async def create_fee_schedule(
 
 @router.put("/pre-auth/{pre_auth_id}", response_model=PreAuthorizationResponse)
 async def update_pre_authorization(
-    pre_auth_id: str,
+    pre_auth_id: UUID,
     pre_auth_data: PreAuthorizationUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _csrf: bool = Depends(verify_csrf),
 ) -> PreAuthorizationResponse:
-    """
-    Update pre-authorization
-    """
-    result = await db.execute(
-        select(InsurancePreAuthorization).where(InsurancePreAuthorization.id == pre_auth_id)
+    """Update a pre-authorization owned by the current practice."""
+    pre_auth = await require_pre_authorization(
+        db, pre_auth_id, current_user.practice_id
     )
-    pre_auth = result.scalar_one_or_none()
 
-    if not pre_auth:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Pre-authorization not found",
-        )
-
-    # Verify patient belongs to practice
-    result = await db.execute(
-        select(Patient).where(
-            Patient.id == pre_auth.patient_id,
-            Patient.practice_id == current_user.practice_id,
-        )
-    )
-    patient = result.scalar_one_or_none()
-
-    if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied",
-        )
-
-    update_data = pre_auth_data.dict(exclude_unset=True)
+    update_data = pre_auth_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(pre_auth, field, value)
 

@@ -40,6 +40,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
+    npi = Column(String(20), nullable=True)  # National Provider Identifier (EDI claims)
     role = Column(Enum(UserRole), nullable=False)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
     is_active = Column(Boolean, default=True)
@@ -53,10 +54,27 @@ class User(Base):
     # SECURITY: Email verification
     is_email_verified = Column(Boolean, default=False, nullable=False)
     email_verification_token = Column(String(255), nullable=True)
+    # Expiry for the hashed verification token above (NULL = legacy rows)
+    email_verification_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+    # M1 FIX: accounts created through the staff-invitation accept flow must
+    # verify their inbox before they can sign in (the 72h invite token is not
+    # proof of email ownership). Self-registered accounts keep the documented
+    # grace period; this flag makes the gate immediate instead.
+    email_verification_required = Column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
 
     # Password reset tokens are now stored in separate table for security
     # See PasswordResetToken model
     password_changed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # First-login security: admin-provisioned accounts start with True
+    # (the admin hands out the temporary password). API access is gated
+    # to the password-change endpoints until the user rotates it; a
+    # self-service change clears it, an admin password reset re-arms it.
+    # Invitation-accepted accounts set their own password and start False.
+    must_change_password = Column(Boolean, default=False, nullable=False)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

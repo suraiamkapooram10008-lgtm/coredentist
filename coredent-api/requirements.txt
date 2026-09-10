@@ -21,8 +21,8 @@ bcrypt>=4.2.0,<5.0.0
 python-multipart>=0.0.9,<0.1.0
 
 # Encryption (for API keys and sensitive data)
-# SECURITY: bumped from 42.0.0 (CVE-2024-26130, CVE-2024-12797) to 44.x
-cryptography>=48.0.1,<50.0.0
+# SECURITY: bumped past 49.0.0 (PYSEC-2026-3552) to 50.x for vulnerability fix
+cryptography>=50.0.0,<51.0.0
 
 # Validation
 pydantic>=2.10.0,<3.0.0
@@ -41,7 +41,7 @@ boto3>=1.35.0,<2.0.0
 
 # File type detection (for secure uploads)
 python-magic>=0.4.27,<0.5.0
-python-magic-bin>=0.4.14,<0.5.0  # Windows binary for python-magic
+python-magic-bin>=0.4.14,<0.5.0; sys_platform == "win32"  # Windows binary for python-magic
 
 # Virus Scanning (for file uploads security)
 clamd>=1.0.0,<2.0.0  # ClamAV integration
@@ -56,8 +56,9 @@ razorpay>=1.4.2,<2.0.0
 # Insurance EDI
 requests>=2.32.0,<3.0.0
 
-# Email
-fastapi-mail>=1.4.1,<2.0.0
+# Email (custom SMTP/SendGrid/SES implementation in app.core.email — no
+# fastapi-mail dependency; it was removed because its hard pin
+# `cryptography<50.0.0` blocked the PYSEC-2026-3552 fix in cryptography)
 
 # Testing
 pytest>=9.0.3,<10.0.0
@@ -85,7 +86,7 @@ mkdocs-material>=9.5.6,<10.0.0
 # Utilities
 python-dotenv>=1.0.1,<2.0.0
 pytz>=2024.1,<2025.0
-setuptools>=78.1.1,<83.0.0  # Required by razorpay (provides pkg_resources)
+setuptools>=83.0.0,<84.0.0  # Required by razorpay; >=83 fixes PYSEC-2026-3447
 
 # SMS Service
 twilio>=9.0.0,<10.0.0

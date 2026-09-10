@@ -1,13 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
+import { apiClient } from "@/services/api";
 import { useApi } from "../useApi";
 
 describe("useApi Hook", () => {
   beforeEach(() => {
+    apiClient.setToken(null);
+    apiClient.setRefreshToken(null);
     vi.stubGlobal('fetch', vi.fn());
   });
 
   afterEach(() => {
+    apiClient.setToken(null);
+    apiClient.setRefreshToken(null);
     vi.unstubAllGlobals();
   });
 
@@ -22,8 +27,9 @@ describe("useApi Hook", () => {
     expect(result.current.error).toBeNull();
   });
 
-  it("should handle successful data fetch", async () => {
+  it("should handle successful data fetch through the standard API client", async () => {
     const mockData = { id: 1, name: "Test" };
+    apiClient.setToken("access-token");
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response(JSON.stringify(mockData), { status: 200 })
     );
@@ -36,6 +42,13 @@ describe("useApi Hook", () => {
 
     expect(result.current.data).toEqual(mockData);
     expect(result.current.error).toBeNull();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/test$/),
+      expect.objectContaining({
+        credentials: "include",
+        headers: expect.objectContaining({ Authorization: "Bearer access-token" }),
+      }),
+    );
   });
 
   it("should handle errors", async () => {
@@ -51,7 +64,7 @@ describe("useApi Hook", () => {
     expect(result.current.error?.message).toBe("Network failure");
   });
 
-  it("should handle HTTP error responses", async () => {
+  it("should surface structured API error messages", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response(JSON.stringify({ error: "Not found" }), { status: 404 })
     );
@@ -63,7 +76,7 @@ describe("useApi Hook", () => {
     });
 
     expect(result.current.error).toBeInstanceOf(Error);
-    expect(result.current.error?.message).toContain("404");
+    expect(result.current.error?.message).toBe("Not found");
   });
 
   it("should refetch data when calling refetch", async () => {

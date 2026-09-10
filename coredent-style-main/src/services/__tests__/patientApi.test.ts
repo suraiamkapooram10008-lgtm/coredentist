@@ -207,23 +207,46 @@ describe('patientApi', () => {
   });
 
   describe('getAppointmentHistory', () => {
-    it('returns history items', async () => {
+    it('returns history items from the patient-filtered appointments list', async () => {
       server.use(
-        http.get('/api/v1/patients/p-1/appointments', () =>
-          HttpResponse.json([
-            {
-              id: 'a-1',
-              date: '2026-05-01',
-              type: 'cleaning',
-              provider: 'Dr. Smith',
-              status: 'completed',
-            },
-          ]),
-        ),
+        http.get('/api/v1/appointments', ({ request }) => {
+          const url = new URL(request.url);
+          expect(url.searchParams.get('patient_id')).toBe('p-1');
+          return HttpResponse.json({
+            appointments: [
+              {
+                id: 'a-1',
+                patient_id: 'p-1',
+                patient_name: 'John Doe',
+                provider_id: 'doc-1',
+                provider_name: 'Dr. Smith',
+                chair_id: 'chair-1',
+                operatory_id: 'chair-1',
+                operatory_name: 'Operatory 1',
+                appointment_type: 'cleaning',
+                type: 'cleaning',
+                status: 'COMPLETED',
+                start_time: '2026-05-01T14:30:00Z',
+                end_time: '2026-05-01T15:00:00Z',
+                duration: 30,
+                notes: null,
+                practice_id: 'x-1',
+                created_at: '2026-05-01T14:00:00Z',
+                updated_at: '2026-05-01T14:00:00Z',
+              },
+            ],
+            count: 1,
+          });
+        }),
       );
       const result = await patientApi.getAppointmentHistory('p-1');
       expect(result).toHaveLength(1);
-      expect(result[0].provider).toBe('Dr. Smith');
+      expect(result[0].id).toBe('a-1');
+      expect(result[0].providerName).toBe('Dr. Smith');
+      expect(result[0].appointmentTypeName).toBe('cleaning');
+      expect(result[0].status).toBe('completed');
+      expect(result[0].date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(result[0].chairName).toBe('Operatory 1');
     });
   });
 });

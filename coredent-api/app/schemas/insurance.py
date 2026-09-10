@@ -4,13 +4,13 @@ Pydantic models for insurance data validation
 """
 
 from datetime import datetime, date
-from typing import Optional, List
-from pydantic import BaseModel, Field
+import json
+from typing import Literal, Optional, List
+from pydantic import BaseModel, Field, field_validator
 from uuid import UUID
 from decimal import Decimal
 
 from app.models.insurance import (
-    InsuranceType,
     ClaimStatus,
     RelationshipToSubscriber,
 )
@@ -78,62 +78,78 @@ class InsuranceCarrierListResponse(BaseModel):
 # Patient Insurance Schemas
 
 class PatientInsuranceBase(BaseModel):
-    """Base patient insurance schema"""
+    """Writable patient insurance fields backed by PatientInsurance columns."""
     carrier_id: UUID
-    insurance_type: InsuranceType = InsuranceType.PRIMARY
-    subscriber_id: str = Field(..., min_length=1, max_length=50)
-    group_number: Optional[str] = Field(None, max_length=50)
+    subscriber_id: str = Field(..., min_length=1, max_length=100)
+    group_number: Optional[str] = Field(None, max_length=100)
     relationship_to_subscriber: RelationshipToSubscriber = RelationshipToSubscriber.SELF
-    subscriber_first_name: Optional[str] = Field(None, max_length=100)
-    subscriber_last_name: Optional[str] = Field(None, max_length=100)
-    subscriber_dob: Optional[date] = None
-    subscriber_ssn: Optional[str] = Field(None, max_length=11)
-    effective_date: Optional[date] = None
-    termination_date: Optional[date] = None
+    is_primary: bool = True
+    is_active: bool = True
+    coverage_type: Optional[str] = Field(None, max_length=50)
     annual_maximum: Optional[Decimal] = Field(None, ge=0)
     annual_deductible: Optional[Decimal] = Field(None, ge=0)
-    deductible_met: Decimal = Field(Decimal('0.0'), ge=0)
+    deductible_met: Decimal = Field(Decimal("0.0"), ge=0)
+    benefits_used: Decimal = Field(Decimal("0.0"), ge=0)
     preventive_coverage: int = Field(100, ge=0, le=100)
     basic_coverage: int = Field(80, ge=0, le=100)
     major_coverage: int = Field(50, ge=0, le=100)
-    employer_name: Optional[str] = Field(None, max_length=255)
-    notes: Optional[str] = None
-    is_active: bool = True
+    ortho_coverage: int = Field(0, ge=0, le=100)
+    effective_date: Optional[date] = None
+    expiration_date: Optional[date] = None
 
 
 class PatientInsuranceCreate(PatientInsuranceBase):
-    """Schema for creating patient insurance"""
-    pass
+    """Schema for creating patient insurance."""
 
 
 class PatientInsuranceUpdate(BaseModel):
-    """Schema for updating patient insurance"""
+    """Writable patient insurance fields for partial updates."""
     carrier_id: Optional[UUID] = None
-    insurance_type: Optional[InsuranceType] = None
-    subscriber_id: Optional[str] = Field(None, min_length=1, max_length=50)
-    group_number: Optional[str] = None
+    subscriber_id: Optional[str] = Field(None, min_length=1, max_length=100)
+    group_number: Optional[str] = Field(None, max_length=100)
     relationship_to_subscriber: Optional[RelationshipToSubscriber] = None
-    subscriber_first_name: Optional[str] = None
-    subscriber_last_name: Optional[str] = None
-    subscriber_dob: Optional[date] = None
-    subscriber_ssn: Optional[str] = None
-    effective_date: Optional[date] = None
-    termination_date: Optional[date] = None
-    annual_maximum: Optional[Decimal] = None
-    annual_deductible: Optional[Decimal] = None
-    deductible_met: Optional[Decimal] = None
+    is_primary: Optional[bool] = None
+    is_active: Optional[bool] = None
+    coverage_type: Optional[str] = Field(None, max_length=50)
+    annual_maximum: Optional[Decimal] = Field(None, ge=0)
+    annual_deductible: Optional[Decimal] = Field(None, ge=0)
+    deductible_met: Optional[Decimal] = Field(None, ge=0)
+    benefits_used: Optional[Decimal] = Field(None, ge=0)
     preventive_coverage: Optional[int] = Field(None, ge=0, le=100)
     basic_coverage: Optional[int] = Field(None, ge=0, le=100)
     major_coverage: Optional[int] = Field(None, ge=0, le=100)
-    employer_name: Optional[str] = None
-    notes: Optional[str] = None
-    is_active: Optional[bool] = None
+    ortho_coverage: Optional[int] = Field(None, ge=0, le=100)
+    effective_date: Optional[date] = None
+    expiration_date: Optional[date] = None
+
+    @field_validator(
+        "carrier_id",
+        "subscriber_id",
+        "relationship_to_subscriber",
+        "is_primary",
+        "is_active",
+        "deductible_met",
+        "benefits_used",
+        "preventive_coverage",
+        "basic_coverage",
+        "major_coverage",
+        "ortho_coverage",
+    )
+    @classmethod
+    def reject_null_required_columns(cls, value):
+        """Omission means unchanged; explicit null cannot clear required policy data."""
+        if value is None:
+            raise ValueError("field cannot be null")
+        return value
 
 
 class PatientInsuranceResponse(PatientInsuranceBase):
-    """Schema for patient insurance response"""
+    """Schema for patient insurance response."""
     id: UUID
     patient_id: UUID
+    verified: bool
+    verified_at: Optional[datetime]
+    verified_by: Optional[UUID]
     created_at: datetime
     updated_at: datetime
 
@@ -185,6 +201,20 @@ class InsuranceClaimUpdate(BaseModel):
     notes: Optional[str] = None
     denial_reason: Optional[str] = None
 
+    @field_validator(
+        "status",
+        "deductible_amount",
+        "copay_amount",
+        "paid_amount",
+        "patient_responsibility",
+    )
+    @classmethod
+    def reject_null_required_columns(cls, value):
+        """Prevent response-validation failures from nulling required model values."""
+        if value is None:
+            raise ValueError("field cannot be null")
+        return value
+
 
 class InsuranceClaimResponse(InsuranceClaimBase):
     """Schema for insurance claim response"""
@@ -215,42 +245,68 @@ class InsuranceClaimResponse(InsuranceClaimBase):
 
 
 class InsuranceClaimListResponse(BaseModel):
-    """Schema for list of insurance claims"""
+    """Schema for a paginated list of insurance claims."""
     claims: List[InsuranceClaimResponse]
     count: int
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+    next_offset: Optional[int] = None
 
 
 # Pre-Authorization Schemas
 
+PreAuthorizationStatus = Literal["pending", "approved", "denied"]
+
+
 class PreAuthorizationBase(BaseModel):
-    """Base pre-authorization schema"""
+    """Base pre-authorization schema."""
     patient_insurance_id: UUID
     request_date: date
     procedure_codes: List[ProcedureCode]
     estimated_cost: Decimal = Field(..., gt=0)
     notes: Optional[str] = None
 
+    @field_validator("procedure_codes", mode="before")
+    @classmethod
+    def parse_stored_procedure_codes(cls, value):
+        """Normalize the model's legacy Text JSON storage to the API list shape."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = json.loads(value)
+        if not isinstance(value, list):
+            raise ValueError("procedure_codes must be a JSON array")
+        return value
+
 
 class PreAuthorizationCreate(PreAuthorizationBase):
-    """Schema for creating pre-authorization"""
-    pass
+    """Schema for creating a pre-authorization."""
 
 
 class PreAuthorizationUpdate(BaseModel):
-    """Schema for updating pre-authorization"""
-    status: Optional[str] = None
+    """Schema for updating a pre-authorization."""
+    status: Optional[PreAuthorizationStatus] = None
     approval_date: Optional[date] = None
     expiration_date: Optional[date] = None
     approved_amount: Optional[Decimal] = Field(None, ge=0)
     notes: Optional[str] = None
 
+    @field_validator("status")
+    @classmethod
+    def reject_null_status(cls, value):
+        """Omitted status is unchanged; explicit null is never a valid status."""
+        if value is None:
+            raise ValueError("field cannot be null")
+        return value
+
 
 class PreAuthorizationResponse(PreAuthorizationBase):
-    """Schema for pre-authorization response"""
+    """Schema for pre-authorization response."""
     id: UUID
     patient_id: UUID
     authorization_number: str
-    status: str
+    status: PreAuthorizationStatus
     approval_date: Optional[date]
     expiration_date: Optional[date]
     approved_amount: Optional[Decimal]
@@ -262,9 +318,13 @@ class PreAuthorizationResponse(PreAuthorizationBase):
 
 
 class PreAuthorizationListResponse(BaseModel):
-    """Schema for list of pre-authorizations"""
+    """Schema for a paginated list of pre-authorizations."""
     pre_authorizations: List[PreAuthorizationResponse]
     count: int
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+    next_offset: Optional[int] = None
 
 # Eligibility Schemas
 class EligibilityResponse(BaseModel):
@@ -283,9 +343,13 @@ class EligibilityResponse(BaseModel):
         from_attributes = True
 
 class EligibilityListResponse(BaseModel):
-    """Schema for list of eligibility results"""
+    """Schema for a paginated list of eligibility results."""
     eligibilities: List[EligibilityResponse]
     count: int
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+    next_offset: Optional[int] = None
 
 # Explanation of Benefits (EOB) Schemas
 class ExplanationOfBenefitsResponse(BaseModel):
@@ -300,9 +364,13 @@ class ExplanationOfBenefitsResponse(BaseModel):
         from_attributes = True
 
 class ExplanationOfBenefitsListResponse(BaseModel):
-    """Schema for list of EOBs"""
+    """Schema for a paginated list of EOBs."""
     eobs: List[ExplanationOfBenefitsResponse]
     count: int
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+    next_offset: Optional[int] = None
 
 
 # Insurance Verification Schemas

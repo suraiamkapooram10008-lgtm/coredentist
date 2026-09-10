@@ -1,9 +1,6 @@
 """Tests for staff management endpoints (Pydantic validation, RBAC)"""
 import pytest
-from uuid import uuid4
-from app.models.user import UserRole
 
-pytestmark = pytest.mark.asyncio
 
 
 class TestStaffPydanticValidation:

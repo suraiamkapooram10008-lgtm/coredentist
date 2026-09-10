@@ -349,7 +349,7 @@ railway init --name $TEST_ENV
 
 # Restore latest backup
 aws s3 cp s3://coredent-backups-prod/database/latest.dump /tmp/dr-test.dump
-pg_restore -h $TEST_DB_HOST -U $TEST_DB_USER -d $TEST_DB_NAME -c /tmp/dr_test.dump
+pg_restore -h $TEST_DB_HOST -U $TEST_DB_USER -d $TEST_DB_NAME -c /tmp/dr-test.dump
 
 # Deploy application
 cd coredent-api

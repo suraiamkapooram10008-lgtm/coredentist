@@ -3,7 +3,7 @@
 // Comprehensive view of patient records
 // ============================================
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/auth-context';
 import { 
@@ -15,10 +15,11 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { AlertTriangle, ChevronRight, CalendarPlus } from 'lucide-react';
+import { AlertTriangle, ChevronRight, CalendarPlus, Download, Loader2 } from 'lucide-react';
 
 // Components & Hooks
 import { patientsApi } from '@/services/api';
+import { patientApi, type PatientAppointmentHistoryItem } from '@/services/patientApi';
 import { useApiRequest } from '@/hooks/useApiRequest';
 import { PatientProfileHeader } from '@/components/patients/PatientProfileHeader';
 import { PatientQuickStats } from '@/components/patients/PatientQuickStats';
@@ -50,6 +51,14 @@ export default function PatientProfile() {
     [id],
   );
 
+  // Stable options object: inline object literals here previously gave the
+  // useApiRequest `execute` callback a fresh dependency every render, which
+  // made the load effect below refetch forever.
+  const loadOptions = useMemo(
+    () => ({ errorMessage: 'Failed to load patient profile' }),
+    [],
+  );
+
   // API Hooks
   const {
     data: patient,
@@ -57,9 +66,7 @@ export default function PatientProfile() {
     error,
     execute: loadPatient,
     setData: setPatient
-  } = useApiRequest<PatientRecord>(fetchPatient, {
-    errorMessage: 'Failed to load patient profile'
-  });
+  } = useApiRequest<PatientRecord>(fetchPatient, loadOptions);
 
   const { execute: updateStatus } = useApiRequest<PatientRecord>(
     ((status: unknown) =>
@@ -70,6 +77,25 @@ export default function PatientProfile() {
     }
   );
 
+  const { execute: exportData, isLoading: isExporting } = useApiRequest<any>(
+    (() => patientsApi.exportData(id!) as Promise<any>),
+    {
+      successMessage: 'Patient data exported successfully',
+      errorMessage: 'Failed to export patient data',
+      onSuccess: (data) => {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `patient-export-${patient?.firstName || 'Unknown'}-${patient?.lastName || 'Patient'}-${id}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+    }
+  );
+
   useEffect(() => {
     if (id) {
       loadPatient();
@@ -77,6 +103,31 @@ export default function PatientProfile() {
       navigate('/patients');
     }
   }, [id, loadPatient, navigate]);
+
+  // Appointment history for the Appointments tab (real data via the
+  // patient-filtered appointments list — previously hardcoded to []).
+  const [appointmentHistory, setAppointmentHistory] = useState<PatientAppointmentHistoryItem[]>([]);
+  const [isLoadingAppointments, setIsLoadingAppointments] = useState(false);
+
+  useEffect(() => {
+    if (!id) return;
+    let isActive = true;
+    const loadHistory = async () => {
+      setIsLoadingAppointments(true);
+      try {
+        const history = await patientApi.getAppointmentHistory(id);
+        if (isActive) setAppointmentHistory(history);
+      } catch {
+        if (isActive) setAppointmentHistory([]);
+      } finally {
+        if (isActive) setIsLoadingAppointments(false);
+      }
+    };
+    loadHistory();
+    return () => {
+      isActive = false;
+    };
+  }, [id]);
 
   if (isLoading) {
     return (
@@ -124,14 +175,28 @@ export default function PatientProfile() {
             {patient.firstName} {patient.lastName}
           </span>
         </nav>
-        <Button
-          size="sm"
-          onClick={() => navigate(`/schedule?patientId=${patient.id}&patientName=${encodeURIComponent(patient.firstName + ' ' + patient.lastName)}`)}
-          className="flex items-center gap-2"
-        >
-          <CalendarPlus className="h-4 w-4" />
-          Schedule Appointment
-        </Button>
+        <div className="flex items-center gap-2">
+          {user?.role && ['owner', 'admin'].includes(user.role.toLowerCase()) && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => exportData()}
+              disabled={isExporting}
+              className="flex items-center gap-2"
+            >
+              {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              GDPR Export
+            </Button>
+          )}
+          <Button
+            size="sm"
+            onClick={() => navigate(`/schedule?patientId=${patient.id}&patientName=${encodeURIComponent(patient.firstName + ' ' + patient.lastName)}`)}
+            className="flex items-center gap-2"
+          >
+            <CalendarPlus className="h-4 w-4" />
+            Schedule Appointment
+          </Button>
+        </div>
       </div>
 
       <PatientProfileHeader 
@@ -179,7 +244,15 @@ export default function PatientProfile() {
         </TabsContent>
 
         <TabsContent value="appointments" className="mt-6">
-          <AppointmentHistory appointments={[]} />
+          {isLoadingAppointments ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-24 rounded-xl" />
+              ))}
+            </div>
+          ) : (
+            <AppointmentHistory appointments={appointmentHistory} />
+          )}
         </TabsContent>
 
         <TabsContent value="files" className="mt-6">

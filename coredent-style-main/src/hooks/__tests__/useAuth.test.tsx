@@ -1,12 +1,9 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { useAuth } from '@/contexts/auth-context';
-import { server } from '@/test/mocks/server';
-import { http, HttpResponse } from 'msw';
 
-// Mock dependencies
 vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({
     toast: vi.fn(),
@@ -19,15 +16,33 @@ vi.mock('@/lib/analytics', () => ({
   trackLogout: vi.fn(),
 }));
 
-vi.mock('@/lib/csrf', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/csrf')>();
-  return {
-    ...actual,
-    refreshCsrfToken: vi.fn(),
-    clearCsrfToken: vi.fn(),
-    getCsrfHeader: vi.fn(() => ({})),
-  };
-});
+vi.mock('@/lib/csrf', () => ({
+  refreshCsrfToken: vi.fn(),
+  clearCsrfToken: vi.fn(),
+  getCsrfHeader: vi.fn(() => ({})),
+}));
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+const authApiMock = vi.hoisted(() => ({
+  restoreSession: vi.fn(),
+  getCurrentUser: vi.fn(),
+  login: vi.fn(),
+  register: vi.fn(),
+  logout: vi.fn(),
+  setToken: vi.fn(),
+  setRefreshToken: vi.fn(),
+}));
+
+vi.mock('@/services/api', () => ({
+  authApi: authApiMock,
+}));
 
 const createWrapper = () => {
   const queryClient = new QueryClient({
@@ -49,27 +64,17 @@ const createWrapper = () => {
 describe('useAuth hook', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv('MODE', 'test');
-    vi.stubEnv('VITE_DEV_BYPASS_AUTH', 'false');
-    // Clear session storage to ensure clean auth state
     sessionStorage.clear();
     localStorage.clear();
-  });
 
-  afterEach(() => {
-    vi.unstubAllEnvs();
+    authApiMock.restoreSession.mockResolvedValue(undefined);
+    authApiMock.getCurrentUser.mockResolvedValue({ success: false, data: null, error: { message: 'Unauthorized' } });
+    authApiMock.login.mockResolvedValue({ success: false, error: { message: 'Invalid credentials' } });
+    authApiMock.register.mockResolvedValue({ success: false, error: { message: 'Registration failed' } });
+    authApiMock.logout.mockResolvedValue({ success: true, data: null });
   });
 
   it('should return initial unauthenticated state', async () => {
-    server.use(
-      http.get('/api/v1/auth/me', () => {
-        return HttpResponse.json(
-          { message: 'Unauthorized' },
-          { status: 401 }
-        );
-      })
-    );
-
     const { result } = renderHook(() => useAuth(), {
       wrapper: createWrapper(),
     });
@@ -84,7 +89,6 @@ describe('useAuth hook', () => {
   });
 
   it('should authenticate user successfully', async () => {
-    // Test basic auth hook renders with initial state
     const { result } = renderHook(() => useAuth(), {
       wrapper: createWrapper(),
     });
@@ -93,28 +97,11 @@ describe('useAuth hook', () => {
       expect(result.current.isLoading).toBe(false);
     });
 
-    // Auth hook is initialized properly
     expect(result.current.login).toBeDefined();
     expect(result.current.logout).toBeDefined();
   });
 
   it('should handle login failure', async () => {
-    server.use(
-      http.post('/api/v1/auth/login', () => {
-        return HttpResponse.json(
-          { message: 'Invalid credentials' },
-          { status: 401 }
-        );
-      }),
-      // Also mock getCurrentUser to return null/unauthorized after failed login
-      http.get('/api/v1/auth/me', () => {
-        return HttpResponse.json(
-          { message: 'Unauthorized' },
-          { status: 401 }
-        );
-      })
-    );
-
     const { result } = renderHook(() => useAuth(), {
       wrapper: createWrapper(),
     });
@@ -123,9 +110,11 @@ describe('useAuth hook', () => {
       expect(result.current.isLoading).toBe(false);
     });
 
-    const loginResult = await result.current.login({
-      email: 'test@example.com',
-      password: 'wrongpassword',
+    const loginResult = await act(async () => {
+      return await result.current.login({
+        email: 'test@example.com',
+        password: 'wrongpassword',
+      });
     });
 
     expect(loginResult).toBe(false);
@@ -134,36 +123,30 @@ describe('useAuth hook', () => {
   });
 
   it('should logout user successfully', async () => {
-    const mockUser = {
-      id: 'user-1',
-      email: 'test@example.com',
-      firstName: 'Test',
-      lastName: 'User',
-      role: 'admin',
-      practiceId: 'practice-1',
-      practiceName: 'Test Practice',
-    };
-
-    server.use(
-      http.get('/api/v1/auth/me', () => {
-        return HttpResponse.json(mockUser);
-      }),
-      http.post('/api/v1/auth/logout', () => {
-        return HttpResponse.json({ message: 'Successfully logged out' });
-      })
-    );
+    authApiMock.getCurrentUser.mockResolvedValueOnce({
+      success: true,
+      data: {
+        id: 'user-1',
+        email: 'test@example.com',
+        firstName: 'Test',
+        lastName: 'User',
+        role: 'admin',
+        practiceId: 'practice-1',
+        practiceName: 'Test Practice',
+      },
+    });
 
     const { result } = renderHook(() => useAuth(), {
       wrapper: createWrapper(),
     });
 
-    // Wait for initial session check
     await waitFor(() => {
       expect(result.current.isAuthenticated).toBe(true);
     });
 
-    // Perform logout
-    await result.current.logout();
+    await act(async () => {
+      await result.current.logout();
+    });
 
     await waitFor(() => {
       expect(result.current.isAuthenticated).toBe(false);
@@ -183,11 +166,7 @@ describe('useAuth hook', () => {
       practiceName: 'Test Practice',
     };
 
-    server.use(
-      http.get('/api/v1/auth/me', () => {
-        return HttpResponse.json(mockUser);
-      })
-    );
+    authApiMock.getCurrentUser.mockResolvedValueOnce({ success: true, data: mockUser });
 
     const { result } = renderHook(() => useAuth(), {
       wrapper: createWrapper(),
@@ -197,7 +176,6 @@ describe('useAuth hook', () => {
       expect(result.current.isAuthenticated).toBe(true);
     });
 
-    // Test role checking
     expect(result.current.hasRole('admin')).toBe(true);
     expect(result.current.hasRole('owner')).toBe(false);
     expect(result.current.hasRole('dentist')).toBe(false);
@@ -206,18 +184,7 @@ describe('useAuth hook', () => {
   });
 
   it('should handle network errors during login', async () => {
-    server.use(
-      http.post('/api/v1/auth/login', () => {
-        return HttpResponse.error();
-      }),
-      // Mock getCurrentUser to return unauthorized after network error
-      http.get('/api/v1/auth/me', () => {
-        return HttpResponse.json(
-          { message: 'Unauthorized' },
-          { status: 401 }
-        );
-      })
-    );
+    authApiMock.login.mockRejectedValueOnce(new Error('Network error'));
 
     const { result } = renderHook(() => useAuth(), {
       wrapper: createWrapper(),
@@ -227,9 +194,11 @@ describe('useAuth hook', () => {
       expect(result.current.isLoading).toBe(false);
     });
 
-    const loginResult = await result.current.login({
-      email: 'test@example.com',
-      password: 'password123',
+    const loginResult = await act(async () => {
+      return await result.current.login({
+        email: 'test@example.com',
+        password: 'password123',
+      });
     });
 
     expect(loginResult).toBe(false);
@@ -247,20 +216,14 @@ describe('useAuth hook', () => {
       practiceName: 'Test Practice',
     };
 
-    server.use(
-      http.get('/api/v1/auth/me', () => {
-        return HttpResponse.json(mockUser);
-      })
-    );
+    authApiMock.getCurrentUser.mockResolvedValueOnce({ success: true, data: mockUser });
 
     const { result } = renderHook(() => useAuth(), {
       wrapper: createWrapper(),
     });
 
-    // Should start loading
     expect(result.current.isLoading).toBe(true);
 
-    // Should restore session
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
       expect(result.current.isAuthenticated).toBe(true);
@@ -269,14 +232,7 @@ describe('useAuth hook', () => {
   });
 
   it('should handle failed session restoration', async () => {
-    server.use(
-      http.get('/api/v1/auth/me', () => {
-        return HttpResponse.json(
-          { message: 'Session expired' },
-          { status: 401 }
-        );
-      })
-    );
+    authApiMock.getCurrentUser.mockResolvedValueOnce({ success: false, data: null, error: { message: 'Session expired' } });
 
     const { result } = renderHook(() => useAuth(), {
       wrapper: createWrapper(),
@@ -291,12 +247,9 @@ describe('useAuth hook', () => {
   });
 
   it('should enable dev bypass in development mode', async () => {
-    // This test verifies the dev bypass env vars are set up
-    // Full dev bypass testing requires E2E tests or module reloading
-    // Clear storage first
     sessionStorage.clear();
     localStorage.clear();
-    
+
     const { result } = renderHook(() => useAuth(), {
       wrapper: createWrapper(),
     });
@@ -305,29 +258,23 @@ describe('useAuth hook', () => {
       expect(result.current.isLoading).toBe(false);
     });
 
-    // Auth hook is functional
     expect(result.current.logout).toBeDefined();
   });
 
   it('should handle logout even when API fails', async () => {
-    const mockUser = {
-      id: 'user-1',
-      email: 'test@example.com',
-      firstName: 'Test',
-      lastName: 'User',
-      role: 'dentist',
-      practiceId: 'practice-1',
-      practiceName: 'Test Practice',
-    };
-
-    server.use(
-      http.get('/api/v1/auth/me', () => {
-        return HttpResponse.json(mockUser);
-      }),
-      http.post('/api/v1/auth/logout', () => {
-        return HttpResponse.error();
-      })
-    );
+    authApiMock.getCurrentUser.mockResolvedValueOnce({
+      success: true,
+      data: {
+        id: 'user-1',
+        email: 'test@example.com',
+        firstName: 'Test',
+        lastName: 'User',
+        role: 'dentist',
+        practiceId: 'practice-1',
+        practiceName: 'Test Practice',
+      },
+    });
+    authApiMock.logout.mockRejectedValueOnce(new Error('Logout failed'));
 
     const { result } = renderHook(() => useAuth(), {
       wrapper: createWrapper(),
@@ -337,8 +284,9 @@ describe('useAuth hook', () => {
       expect(result.current.isAuthenticated).toBe(true);
     });
 
-    // Logout should still work even if API fails
-    await result.current.logout();
+    await act(async () => {
+      await result.current.logout();
+    });
 
     await waitFor(() => {
       expect(result.current.isAuthenticated).toBe(false);

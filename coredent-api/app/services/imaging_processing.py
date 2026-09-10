@@ -8,7 +8,7 @@ from uuid import UUID
 import logging
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import UploadFile
@@ -67,6 +67,21 @@ class ImageFileProcessor:
         file_extension = os.path.splitext(file.filename)[1].lower()
         if file_extension not in ImageFileProcessor.ALLOWED_EXTENSIONS:
             raise ValueError(f"File extension '{file_extension}' not allowed")
+
+        # SECURITY: Verify magic bytes match the claimed MIME type. The
+        # client-supplied content-type is untrusted; an attacker can label an
+        # executable as image/png. The document-upload path validates magic
+        # numbers via app.core.file_security; imaging must do the same.
+        try:
+            from app.core.file_security import validate_magic_number
+            validate_magic_number(content, file.content_type)
+        except Exception as exc:
+            logger.warning(
+                f"Magic-number validation failed for {file.filename}: {exc}"
+            )
+            raise ValueError(
+                "File content does not match its declared type"
+            ) from exc
 
         logger.info(f"File validation passed: {file.filename} ({file_size} bytes)")
         return content, file_extension
@@ -143,18 +158,27 @@ class ImageSharingProcessor:
         image_id: UUID,
         token: str,
     ) -> str:
-        """Generate share link"""
+        """Generate share link.
+
+        L-03 FIX: the bearer token is carried in the URL *fragment*, not the
+        query string. A fragment is never transmitted to a server, so the token
+        cannot appear in web-server or proxy access logs, in analytics
+        page-view URLs, or in the ``Referer`` header of any request the viewer
+        page subsequently makes. The recipient's browser history still holds
+        the link, which is inherent to emailing someone a capability URL; the
+        share is expiry-checked to bound that window.
+        """
         if not settings.FRONTEND_URL:
             raise ValueError("FRONTEND_URL not configured for image sharing")
 
-        share_link = f"{settings.FRONTEND_URL}/viewer/{image_id}?token={token}"
+        share_link = f"{settings.FRONTEND_URL}/viewer/{image_id}#token={token}"
         logger.debug(f"Generated share link for image: {image_id}")
         return share_link
 
     @staticmethod
     def get_share_expiry() -> datetime:
-        """Get share link expiry time"""
-        expiry = datetime.now() + timedelta(days=30)
+        """Get share link expiry time (aware UTC — L1/M8)."""
+        expiry = datetime.now(timezone.utc) + timedelta(days=30)
         logger.debug(f"Share link expires at: {expiry}")
         return expiry
 
@@ -179,7 +203,13 @@ class ImageSharingProcessor:
 
             # Generate share link
             share_link = ImageSharingProcessor.generate_share_link(image.id, token)
+            # L1 FIX: persist the expiry the share email already promises.
             expires_at = ImageSharingProcessor.get_share_expiry()
+            image.share_expires_at = expires_at
+        else:
+            # Sharing turned off: clear token and expiry.
+            image.share_token = None
+            image.share_expires_at = None
 
         await db.commit()
         logger.info(f"Updated sharing settings for image: {image.id}")
@@ -214,7 +244,7 @@ class ImageMetadataProcessor:
             "file_name": file_name,
             "file_size": file_size,
             "mime_type": mime_type,
-            "uploaded_at": datetime.now().isoformat(),
+            "uploaded_at": datetime.now(timezone.utc).isoformat(),
         }
         logger.debug(f"Extracted metadata: {metadata}")
         return metadata

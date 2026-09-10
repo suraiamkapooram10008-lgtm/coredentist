@@ -8,14 +8,68 @@ import type {
   PatientRecord,
   PatientSearchParams,
 } from "@/types/patient";
-import type { AppointmentStatus, PaginatedResponse } from "@/types/api";
+import type { PaginatedResponse } from "@/types/api";
 
-type PatientAppointmentHistoryItem = {
+type RawHistoryAppointment = Record<string, unknown>;
+
+export interface PatientAppointmentHistoryItem {
   id: string;
+  patientId: string;
+  patientName: string;
+  providerId: string;
+  providerName: string;
+  chairId: string;
+  chairName: string;
+  appointmentTypeId: string;
+  appointmentTypeName: string;
   date: string;
-  type: string;
-  provider: string;
-  status: AppointmentStatus;
+  startTime: string;
+  endTime: string;
+  status:
+    | 'scheduled'
+    | 'confirmed'
+    | 'checked_in'
+    | 'in_progress'
+    | 'completed'
+    | 'cancelled'
+    | 'no_show';
+  notes?: string;
+}
+
+const pad2 = (value: number): string => String(value).padStart(2, '0');
+
+const formatHistoryDate = (instant: Date): string =>
+  `${instant.getFullYear()}-${pad2(instant.getMonth() + 1)}-${pad2(instant.getDate())}`;
+
+const formatHistoryTime = (instant: Date): string =>
+  instant
+    .toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    .replace(/\s/g, ' ')
+    .toUpperCase();
+
+const toHistoryItem = (raw: RawHistoryAppointment): PatientAppointmentHistoryItem => {
+  const start = new Date(String(raw.startTime ?? ''));
+  const end = new Date(String(raw.endTime ?? ''));
+  const validStart = !Number.isNaN(start.getTime());
+  const validEnd = !Number.isNaN(end.getTime());
+  return {
+    id: String(raw.id ?? ''),
+    patientId: String(raw.patientId ?? ''),
+    patientName: String(raw.patientName ?? ''),
+    providerId: String(raw.providerId ?? ''),
+    providerName: String(raw.providerName ?? ''),
+    chairId: String(raw.chairId ?? raw.operatoryId ?? ''),
+    chairName: raw.operatoryName ? String(raw.operatoryName) : '',
+    appointmentTypeId: String(raw.appointmentTypeId ?? ''),
+    appointmentTypeName: String(raw.appointmentType ?? raw.type ?? ''),
+    date: validStart ? formatHistoryDate(start) : '',
+    startTime: validStart ? formatHistoryTime(start) : '',
+    endTime: validEnd ? formatHistoryTime(end) : '',
+    status: (typeof raw.status === 'string'
+      ? raw.status.toLowerCase()
+      : 'scheduled') as PatientAppointmentHistoryItem['status'],
+    notes: raw.notes ? String(raw.notes) : undefined,
+  };
 };
 
 export const patientApi = {
@@ -108,11 +162,18 @@ export const patientApi = {
 
   getAppointmentHistory: async (
     patientId: string,
-  ): Promise<PatientAppointmentHistoryItem[]> =>
-    requireApiData(
-      await apiClient.get<PatientAppointmentHistoryItem[]>(
-        `/patients/${patientId}/appointments`,
+  ): Promise<PatientAppointmentHistoryItem[]> => {
+    // The backend has no dedicated /patients/{id}/appointments route; the
+    // tenant-scoped appointments list filtered by patient_id is the real
+    // contract for a patient's appointment history.
+    const envelope = requireApiData(
+      await apiClient.get<{ appointments: RawHistoryAppointment[]; count: number }>(
+        '/appointments',
+        { patientId },
       ),
-      "Failed to load patient appointment history",
-    ),
+      'Failed to load patient appointment history',
+    );
+    const items = Array.isArray(envelope?.appointments) ? envelope.appointments : [];
+    return items.map(toHistoryItem);
+  },
 };

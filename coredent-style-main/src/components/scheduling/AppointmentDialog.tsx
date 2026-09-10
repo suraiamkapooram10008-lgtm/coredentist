@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { useToast } from '@/hooks/use-toast';
 import { schedulingApi } from '@/services/schedulingApi';
 import type { ScheduleAppointment, AppointmentFormData, PatientSearchResult, ScheduleProvider } from '@/types/scheduling';
 import type { Chair, AppointmentTypeConfig } from '@/types/clinic';
@@ -33,6 +34,8 @@ export function AppointmentDialog({
   defaultDate,
   onSave,
 }: AppointmentDialogProps) {
+  const { toast } = useToast();
+
   // Form State
   const [patientId, setPatientId] = useState('');
   const [patientName, setPatientName] = useState('');
@@ -106,7 +109,10 @@ export function AppointmentDialog({
 
   // Debounced inline patient search
   useEffect(() => {
-    if (!patientQuery.trim() || patientQuery === patientName) {
+    // Skip only while a patient is actually selected and the query still
+    // matches the selected name. Comparing names when no patient is selected
+    // let a stale patientId survive a re-typed identical name.
+    if (!patientQuery.trim() || (patientId && patientQuery === patientName)) {
       setSearchResults([]);
       return;
     }
@@ -124,7 +130,9 @@ export function AppointmentDialog({
     }, 300);
 
     return () => clearTimeout(delaySearch);
-  }, [patientQuery, patientName]);
+    // patientId is read inside the guard, so it belongs in the dependency list
+    // (L-04): without it a stale patientId could survive a re-typed query.
+  }, [patientQuery, patientName, patientId]);
 
   // Handle appointment type change -> update default duration
   const handleTypeChange = (val: string) => {
@@ -157,7 +165,16 @@ export function AppointmentDialog({
       await onSave(formData);
       onOpenChange(false);
     } catch (error) {
-      console.error('Failed to save appointment', error);
+      // Surface the failure — previously the dialog silently stopped at
+      // "Saving..." with no indication the appointment was not saved.
+      toast({
+        title: 'Error',
+        description:
+          error instanceof Error
+            ? error.message
+            : 'Failed to save appointment. Please try again.',
+        variant: 'destructive',
+      });
     } finally {
       setIsSubmitting(false);
     }

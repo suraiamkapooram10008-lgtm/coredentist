@@ -41,7 +41,7 @@ describe('clinicApi', () => {
 
   it('getSettings returns clinic settings', async () => {
     server.use(
-      http.get('/api/v1/clinic/settings', () => HttpResponse.json(mockSettings)),
+      http.get('/api/v1/settings', () => HttpResponse.json(mockSettings)),
     );
     const result = await clinicApi.getSettings();
     expect(result.data?.name).toBe('CoreDent Family Dentistry');
@@ -49,7 +49,7 @@ describe('clinicApi', () => {
 
   it('updateSettings sends a PUT', async () => {
     server.use(
-      http.put('/api/v1/clinic/settings', async ({ request }) => {
+      http.put('/api/v1/settings', async ({ request }) => {
         const body = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json({ ...mockSettings, ...body });
       }),
@@ -60,7 +60,7 @@ describe('clinicApi', () => {
 
   it('uploadLogo posts FormData and returns a URL', async () => {
     server.use(
-      http.post('/api/v1/clinic/logo', () =>
+      http.post('/api/v1/settings/logo', () =>
         HttpResponse.json({ url: 'https://blob.example.com/logo.png' }, { status: 201 }),
       ),
     );
@@ -71,7 +71,7 @@ describe('clinicApi', () => {
 
   it('getAppointmentTypes returns types', async () => {
     server.use(
-      http.get('/api/v1/clinic/appointment-types', () =>
+      http.get('/api/v1/appointment-types', () =>
         HttpResponse.json([
           { id: 'at-1', name: 'Cleaning', duration: 30, color: '#000', isActive: true },
         ]),
@@ -83,7 +83,7 @@ describe('clinicApi', () => {
 
   it('createAppointmentType posts a new type', async () => {
     server.use(
-      http.post('/api/v1/clinic/appointment-types', async ({ request }) => {
+      http.post('/api/v1/appointment-types', async ({ request }) => {
         const body = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json({ id: 'at-2', ...body }, { status: 201 });
       }),
@@ -101,7 +101,7 @@ describe('clinicApi', () => {
 
   it('updateAppointmentType sends a PUT', async () => {
     server.use(
-      http.put('/api/v1/clinic/appointment-types/at-1', async ({ request }) => {
+      http.put('/api/v1/appointment-types/at-1', async ({ request }) => {
         const body = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json({ id: 'at-1', name: 'X', duration: 30, isActive: true, ...body });
       }),
@@ -112,7 +112,7 @@ describe('clinicApi', () => {
 
   it('deleteAppointmentType resolves', async () => {
     server.use(
-      http.delete('/api/v1/clinic/appointment-types/at-1', () =>
+      http.delete('/api/v1/appointment-types/at-1', () =>
         HttpResponse.json({ message: 'Deleted' }),
       ),
     );
@@ -121,7 +121,7 @@ describe('clinicApi', () => {
 
   it('getChairs returns chairs', async () => {
     server.use(
-      http.get('/api/v1/clinic/chairs', () =>
+      http.get('/api/v1/chairs', () =>
         HttpResponse.json([{ id: 'c-1', name: 'Chair 1', isActive: true }]),
       ),
     );
@@ -131,7 +131,7 @@ describe('clinicApi', () => {
 
   it('createChair posts a new chair', async () => {
     server.use(
-      http.post('/api/v1/clinic/chairs', async ({ request }) => {
+      http.post('/api/v1/chairs', async ({ request }) => {
         const body = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json({ id: 'c-2', ...body }, { status: 201 });
       }),
@@ -146,7 +146,7 @@ describe('clinicApi', () => {
 
   it('updateChair sends a PUT', async () => {
     server.use(
-      http.put('/api/v1/clinic/chairs/c-1', async ({ request }) => {
+      http.put('/api/v1/chairs/c-1', async ({ request }) => {
         const body = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json({ id: 'c-1', name: 'Chair 1', isActive: true, ...body });
       }),
@@ -157,7 +157,7 @@ describe('clinicApi', () => {
 
   it('deleteChair resolves', async () => {
     server.use(
-      http.delete('/api/v1/clinic/chairs/c-1', () =>
+      http.delete('/api/v1/chairs/c-1', () =>
         HttpResponse.json({ message: 'Deleted' }),
       ),
     );

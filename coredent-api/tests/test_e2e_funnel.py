@@ -3,14 +3,12 @@ End-to-end test for the critical practice funnel:
 register -> book -> treat -> invoice -> pay
 """
 import datetime
-from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.appointment import Appointment, AppointmentStatus
-from app.models.billing import Invoice, InvoiceStatus, Payment, PaymentStatus, PaymentMethod
 from app.models.treatment import TreatmentPlan, TreatmentPlanStatus
 
 pytestmark = pytest.mark.asyncio
@@ -116,6 +114,9 @@ class TestCriticalFunnel:
                 "patient_id": str(test_patient.id),
                 "amount": "120.00",
                 "payment_method": "card",
+                # M7 contract: completed manual payments carry an external
+                # reference (receipt number here).
+                "transaction_id": "RCPT-E2E-001",
             },
         )
         assert payment_response.status_code == 200

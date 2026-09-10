@@ -119,6 +119,10 @@ class PatientImage(Base):
     is_shared_with_patient = Column(Boolean, default=False)
     is_shared_with_referral = Column(Boolean, default=False)
     share_token = Column(String(255))  # Token for secure sharing
+    # L1 FIX: share emails promise a 30-day expiry; this column makes the
+    # promise real. NULL = legacy share created before enforcement
+    # (grandfathered, treated as non-expiring).
+    share_expires_at = Column(DateTime(timezone=True), nullable=True)
 
     # Metadata
     is_deleted = Column(Boolean, default=False)

@@ -1,11 +1,12 @@
 """Unit tests for subscription service pure functions and mocked async methods."""
 import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
 from app.services.subscription_service import SubscriptionService
 from app.models.subscription import SubscriptionInterval
+from app.core.config_simple import settings
 
 
 class TestCalculatePeriodStartEnd:
@@ -109,3 +110,71 @@ class TestGetUsageRecords:
             mock_db, "550e8400-e29b-41d4-a716-446655440000"
         )
         assert result == ["record1", "record2"]
+
+
+# =====================================================================
+# Subscription edge-case regression tests
+# =====================================================================
+
+
+class TestRecordUsageEdgeCases:
+    @pytest.mark.asyncio
+    async def test_rejects_non_positive_quantity(self):
+        mock_db = AsyncMock()
+        mock_sub = MagicMock()
+        mock_sub.id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_sub.plan_id = "550e8400-e29b-41d4-a716-446655440001"
+
+        for bad in (Decimal("0"), Decimal("-1")):
+            with pytest.raises(ValueError):
+                await SubscriptionService.record_usage(mock_db, mock_sub, bad)
+
+    @pytest.mark.asyncio
+    async def test_rejects_none_quantity(self):
+        mock_db = AsyncMock()
+        mock_sub = MagicMock()
+
+        with pytest.raises(ValueError):
+            await SubscriptionService.record_usage(mock_db, mock_sub, None)
+
+    @pytest.mark.asyncio
+    async def test_rejects_excessive_quantity(self):
+        mock_db = AsyncMock()
+        mock_sub = MagicMock()
+        mock_sub.id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_sub.plan_id = "550e8400-e29b-41d4-a716-446655440001"
+        mock_sub.current_usage = Decimal("0")
+        mock_sub.current_overage = None
+
+        from app.services.subscription_service import MAX_USAGE_QUANTITY
+
+        with pytest.raises(ValueError):
+            await SubscriptionService.record_usage(
+                mock_db, mock_sub, MAX_USAGE_QUANTITY + Decimal("1")
+            )
+
+
+class TestChangePlanEdgeCases:
+    @pytest.mark.asyncio
+    async def test_same_plan_change_returns_zero_without_stripe(self, monkeypatch):
+        mock_db = AsyncMock()
+        mock_sub = MagicMock()
+        mock_sub.plan_id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_sub.id = "550e8400-e29b-41d4-a716-446655440002"
+
+        new_plan = MagicMock()
+        new_plan.id = "550e8400-e29b-41d4-a716-446655440000"
+
+        import stripe as stripe_lib
+
+        monkeypatch.setattr(settings, "STRIPE_API_KEY", "sk_test_dummy")
+        retrieve = MagicMock()
+        monkeypatch.setattr(stripe_lib.Subscription, "retrieve", retrieve)
+
+        result = await SubscriptionService.change_plan(mock_db, mock_sub, new_plan)
+
+        assert result == Decimal("0")
+        # No Stripe round-trip for an identical plan.
+        retrieve.assert_not_called()
+        # Local subscription is not mutated.
+        assert mock_sub.plan_id == "550e8400-e29b-41d4-a716-446655440000"

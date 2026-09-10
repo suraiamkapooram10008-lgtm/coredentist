@@ -25,26 +25,19 @@ async function enableMocking() {
   }
 }
 
-enableMocking().then(() => {
-  createRoot(document.getElementById("root")!).render(<App />);
-});
-
-/**
- * Service Worker Registration
- * Handles offline mode and caching for better performance
- * Moved from App.tsx to main.tsx for better separation of concerns
- * DISABLED in development to avoid CORS issues
- */
-if ("serviceWorker" in navigator && import.meta.env.PROD) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker
-      .register("/sw.js")
-      .then((registration) => {
-        logger.info("Service worker registered", { scope: registration.scope });
-      })
-      .catch((error: unknown) => {
-        const err = error instanceof Error ? error : new Error(String(error));
-        logger.error("Service worker registration failed", err);
-      });
-  });
+function renderApp() {
+  const rootElement = document.getElementById("root");
+  if (!rootElement) {
+    throw new Error("CoreDent root element was not found");
+  }
+  createRoot(rootElement).render(<App />);
 }
+
+enableMocking()
+  .then(renderApp)
+  .catch((error: unknown) => {
+    // A failed development mock bootstrap must not leave production/dev users
+    // staring at a blank page; render against the real API instead.
+    logger.error("Mock service worker startup failed", error instanceof Error ? error : new Error(String(error)));
+    renderApp();
+  });

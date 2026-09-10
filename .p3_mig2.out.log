@@ -1,0 +1,23 @@
+--- alembic stdout (tail) ---
+
+--- alembic stderr (tail) ---
+ claims
+INFO  [alembic.runtime.migration] Running upgrade d3c8f1a6b529 -> a7f3e2c1d854, add npi columns to users and practices
+INFO  [alembic.runtime.migration] Running upgrade a7f3e2c1d854 -> f1a3c5e7d9b2, drop dead email_verification_token_hash columns
+INFO  [alembic.runtime.migration] Running upgrade f1a3c5e7d9b2 -> a1b2c3d4e5f6, add persistent portal identity lockout table
+INFO  [alembic.runtime.migration] Running upgrade a1b2c3d4e5f6 -> b2c3d4e5f6a7, add single-use refresh-token overlap guard
+INFO  [alembic.runtime.migration] Running upgrade b2c3d4e5f6a7 -> c3d4e5f6a7b8, add immediate email-verification requirement flag
+INFO  [alembic.runtime.migration] Running upgrade c3d4e5f6a7b8 -> d4e5f6a7b8c9, link payment_transactions to the invoice-ledger payments
+INFO  [alembic.runtime.migration] Running upgrade d4e5f6a7b8c9 -> e6f7a8b9c0d1, practice-scoped public booking slugs
+INFO  [alembic.runtime.migration] Running upgrade e6f7a8b9c0d1 -> f8c9d2e3a4b5, booking email verification token hash
+INFO  [alembic.runtime.migration] Running upgrade f8c9d2e3a4b5 -> a9d3e4f5b6c7, appointment cancellation_reason column
+INFO  [alembic.runtime.migration] Running upgrade a9d3e4f5b6c7 -> c8d4f7e2a6b1, patient portal multi-session table
+INFO  [alembic.runtime.migration] Running upgrade c8d4f7e2a6b1 -> f3a4b5c6d7e8, scope financial uniques per practice (L-1/L-2)
+INFO  [alembic.runtime.migration] Running upgrade f3a4b5c6d7e8 -> e7f8a9b0c1d2, portal magic-link access codes (Option A inbox proof)
+
+returncode = 0
+alembic head = e7f8a9b0c1d2
+total tables = 90
+alembic_* = ['alembic_version']
+sqlite_* = []
+app tables (89 total) = ['appointment_types', 'appointments', 'audit_logs', 'booking_availability', 'booking_notifications', 'booking_pages', 'cancellation_surveys', 'chairs', 'clinical_notes', 'conversation_messages', 'conversations', 'daily_summary_outbox', 'dental_charts', 'document_signatures', 'document_templates', 'documents', 'dunning_events', 'eligibility', 'explanations_of_benefits', 'fee_schedule_entries', 'fee_schedules', 'image_series', 'image_templates', 'insurance_carriers', 'insurance_claims', 'insurance_pre_authorizations', 'inventory_alerts', 'inventory_items', 'inventory_transactions', 'invoices', 'lab_cases', 'lab_communications', 'lab_invoice_payments', 'lab_invoices', 'labs', 'marketing_campaign_segments', 'marketing_campaigns', 'marketing_emails', 'marketing_templates', 'message_templates', 'newsletter_subscriptions', 'online_bookings', 'password_reset_tokens', 'patient_images', 'patient_insurances', 'patient_messages', 'patient_portal_access_codes', 'patient_portal_sessions', 'patients', 'payment_cards', 'payment_plan_installments', 'payment_plans', 'payment_settings', 'payment_terminals', 'payment_transactions', 'payments', 'perio_chart_entries', 'perio_charts', 'portal_identity_lockouts', 'practice_groups', 'practices', 'procedure_library', 'processor_webhook_events', 'purchase_order_items', 'purchase_orders', 'recurring_billing', 'referral_communications', 'referral_reports', 'referral_sources', 'referrals', 'reminder_schedules', 'reminders', 'revoked_tokens', 'sessions', 'signature_fields', 'staff_invitations', 'subscription_plans', 'subscriptions', 'suppliers', 'treatment_phases', 'treatment_plan_notes', 'treatment_plan_templates', 'treatment_plans', 'treatment_procedures', 'usage_meters', 'usage_records', 'users', 'waitlist_entries', 'webhook_events']

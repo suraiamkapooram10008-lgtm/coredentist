@@ -17,6 +17,19 @@ interface UserAction {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Scrub potential PHI/PII (emails, long digit sequences like phone/SSN,
+ * UUIDs) from a string before it leaves the app via analytics.
+ */
+function scrubPotentialPhi(input: string): string {
+  return input
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[redacted-email]')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '[redacted-id]')
+    .replace(/\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/g, '[redacted-ssn]')
+    .replace(/\b\+?\d[\d\s().-]{7,}\d\b/g, '[redacted-number]')
+    .slice(0, 200);
+}
+
 class MonitoringService {
   private metrics: PerformanceMetric[] = [];
   private actions: UserAction[] = [];
@@ -116,9 +129,12 @@ class MonitoringService {
    */
   trackError(error: Error, context?: Record<string, unknown>) {
     logger.error('Tracked error', error, context);
+    // HIPAA: error messages/stacks can contain PHI (patient names, emails,
+    // record IDs). Never forward them to third-party analytics — send only
+    // the error name and a scrubbed, length-capped message.
     this.trackAction('error_occurred', 'error_boundary', {
-      message: error.message,
-      stack: error.stack,
+      error_name: error.name,
+      message: scrubPotentialPhi(error.message),
       ...context,
     });
   }

@@ -20,10 +20,30 @@ import type { ScheduleAppointment, AppointmentFormData, PatientSearchResult } fr
 import type { AppointmentStatus } from '@/types/api';
 import { parseTimeString } from '@/types/scheduling';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { AlertTriangle } from 'lucide-react';
+import { logger } from '@/lib/logger';
+
+// Fire-and-forget automation triggers: the clinical action already succeeded,
+// so a webhook failure must not surface as an unhandled rejection. Log it and
+// move on.
+const fireAutomation = (
+  event: Parameters<typeof triggerAutomation>[0],
+  payload: Parameters<typeof triggerAutomation>[1],
+) => {
+  Promise.resolve(triggerAutomation(event, payload)).catch((err) => {
+    logger.warn(`${event} automation failed`, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+};
 
 export default function Schedule() {
   const { toast } = useToast();
-  const { hasRole } = useAuth();
+  const { hasRole, user } = useAuth();
+  // Automation payloads previously hardcoded 'CoreDent Clinic'; use the
+  // signed-in practice name with a neutral fallback.
+  const clinicName = user?.practiceName?.trim() || 'Your dental clinic';
   
   // Check if user can edit appointments
   const canEdit = hasRole('owner', 'admin', 'front_desk');
@@ -36,6 +56,7 @@ export default function Schedule() {
     providers,
     appointmentTypes,
     isLoading,
+    error,
     selectedAppointment,
     formattedDate,
     setView,
@@ -87,20 +108,20 @@ export default function Schedule() {
           appointmentTime: appointment.startTime.toLocaleTimeString(),
           providerName: appointment.providerName || '',
           procedureType: appointment.type,
-          clinicName: 'CoreDent Clinic',
+          clinicName,
         };
-        if (status === 'confirmed') triggerAutomation('appointment_confirmed', payload);
+        if (status === 'confirmed') fireAutomation('appointment_confirmed', payload);
         if (status === 'completed') {
-          triggerAutomation('appointment_completed', payload);
-          triggerAutomation('review_request', {
+          fireAutomation('appointment_completed', payload);
+          fireAutomation('review_request', {
             patientId: appointment.patientId,
             patientName: appointment.patientName,
             appointmentDate: payload.appointmentDate,
             providerName: payload.providerName,
-            clinicName: 'CoreDent Clinic',
+            clinicName,
           });
         }
-        if (status === 'no_show') triggerAutomation('appointment_no_show', payload);
+        if (status === 'no_show') fireAutomation('appointment_no_show', payload);
       }
     } catch (error) {
       toast({
@@ -132,14 +153,14 @@ export default function Schedule() {
       // Trigger appointment_cancelled automation
       const appointment = appointments.find(a => a.id === id);
       if (appointment) {
-        triggerAutomation('appointment_cancelled', {
+        fireAutomation('appointment_cancelled', {
           appointmentId: id,
           patientName: appointment.patientName,
           appointmentDate: appointment.startTime.toISOString().split('T')[0],
           appointmentTime: appointment.startTime.toLocaleTimeString(),
           providerName: appointment.providerName || '',
           procedureType: appointment.type,
-          clinicName: 'CoreDent Clinic',
+          clinicName,
         });
       }
     } catch (error) {
@@ -161,12 +182,14 @@ export default function Schedule() {
   // Handle save appointment
   const handleSaveAppointment = useCallback(async (data: AppointmentFormData) => {
     if (editingAppointment) {
+      // schedulingApi.updateAppointment throws on failure (it used to return
+      // null, which this handler ignored and toasted success anyway).
       await schedulingApi.updateAppointment(editingAppointment.id, data);
       const { hours, minutes } = parseTimeString(data.startTime);
       const startTime = new Date(data.date);
       startTime.setHours(hours, minutes, 0, 0);
       const endTime = new Date(startTime.getTime() + data.duration * 60 * 1000);
-      
+
       updateAppointment(editingAppointment.id, {
         patientId: data.patientId,
         patientName: data.patientName,
@@ -192,16 +215,21 @@ export default function Schedule() {
       description: `Appointment scheduled for ${data.patientName}`,
     });
 
-    triggerAutomation('appointment_booked', {
-      appointmentId: newAppointment.id,
-      patientName: data.patientName,
-      appointmentDate: data.date.toISOString().split('T')[0],
-      appointmentTime: data.startTime,
-      providerName: newAppointment.providerName || '',
-      procedureType: data.type,
-      clinicName: 'CoreDent Clinic',
-    });
-  }, [editingAppointment, updateAppointment, addAppointment, toast]);
+    Promise.resolve(
+      triggerAutomation('appointment_booked', {
+        appointmentId: newAppointment.id,
+        patientName: data.patientName,
+        appointmentDate: data.date.toISOString().split('T')[0],
+        appointmentTime: data.startTime,
+        providerName: newAppointment.providerName || '',
+        procedureType: data.type,
+        clinicName,
+      }),
+    ).catch((automationError) => {
+      logger.warn('appointment_booked automation failed', {
+        error: automationError instanceof Error ? automationError.message : String(automationError),
+      });
+    });  }, [editingAppointment, updateAppointment, addAppointment, toast]);
 
   // Handle drag-and-drop reschedule (Day View)
   const handleDropAppointmentDay = useCallback(async (appointmentId: string, chairId: string, time: string) => {
@@ -304,6 +332,16 @@ export default function Schedule() {
         onNewAppointment={handleNewAppointment}
         onOpenSearch={() => setIsPatientSearchOpen(true)}
       />
+
+      {error && (
+        <Alert variant="destructive" role="alert" className="mt-4">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Schedule data unavailable</AlertTitle>
+          <AlertDescription>
+            {error.message}. Existing schedule data is preserved; retry after the service recovers.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="flex-1 mt-4 overflow-hidden border rounded-lg bg-card">
         {view === 'day' && (

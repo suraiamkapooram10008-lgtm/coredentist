@@ -3,12 +3,27 @@ Communication Schemas
 Patient messaging, SMS/email reminders, two-way messaging
 """
 
+import json
 from datetime import datetime
 from typing import List, Optional
 from enum import Enum
-from pydantic import BaseModel, Field
+from uuid import UUID
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.common import BaseSchema
+
+
+
+def _parse_json_list(value):
+    if value is None or isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if isinstance(parsed, list) else None
+    return value
 
 
 class MessageType(str, Enum):
@@ -55,6 +70,11 @@ class MessageTemplateBase(BaseSchema):
     category: Optional[str] = Field(None, description="Template category")
     variables: Optional[List[str]] = Field(None, description="Available template variables")
     is_active: bool = Field(True, description="Whether template is active")
+
+    @field_validator("variables", mode="before")
+    @classmethod
+    def parse_variables(cls, value):
+        return _parse_json_list(value)
     is_default: bool = Field(False, description="Whether this is the default template")
 
 
@@ -76,8 +96,8 @@ class MessageTemplateUpdate(BaseModel):
 
 class MessageTemplate(MessageTemplateBase):
     """Complete template schema"""
-    id: str
-    practice_id: str
+    id: UUID
+    practice_id: UUID
     times_used: int = 0
     created_at: datetime
     updated_at: datetime
@@ -89,9 +109,9 @@ class MessageTemplate(MessageTemplateBase):
 # Patient Message Schemas
 class PatientMessageBase(BaseSchema):
     """Base message schema"""
-    patient_id: str = Field(..., description="Patient ID")
+    patient_id: UUID = Field(..., description="Patient ID")
     message_type: MessageType = Field(..., description="Type of message")
-    direction: MessageDirection = Field(..., description="Message direction")
+    direction: MessageDirection = Field(default=MessageDirection.OUTBOUND, description="Message direction")
     content: str = Field(..., description="Message content")
     subject: Optional[str] = Field(None, description="Email subject")
     recipient_phone: Optional[str] = Field(None, description="Recipient phone number")
@@ -101,6 +121,10 @@ class PatientMessageBase(BaseSchema):
     scheduled_at: Optional[datetime] = Field(None, description="Scheduled send time")
     attachments: Optional[List[str]] = Field(None, description="Message attachments")
 
+    @field_validator("attachments", mode="before")
+    @classmethod
+    def parse_attachments(cls, value):
+        return _parse_json_list(value)
 
 class PatientMessageCreate(PatientMessageBase):
     """Schema for creating a message"""
@@ -119,12 +143,12 @@ class PatientMessageUpdate(BaseModel):
 
 class PatientMessage(PatientMessageBase):
     """Complete message schema"""
-    id: str
-    practice_id: str
-    user_id: Optional[str] = None
-    template_id: Optional[str] = None
-    appointment_id: Optional[str] = None
-    parent_message_id: Optional[str] = None
+    id: UUID
+    practice_id: UUID
+    user_id: Optional[UUID] = None
+    template_id: Optional[UUID] = None
+    appointment_id: Optional[UUID] = None
+    parent_message_id: Optional[UUID] = None
     status: MessageStatus = MessageStatus.PENDING
     external_id: Optional[str] = None
     provider_response: Optional[str] = None
@@ -157,6 +181,10 @@ class ReminderScheduleBase(BaseSchema):
     max_reminders: int = Field(3, description="Maximum number of reminders")
     patient_types: Optional[List[str]] = Field(None, description="Patient types to target")
 
+    @field_validator("patient_types", mode="before")
+    @classmethod
+    def parse_patient_types(cls, value):
+        return _parse_json_list(value)
 
 class ReminderScheduleCreate(ReminderScheduleBase):
     """Schema for creating a reminder schedule"""
@@ -182,10 +210,10 @@ class ReminderScheduleUpdate(BaseModel):
 
 class ReminderSchedule(ReminderScheduleBase):
     """Complete reminder schedule schema"""
-    id: str
-    practice_id: str
-    template_id: str
-    appointment_type_id: Optional[str] = None
+    id: UUID
+    practice_id: UUID
+    template_id: Optional[UUID] = None
+    appointment_type_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
 
@@ -196,7 +224,7 @@ class ReminderSchedule(ReminderScheduleBase):
 # Conversation Schemas
 class ConversationBase(BaseSchema):
     """Base conversation schema"""
-    patient_id: str = Field(..., description="Patient ID")
+    patient_id: UUID = Field(..., description="Patient ID")
     channel: MessageType = Field(..., description="Communication channel")
     subject: Optional[str] = Field(None, description="Conversation subject")
     status: str = Field("active", description="Conversation status")
@@ -218,13 +246,13 @@ class ConversationUpdate(BaseModel):
 
 class Conversation(ConversationBase):
     """Complete conversation schema"""
-    id: str
-    practice_id: str
-    assigned_user_id: Optional[str] = None
+    id: UUID
+    practice_id: UUID
+    assigned_user_id: Optional[UUID] = None
     last_message_at: Optional[datetime] = None
     last_message_preview: Optional[str] = None
     unread_count: int = 0
-    auto_response_template_id: Optional[str] = None
+    auto_response_template_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
 
@@ -234,11 +262,17 @@ class Conversation(ConversationBase):
 
 class ConversationMessageBase(BaseSchema):
     """Base conversation message schema"""
-    conversation_id: str = Field(..., description="Conversation ID")
-    sender_type: str = Field(..., description="Sender type (patient, staff, system)")
+    # The conversation is identified by the request path; the endpoint forces
+    # sender_type for staff sends, so neither is required in the body.
+    conversation_id: Optional[UUID] = Field(None, description="Conversation ID")
+    sender_type: str = Field(default="staff", description="Sender type (patient, staff, system)")
     content: str = Field(..., description="Message content")
     attachments: Optional[List[str]] = Field(None, description="Message attachments")
 
+    @field_validator("attachments", mode="before")
+    @classmethod
+    def parse_attachments(cls, value):
+        return _parse_json_list(value)
 
 class ConversationMessageCreate(ConversationMessageBase):
     """Schema for creating a conversation message"""
@@ -247,8 +281,8 @@ class ConversationMessageCreate(ConversationMessageBase):
 
 class ConversationMessage(ConversationMessageBase):
     """Complete conversation message schema"""
-    id: str
-    sender_id: Optional[str] = None
+    id: UUID
+    sender_id: Optional[UUID] = None
     is_read: bool = False
     read_at: Optional[datetime] = None
     external_id: Optional[str] = None

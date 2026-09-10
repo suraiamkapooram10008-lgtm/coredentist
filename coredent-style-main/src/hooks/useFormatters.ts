@@ -4,6 +4,7 @@
  */
 
 import { useCallback } from 'react';
+import { formatCurrency as formatCurrencyUtil } from '@/lib/utils';
 
 interface UseFormattersResult {
   formatCurrency: (amount: number) => string;
@@ -14,22 +15,20 @@ interface UseFormattersResult {
 
 /**
  * Hook to get formatting utilities
- * 
+ *
+ * @param currency - ISO 4217 code used for money formatting (default 'USD')
+ *
  * @returns Object with formatting functions
- * 
+ *
  * @example
- * const { formatCurrency, formatAppointmentType } = useFormatters();
+ * const { formatCurrency, formatAppointmentType } = useFormatters('INR');
  * const price = formatCurrency(100);
  * const type = formatAppointmentType('root_canal');
  */
-export function useFormatters(): UseFormattersResult {
+export function useFormatters(currency: string = 'USD'): UseFormattersResult {
   const formatCurrency = useCallback((amount: number): string => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      maximumFractionDigits: 0,
-    }).format(amount);
-  }, []);
+    return formatCurrencyUtil(amount, currency, 'en-US', { maximumFractionDigits: 0 });
+  }, [currency]);
 
   const formatAppointmentType = useCallback((value: string): string => {
     if (!value) return '';

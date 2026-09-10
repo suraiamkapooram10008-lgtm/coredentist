@@ -3,8 +3,7 @@ Marketing Models
 Campaign and marketing automation tracking
 """
 
-from datetime import datetime
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, JSON
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, JSON, func
 from sqlalchemy.orm import relationship
 import uuid
 import enum
@@ -43,8 +42,8 @@ class Campaign(Base):
     status = Column(String(50), nullable=False, default="draft")
     audience_type = Column(String(50), nullable=False, default="all_patients")
     target_criteria = Column(JSON, nullable=True)
-    scheduled_date = Column(DateTime, nullable=True)
-    sent_date = Column(DateTime, nullable=True)
+    scheduled_date = Column(DateTime(timezone=True), nullable=True)
+    sent_date = Column(DateTime(timezone=True), nullable=True)
     total_recipients = Column(Integer, default=0)
     sent_count = Column(Integer, default=0)
     opened_count = Column(Integer, default=0)
@@ -52,8 +51,8 @@ class Campaign(Base):
     bounced_count = Column(Integer, default=0)
     unsubscribed_count = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     practice = relationship("Practice", back_populates="campaigns")
 
 
@@ -66,8 +65,8 @@ class MarketingTemplate(Base):
     body_content = Column(Text, nullable=True)
     template_type = Column(String(50), nullable=False, default="email")
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     practice = relationship("Practice", back_populates="marketing_templates")
 
 
@@ -78,7 +77,7 @@ class CampaignSegment(Base):
     name = Column(String(255), nullable=False)
     criteria = Column(JSON, nullable=True)
     patient_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     campaign = relationship("Campaign", backref="segments")
 
 
@@ -90,12 +89,12 @@ class MarketingEmail(Base):
     email_address = Column(String(255), nullable=False)
     subject = Column(String(255), nullable=True)
     status = Column(String(50), default="pending")
-    opened_at = Column(DateTime, nullable=True)
-    clicked_at = Column(DateTime, nullable=True)
+    opened_at = Column(DateTime(timezone=True), nullable=True)
+    clicked_at = Column(DateTime(timezone=True), nullable=True)
     bounced = Column(Boolean, default=False)
     unsubscribed = Column(Boolean, default=False)
-    sent_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     campaign = relationship("Campaign", backref="emails")
     patient = relationship("Patient", backref="marketing_emails")
 
@@ -107,7 +106,7 @@ class NewsletterSubscription(Base):
     patient_id = Column(String, ForeignKey("patients.id"), nullable=True)
     email = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
-    subscribed_at = Column(DateTime, default=datetime.utcnow)
-    unsubscribed_at = Column(DateTime, nullable=True)
+    subscribed_at = Column(DateTime(timezone=True), server_default=func.now())
+    unsubscribed_at = Column(DateTime(timezone=True), nullable=True)
     practice = relationship("Practice", back_populates="newsletter_subscriptions")
     patient = relationship("Patient", backref="newsletter_subscription")

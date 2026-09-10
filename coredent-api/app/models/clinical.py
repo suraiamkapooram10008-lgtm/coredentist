@@ -20,6 +20,8 @@ class NoteType(str, enum.Enum):
     TREATMENT = "treatment"
     CONSULTATION = "consultation"
     FOLLOW_UP = "follow_up"
+    PROCEDURE = "procedure"
+    GENERAL = "general"
 
 
 class ClinicalNote(Base):
@@ -32,7 +34,15 @@ class ClinicalNote(Base):
     appointment_id = Column(UUID(as_uuid=True), ForeignKey("appointments.id"))
 
     note_type = Column(Enum(NoteType), nullable=False)
-    content = Column(Text, nullable=False)
+    content = Column(Text, nullable=True)
+    # SOAP breakdown (used when note_type == SOAP); content stores the free-text
+    # body for non-SOAP note types. All are nullable so both shapes round-trip.
+    subjective = Column(Text, nullable=True)
+    objective = Column(Text, nullable=True)
+    assessment = Column(Text, nullable=True)
+    plan = Column(Text, nullable=True)
+    signed_at = Column(DateTime(timezone=True), nullable=True)
+    signed_by = Column(String(255), nullable=True)
     attachments = Column(JSON, default=[])  # Array of file URLs
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

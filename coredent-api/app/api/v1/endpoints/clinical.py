@@ -34,21 +34,19 @@ async def list_perio_charts(
     """
     List periodontal charts for the practice or a specific patient
     """
-    query = select(PerioChart).options(selectinload(PerioChart.entries))
+    # M1 FIX: tenant filter in SQL via a patient join (was: full-table scan
+    # + per-row patient lookup in Python).
+    query = (
+        select(PerioChart)
+        .join(Patient, PerioChart.patient_id == Patient.id)
+        .where(Patient.practice_id == current_user.practice_id)
+        .options(selectinload(PerioChart.entries))
+    )
     if patient_id:
         query = query.where(PerioChart.patient_id == patient_id)
 
     result = await db.execute(query)
     charts = result.scalars().all()
-
-    # Filter by practice access
-    filtered_charts = []
-    for chart in charts:
-        patient_result = await db.execute(
-            select(Patient).where(Patient.id == chart.patient_id, Patient.practice_id == current_user.practice_id)
-        )
-        if patient_result.scalar_one_or_none():
-            filtered_charts.append(chart)
 
     # HIPAA: Log full perio chart list fetching
     await log_audit_event(
@@ -57,13 +55,14 @@ async def list_perio_charts(
     await db.commit()
 
     return PerioChartListResponse(
-        perio_charts=filtered_charts,
-        count=len(filtered_charts)
+        perio_charts=charts,
+        count=len(charts)
     )
 
 
 @router.post("/perio/", response_model=PerioChartResponse)
 async def create_perio_chart(
+    request: Request,
     chart_data: PerioChartCreate,
     current_user: User = Depends(require_role(UserRole.DENTIST, UserRole.HYGIENIST, UserRole.OWNER)),
     db: AsyncSession = Depends(get_db),
@@ -102,6 +101,16 @@ async def create_perio_chart(
         )
         db.add(entry)
 
+    await db.flush()
+    await log_audit_event(
+        db,
+        current_user,
+        "perio_chart_created",
+        "perio_chart",
+        chart.id,
+        request,
+        changes={"entry_count": len(chart_data.entries)},
+    )
     await db.commit()
     result = await db.execute(
         select(PerioChart)

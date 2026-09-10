@@ -37,7 +37,7 @@ class CommunicationsEngine:
             result = result.replace(f"[{key}]", str(value or ''))
         return result
 
-    def send_sms(self, to_phone: str, body: str, practice: Practice) -> Dict[str, Any]:
+    def send_sms(self, to_phone: str, body: str) -> Dict[str, Any]:
         """Send SMS via Twilio and fail closed when the provider is unavailable."""
         if not to_phone:
             return {"status": "failed", "error": "No phone number provided"}
@@ -61,11 +61,11 @@ class CommunicationsEngine:
             logger.error("Twilio SMS delivery failed: %s", exc)
             return {"status": "failed", "error": "SMS delivery failed"}
 
-    def send_sms_with_retry(self, to_phone: str, body: str, practice: Practice, retries: int = 3, backoff: float = 0.5) -> Dict[str, Any]:
+    def send_sms_with_retry(self, to_phone: str, body: str, retries: int = 3, backoff: float = 0.5) -> Dict[str, Any]:
         """Send SMS with simple retry/backoff for transient failures"""
         attempt = 0
         while attempt <= retries:
-            result = self.send_sms(to_phone, body, practice)
+            result = self.send_sms(to_phone, body)
             if result.get("status") != "failed":
                 return result
             attempt += 1
@@ -80,19 +80,31 @@ class CommunicationsEngine:
         """
         logger.info("Starting Automated Recall Engine...")
         now = datetime.now(timezone.utc)
+        counts = {
+            "practices_scanned": 0,
+            "schedules_scanned": 0,
+            "appointments_scanned": 0,
+            "created": 0,
+            "existing": 0,
+            "published": 0,
+            "publish_failed": 0,
+            "errors": 0,
+        }
 
         # 1. Get all active practices
-        practices = self.db.query(Practice).filter(Practice.is_active == True).all()
+        practices = self.db.query(Practice).filter(Practice.is_active.is_(True)).all()
+        counts["practices_scanned"] = len(practices)
 
         for practice in practices:
             # 2. Get active active recall schedules for this practice
             schedules = self.db.query(ReminderSchedule).filter(
                 and_(
                     ReminderSchedule.practice_id == practice.id,
-                    ReminderSchedule.is_active == True,
+                    ReminderSchedule.is_active.is_(True),
                     ReminderSchedule.reminder_type == ReminderType.RECALL
                 )
             ).all()
+            counts["schedules_scanned"] += len(schedules)
 
             for schedule in schedules:
                 if not schedule.template_id:
@@ -105,22 +117,25 @@ class CommunicationsEngine:
                 # Logic: Find patients whose LAST completed hygiene appointment was X days ago
                 # and who do NOT have a future matching appointment.
 
-                # Lookback date
-                target_date = now - timedelta(days=schedule.days_before) # Actually for recalls, days_before is positive "days since last visit"
-                target_date_start = target_date.replace(hour=0, minute=0, second=0)
-                target_date_end = target_date.replace(hour=23, minute=59, second=59)
+                # H-3 FIX: Compute target date using the practice's local calendar
+                # and convert to exact UTC half-open query bounds.
+                from app.core.business_time import business_date, day_bounds_utc, practice_timezone_of
+                practice_tz = practice_timezone_of(practice)
+                local_today = business_date(practice_tz, now)
+                target_day = local_today - timedelta(days=schedule.days_before)
+                target_start_utc, target_end_utc = day_bounds_utc(practice_tz, target_day)
 
-                # Complex query simplified for demo:
                 # Find appointments that were completed on target_date that are CLEANING/EXAM
                 last_appointments = self.db.query(Appointment).filter(
                     and_(
                         Appointment.practice_id == practice.id,
                         Appointment.status == AppointmentStatus.COMPLETED,
                         Appointment.appointment_type.in_([AppointmentTypeEnum.CLEANING, AppointmentTypeEnum.EXAM]),
-                        Appointment.end_time >= target_date_start,
-                        Appointment.end_time <= target_date_end
+                        Appointment.end_time >= target_start_utc,
+                        Appointment.end_time < target_end_utc
                     )
                 ).all()
+                counts["appointments_scanned"] += len(last_appointments)
 
                 for apt in last_appointments:
                     patient = self.db.query(Patient).get(apt.patient_id)
@@ -149,8 +164,32 @@ class CommunicationsEngine:
 
                     body = self._replace_variables(template.content, context)
 
+                    # Persist one recall delivery per schedule/appointment before
+                    # publishing. A duplicated recall-engine run converges on
+                    # this key; broker publication can be recovered from the
+                    # PENDING row by the periodic dispatcher.
+                    dedupe_key = f"recall:{schedule.id}:{apt.id}"
                     try:
-                        # Record message
+                        existing = self.db.query(PatientMessage).filter(
+                            PatientMessage.practice_id == practice.id,
+                            PatientMessage.dedupe_key == dedupe_key,
+                        ).first()
+                        if existing:
+                            counts["existing"] += 1
+                            from app.core.communication_tasks import send_message_task
+
+                            try:
+                                send_message_task.delay(str(existing.id))
+                                counts["published"] += 1
+                            except Exception as publish_exc:
+                                counts["publish_failed"] += 1
+                                logger.warning(
+                                    "Recall %s remains pending for dispatcher recovery: %s",
+                                    existing.id,
+                                    publish_exc,
+                                )
+                            continue
+
                         msg = PatientMessage(
                             practice_id=practice.id,
                             patient_id=patient.id,
@@ -161,29 +200,32 @@ class CommunicationsEngine:
                             content=body,
                             recipient_phone=patient.phone,
                             recipient_email=patient.email,
-                            sent_at=now,
-                            category="recall"
+                            dedupe_key=dedupe_key,
+                            next_attempt_at=now,
                         )
-
-                        if template.message_type == MessageType.SMS:
-                            result = self.send_sms_with_retry(patient.phone, body, practice)
-                            if result.get("status") == "failed":
-                                msg.status = MessageStatus.FAILED
-                                msg.error_message = result.get("error")
-                            else:
-                                msg.status = MessageStatus.SENT
-                                msg.external_id = result.get("external_id")
-                                msg.sent_at = now
-                        else:
-                            msg.status = MessageStatus.FAILED
-                            msg.error_message = "Email recall delivery is not configured"
-
                         self.db.add(msg)
                         self.db.commit()
-                        logger.info(f"Recall sent to {patient.id} for practice {practice.name}")
-                    except Exception as e:
+                        counts["created"] += 1
+
+                        from app.core.communication_tasks import send_message_task
+
+                        try:
+                            send_message_task.delay(str(msg.id))
+                            counts["published"] += 1
+                        except Exception as publish_exc:
+                            counts["publish_failed"] += 1
+                            logger.warning(
+                                "Recall %s remains pending for dispatcher recovery: %s",
+                                msg.id,
+                                publish_exc,
+                            )
+                        logger.info("Recall queued for %s at practice %s", patient.id, practice.id)
+                    except Exception as exc:
+                        counts["errors"] += 1
                         self.db.rollback()
-                        logger.error(f"Failed to send recall to {patient.id}: {str(e)}")
+                        logger.error("Failed to queue recall for %s: %s", patient.id, exc)
+
+        return {"status": "completed", **counts}
 
     def handle_inbound_sms(self, from_phone: str, to_phone: str, body: str, external_id: str):
         """
@@ -195,14 +237,42 @@ class CommunicationsEngine:
         # Clean phone number
         cleaned_phone = from_phone[-10:] if len(from_phone) >= 10 else from_phone
 
-        # 1. Match phone number to a patient
-        patient = self.db.query(Patient).filter(
+        # 1. Match phone number to a patient without choosing arbitrarily.
+        # NOTE (explicit): no To->practice binding exists (Practice has no
+        # Twilio number column), so a last-10 collision across two practices
+        # cannot be routed by recipient. Refuse ambiguous matches instead of
+        # misattributing to the wrong tenant.
+        patient_query = self.db.query(Patient).filter(
             func.lower(Patient.phone).like(f"%{cleaned_phone}%")
-        ).first()
+        )
+        if isinstance(self.db, Session):
+            candidates = patient_query.limit(2).all()
+            if len(candidates) != 1:
+                logger.warning("Inbound SMS rejected: phone matched %s active patient records", len(candidates))
+                return False
+            patient = candidates[0]
+        else:
+            # Lightweight mocks: same exactly-one rule, no arbitrary first().
+            candidates = patient_query.limit(2).all()
+            if len(candidates) != 1:
+                logger.warning("Inbound SMS rejected: phone matched %s records", len(candidates))
+                return False
+            patient = candidates[0]
 
         if not patient:
-            logger.warning(f"Inbound SMS from unknown number: {from_phone}")
+            # PHI hygiene: never write a full phone number to logs. Keep the
+            # last 4 digits for operator triage.
+            redacted_number = f"***{from_phone[-4:]}" if from_phone and len(str(from_phone)) >= 4 else "***"
+            logger.warning(f"Inbound SMS from unknown number: {redacted_number}")
             return False
+
+        # Twilio can retry a webhook; never persist the same provider message twice.
+        if isinstance(self.db, Session):
+            duplicate = self.db.query(ConversationMessage).filter(
+                ConversationMessage.external_id == external_id
+            ).first()
+            if duplicate:
+                return True
 
         practice_id = patient.practice_id
 
