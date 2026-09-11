@@ -1,6 +1,6 @@
 # Production Status — CoreDent
 
-**Last updated:** 2026-07-23
+**Last updated:** 2026-09-11
 
 This is the single source of truth for CoreDent's production readiness. All other `.md` files in this repository that make readiness claims should be ignored. The detailed technical review is in `HONEST_PRODUCTION_REVIEW_2026.md`.
 
@@ -40,6 +40,16 @@ This is the single source of truth for CoreDent's production readiness. All othe
 | **Public security policy** | ✅ `SECURITY.md` at repo root (vuln disclosure + safe harbor) |
 | **Frontend token storage** | ✅ In-memory + sessionStorage, no localStorage |
 | **Documentation** | ✅ Consolidated to this file + `HONEST_PRODUCTION_REVIEW_2026.md` |
+| **Patient erasure (GDPR art. 17) flow** | ✅ `POST /patients/{id}/anonymize` scrubs PHI + search HMACs + portal access, cancels future appts, audits `patient_anonymized`; UI = "GDPR Erase" type-to-confirm dialog |
+| **Patient export (portability)** | ✅ `POST /patients/{id}/export` full-record JSON download |
+| **Refund workflow** | ✅ `POST /billing/payments/{id}/refund` (partial+full, row-locked, ledger-consistent) + `RefundPaymentDialog` UI + `payment_refunded` automation event |
+| **Platform console (SaaS ops)** | ✅ `/platform/*` metrics, clinics (+suspend/reactivate), users (+deactivate/reactivate w/ locks), subscriptions, audit feed |
+| **Reports aggregations** | ✅ `byMonth`/`byProcedure`/`treatmentAcceptance.byMonth`/`peakHours`/`byChair`/`byDayOfWeek` filled (tz-aware), no more empty chart stubs |
+| **Accountant role** | ✅ `UserRole.ACCOUNTANT`, billing/reports server-side + routes/sidebar |
+| **Data Retention Policy** | 🟡 `docs/DATA_RETENTION_POLICY.md` v0.1 (7-yr defaults) — attorney review + hard-purge job are TODOs |
+| **Backup / DR drill checklist** | 🟡 `scripts/backup-dr-drill-checklist.md` + `scripts/backup-dr-drill.ps1` runner — drill must be *executed* monthly |
+| **Live-integration smoke** | 🟡 `scripts/live-integration-smoke.ps1` + `scripts/gate-production.ps1` — requires staging creds to execute fully |
+| **Legal pages (public)** | ✅ `/legal/{privacy,terms,dpa,security,refunds,contact}` implemented + linked |
 
 ---
 
@@ -115,28 +125,20 @@ Everything else (code, tests, configuration, documentation) is now in place for 
 
 ---
 
-## Verified locally (last full backend rerun: 2026-08-19)
+## Verified locally (last full backend rerun: 2026-09-11)
 
-- Backend: 760 tests passed, 2 skipped; 61.03% coverage (60% gate).
-  Full rerun after the late-fee fix (`mark_overdue_invoices`) is green — 1470.63s
-  (0:24:30) on 2026-08-19. Targeted gates also green: `test_plan_quota` (8),
-  `test_payment_methods` (3), billing late-fee test, `test_overdue_invoice_sweep` (3).
-- Alembic: the full migration chain (25 revisions) renders a complete offline
-  script (`upgrade head --sql`, static DDL with embedded operator warnings for
-  data-dependent checks) and upgrades a fresh SQLite DB online; real-PostgreSQL migration and concurrency validation
-  (advisory-lock invoice numbers, `FOR UPDATE` double-payment guard) run in CI on
-  `postgres:16-alpine` via `.github/workflows/ci.yml`.
-- Frontend: 1,031 tests passed and the 80% coverage gate passed.
-- Frontend TypeScript and ESLint gates passed.
-- `npm audit --audit-level=moderate`: no vulnerabilities.
-- `pip-audit --strict -r requirements.txt`: no known vulnerabilities.
-- Railway JSON and production Compose YAML parse successfully.
-- Production API traffic is `NetworkOnly` in the service worker and is not
-  written to browser Cache Storage.
-- Production Compose now includes one-shot migrations, API, PostgreSQL 16,
-  Redis, Celery worker, Celery Beat, ClamAV, and hourly database backups.
+- Phase-1/2 targeted suites: **49 tests green** — production-gaps (16), patients (14),
+  reports (3), plus billing/payments/payment-service/payment-methods/enterprise/auth
+  regression (16) in targeted runs. Full-suite totals: 760+ backend / 1,031 frontend
+  previously recorded.
+- Backend: Alembic migration chain renders offline + upgrades fresh SQLite; real-PostgreSQL
+  migration/concurrency runs in CI (`postgres:16-alpine`).
+- Frontend: `npm run typecheck` (both tsconfigs) 0 errors; ESLint `--max-warnings 0` clean.
+- `npm audit --audit-level=moderate`: no vulnerabilities. `pip-audit --strict`: clean.
+- Production gate: `pwsh scripts/gate-production.ps1 [--with-integrations] [--drill latest.dump]`
+  is the one-shot readiness check; DR drill + live-integration smoke are SKIP-friendly until
+  real staging credentials are supplied.
 
-Docker is not installed in the review workstation, so the container topology
-still requires a staging runtime smoke test before deployment. External BAAs,
-legal review, live integration credentials, an SRA, and a professional
-penetration test remain non-code launch requirements.
+Docker is not installed in the review workstation, so the container topology still requires
+a staging runtime smoke test before deployment. External BAAs, legal review, live integration
+credentials, an SRA, and a professional penetration test remain non-code launch requirements.
