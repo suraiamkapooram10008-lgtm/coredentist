@@ -501,6 +501,120 @@ async def delete_patient(
     await db.commit()
 
 
+@router.post("/{patient_id}/anonymize", response_model=PatientResponse)
+async def anonymize_patient(
+    request: Request,
+    patient_id: UUID,
+    practice_id: UUID = Depends(get_current_practice_id),
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    _csrf: bool = Depends(verify_csrf),
+    db: AsyncSession = Depends(get_db),
+) -> PatientResponse:
+    """Anonymize a patient's PHI in place (GDPR right-to-erasure).
+
+    A hard DELETE would be blocked by historical custodial rows (invoices,
+    claims, payment plans, subscriptions) that legally must be retained and
+    reference this patient. Instead we irreversibly scrub every PHI column
+    while keeping the (now anonymous) row for referential integrity. Portal
+    access is revoked and future appointments cancelled, mirroring the soft
+    delete flow. The write-once audit row records the erasure.
+
+    NOTE: this is a one-way operation; there is no "restore".
+    """
+    result = await db.execute(
+        select(Patient).where(
+            Patient.id == patient_id,
+            Patient.practice_id == practice_id,
+        )
+    )
+    patient = result.scalar_one_or_none()
+
+    if not patient:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient not found",
+        )
+
+    # Cancel future appointments (same policy as soft delete).
+    from app.models.appointment import Appointment, AppointmentStatus
+    future_appts = await db.execute(
+        select(Appointment).where(
+            Appointment.patient_id == patient_id,
+            Appointment.practice_id == practice_id,
+            Appointment.start_time >= datetime.now(timezone.utc),
+            Appointment.status.notin_([
+                AppointmentStatus.CANCELLED,
+                AppointmentStatus.COMPLETED,
+                AppointmentStatus.NO_SHOW,
+            ]),
+        )
+    )
+    cancelled_appointments: list = []
+    for apt in future_appts.scalars().all():
+        apt.status = AppointmentStatus.CANCELLED
+        cancelled_appointments.append(apt.id)
+
+    # Revoke patient-portal access (sessions + token).
+    from app.models.patient import PatientPortalSession
+    await db.execute(
+        PatientPortalSession.__table__.update()
+        .where(
+            PatientPortalSession.patient_id == patient_id,
+            PatientPortalSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(timezone.utc))
+    )
+    patient.portal_access_token = None
+    patient.portal_token_expires = None
+
+    # Scrub every PHI column. Search HMACs must go too or the patient
+    # remains findable by email/phone/name equality lookups.
+    patient.first_name = "[deleted]"
+    patient.last_name = "[deleted]"
+    patient.date_of_birth = None
+    patient.gender = None
+    patient.email = None
+    patient.phone = None
+    patient.address_street = None
+    patient.address_city = None
+    patient.address_state = None
+    patient.address_zip = None
+    patient.abha_id = None
+    patient.ssn_last_four = None
+    patient.emergency_contact = {}
+    patient.medical_alerts = []
+    patient.medical_history = {}
+    patient.dental_history = {}
+    patient.insurance_info = None
+    patient.search_index_email = None
+    patient.search_index_phone = None
+    patient.search_index_last_name = None
+    patient.status = PatientStatus.INACTIVE
+
+    await log_audit_event(
+        db,
+        current_user,
+        "patient_anonymized",
+        "patient",
+        patient.id,
+        request,
+        {
+            "scrubbed_fields": [
+                "first_name", "last_name", "date_of_birth", "gender",
+                "email", "phone", "address", "abha_id", "ssn_last_four",
+                "emergency_contact", "medical_history", "dental_history",
+                "insurance_info", "search_indexes", "portal_access",
+            ],
+            "future_appointments_cancelled": len(cancelled_appointments),
+        },
+    )
+    await db.commit()
+
+    # Reload so the response has consistent clean state.
+    await db.refresh(patient)
+    return patient
+
+
 @router.get("/{patient_id}/export", response_model=PatientExportResponse)
 async def export_patient_data(
     request: Request,

@@ -33,6 +33,7 @@ import {
 import { InvoiceCard } from '@/components/billing/InvoiceCard';
 import { CreateInvoiceDialog } from '@/components/billing/CreateInvoiceDialog';
 import { RecordPaymentDialog } from '@/components/billing/RecordPaymentDialog';
+import { RefundPaymentDialog } from '@/components/billing/RefundPaymentDialog';
 import { InvoiceDetails } from '@/components/billing/InvoiceDetails';
 import { billingApi } from '@/services/billingApi';
 import { useAuth } from '@/contexts/auth-context';
@@ -40,7 +41,7 @@ import { settingsApi } from '@/services/api';
 import { triggerAutomation } from '@/services/automationApi';
 import { useCurrencyFormatter } from '@/hooks/useCurrencyFormatter';
 import { logger } from '@/lib/logger';
-import type { Invoice, PaymentMethod } from '@/types/billing';
+import type { Invoice, InvoicePayment, PaymentMethod } from '@/types/billing';
 
 type TabFilter = 'all' | 'pending' | 'paid' | 'overdue';
 
@@ -59,6 +60,10 @@ export default function Billing() {
   const [paymentInvoice, setPaymentInvoice] = useState<Invoice | null>(null);
   const [viewingInvoice, setViewingInvoice] = useState<Invoice | null>(null);
   const [deletingInvoice, setDeletingInvoice] = useState<Invoice | null>(null);
+  const [refundTarget, setRefundTarget] = useState<{
+    invoice: Invoice;
+    payment: InvoicePayment;
+  } | null>(null);
 
   // Load invoices with React Query
   const { data: invoices = [], isLoading: isLoadingInvoices, isError: invoicesError } = useQuery({
@@ -201,6 +206,52 @@ export default function Billing() {
       toast({
         title: 'Error',
         description: 'Failed to record payment. The dialog has been kept open so you can retry.',
+        variant: 'destructive',
+      });
+      return false;
+    }
+  };
+
+  // Refund a recorded payment. Returns true on success so the dialog can dismiss.
+  const handleRefund = async (data: {
+    paymentId: string;
+    amount: number;
+    reason?: string;
+  }): Promise<boolean> => {
+    try {
+      const result = await billingApi.refundPayment(data.paymentId, {
+        amount: data.amount,
+        reason: data.reason,
+      });
+      queryClient.invalidateQueries({ queryKey: ['billing'] });
+      if (viewingInvoice?.id === result.invoice.id) {
+        setViewingInvoice(result.invoice);
+      }
+
+      toast({
+        title: 'Payment refunded',
+        description: `${formatCurrency(data.amount)} refunded`,
+      });
+
+      // Trigger payment_refunded automation (best-effort, like payments).
+      Promise.resolve(triggerAutomation('payment_refunded', {
+        paymentId: data.paymentId,
+        invoiceId: result.invoice.id,
+        patientName: result.invoice.patientName,
+        patientEmail: result.invoice.patientEmail,
+        amount: data.amount,
+        clinicName,
+      })).catch((automationError) => {
+        logger.warn('payment_refunded automation failed', {
+          error: automationError instanceof Error ? automationError.message : String(automationError),
+        });
+      });
+
+      return true;
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to refund payment. The dialog has been kept open so you can retry.',
         variant: 'destructive',
       });
       return false;
@@ -443,6 +494,18 @@ export default function Billing() {
         }}
         onDownload={() => viewingInvoice && handleDownload(viewingInvoice)}
         onSend={() => viewingInvoice && handleSend(viewingInvoice)}
+        onRefund={(payment) => {
+          if (!viewingInvoice) return;
+          setRefundTarget({ invoice: viewingInvoice, payment });
+        }}
+      />
+
+      <RefundPaymentDialog
+        open={!!refundTarget}
+        onOpenChange={(open) => !open && setRefundTarget(null)}
+        invoice={refundTarget?.invoice ?? null}
+        payment={refundTarget?.payment ?? null}
+        onSubmit={handleRefund}
       />
 
       <AlertDialog open={!!deletingInvoice} onOpenChange={(open) => !open && setDeletingInvoice(null)}>

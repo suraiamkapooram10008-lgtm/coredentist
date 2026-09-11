@@ -27,8 +27,10 @@ import { PatientOverviewTab } from '@/components/patients/PatientOverviewTab';
 import { PatientMedicalTab } from '@/components/patients/PatientMedicalTab';
 import { PatientDialog } from '@/components/patients/PatientDialog';
 import { AddNoteDialog } from '@/components/patients/AddNoteDialog';
+import { AnonymizePatientDialog } from '@/components/patients/AnonymizePatientDialog';
 import { AppointmentHistory } from '@/components/patients/AppointmentHistory';
 import { AttachmentsList } from '@/components/patients/AttachmentsList';
+import { Eraser } from 'lucide-react';
 import type { PatientRecord } from '@/types/patient';
 import type { ApiResponse } from '@/types/api';
 
@@ -41,6 +43,7 @@ export default function PatientProfile() {
   // Dialog States
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isAddNoteDialogOpen, setIsAddNoteDialogOpen] = useState(false);
+  const [isAnonymizeOpen, setIsAnonymizeOpen] = useState(false);
 
   // Region Config (US vs INDIA)
   const region = user?.practiceCountry || 'US';
@@ -188,6 +191,18 @@ export default function PatientProfile() {
               GDPR Export
             </Button>
           )}
+          {user?.role && ['owner', 'admin'].includes(user.role.toLowerCase()) && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsAnonymizeOpen(true)}
+              className="flex items-center gap-2 border-destructive/50 text-destructive hover:bg-destructive/10"
+              title="Permanently erase this patient's personal data (GDPR right-to-erasure). Billing records are retained anonymized."
+            >
+              <Eraser className="h-4 w-4" />
+              GDPR Erase
+            </Button>
+          )}
           <Button
             size="sm"
             onClick={() => navigate(`/schedule?patientId=${patient.id}&patientName=${encodeURIComponent(patient.firstName + ' ' + patient.lastName)}`)}
@@ -278,6 +293,16 @@ export default function PatientProfile() {
         onOpenChange={setIsAddNoteDialogOpen} 
         patientId={patient.id}
         onSave={() => loadPatient()}
+      />
+
+      <AnonymizePatientDialog
+        open={isAnonymizeOpen}
+        onOpenChange={setIsAnonymizeOpen}
+        patient={patient}
+        onAnonymized={() => {
+          setIsAnonymizeOpen(false);
+          navigate('/patients', { replace: true });
+        }}
       />
     </div>
   );

@@ -210,6 +210,98 @@ async def list_users(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
 
+class UserStatusUpdate(BaseModel):
+    """Body for platform user deactivate/reactivate. Empty on purpose."""
+    reason: Optional[str] = None
+
+
+async def _set_platform_user_active(
+    *,
+    user_id: UUID,
+    is_active: bool,
+    reason: Optional[str],
+    request: Optional[Request],
+    current_user: User,
+    db: AsyncSession,
+) -> dict:
+    """Shared suspend/reactivate logic with self-deactivation + super-admin guard."""
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="You cannot deactivate your own super-admin account.",
+        )
+    try:
+        target = await PlatformService.set_user_active(
+            db, user_id, is_active=is_active
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+    action = "platform_user_reactivated" if is_active else "platform_user_deactivated"
+    await log_audit_event(
+        db,
+        current_user,
+        action,
+        "user",
+        target.id,
+        request,
+        changes={
+            "target_email": target.email,
+            "is_active": is_active,
+            "reason": reason,
+        },
+    )
+    await db.commit()
+    return {
+        "id": str(target.id),
+        "email": target.email,
+        "is_active": bool(target.is_active),
+        "message": f"User {'reactivated' if is_active else 'deactivated'}",
+    }
+
+
+@router.put("/users/{user_id}/deactivate")
+async def deactivate_platform_user(
+    user_id: UUID,
+    body: Optional[UserStatusUpdate] = None,
+    request: Request = None,
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> dict:
+    """Deactivate any user platform-wide (reversible; no data deleted)."""
+    return await _set_platform_user_active(
+        user_id=user_id,
+        is_active=False,
+        reason=(body.reason if body else None),
+        request=request,
+        current_user=current_user,
+        db=db,
+    )
+
+
+@router.put("/users/{user_id}/reactivate")
+async def reactivate_platform_user(
+    user_id: UUID,
+    body: Optional[UserStatusUpdate] = None,
+    request: Request = None,
+    current_user: User = Depends(require_role(UserRole.SUPER_ADMIN)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> dict:
+    """Reactivate a deactivated user platform-wide."""
+    return await _set_platform_user_active(
+        user_id=user_id,
+        is_active=True,
+        reason=(body.reason if body else None),
+        request=request,
+        current_user=current_user,
+        db=db,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Billing / subscriptions
 # ---------------------------------------------------------------------------

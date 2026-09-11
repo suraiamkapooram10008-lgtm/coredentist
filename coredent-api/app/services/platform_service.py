@@ -386,6 +386,25 @@ class PlatformService:
         ]
         return {"users": items, "total": total, "limit": limit, "offset": offset}
 
+    @staticmethod
+    async def set_user_active(
+        db: AsyncSession, user_id: UUID, *, is_active: bool
+    ) -> User:
+        """Deactivate (is_active=False) or reactivate a user platform-wide.
+
+        SUPER_ADMIN accounts cannot be deactivated this way: locking out the
+        last operator would orphan the console. Returns the user for logging.
+        """
+        result = await db.execute(select(User).where(User.id == user_id))
+        target = result.scalar_one_or_none()
+        if not target:
+            raise ValueError("User not found")
+        if target.role == UserRole.SUPER_ADMIN:
+            raise PermissionError("Super-admin accounts cannot be deactivated here")
+        target.is_active = is_active
+        await db.flush()
+        return target
+
     # ------------------------------------------------------------------
     # Billing / subscriptions
     # ------------------------------------------------------------------

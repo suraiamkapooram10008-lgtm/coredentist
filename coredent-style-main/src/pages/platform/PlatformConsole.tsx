@@ -1,4 +1,4 @@
-// ============================================
+﻿// ============================================
 // CoreDent SaaS - Platform (Super Admin) Console
 // Cross-tenant operations console for the SaaS operator.
 // ============================================
@@ -7,8 +7,8 @@ import { useState, useCallback, useEffect } from 'react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useApiRequest } from '@/hooks/useApiRequest';
-import { platformApi, suspendClinicNow, reactivateClinicNow } from '@/services/platformApi';
-import type { PlatformClinic } from '@/services/platformApi';
+import { platformApi, suspendClinicNow, reactivateClinicNow, deactivateUserNow, reactivateUserNow } from '@/services/platformApi';
+import type { PlatformClinic, PlatformUser } from '@/services/platformApi';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -22,6 +22,7 @@ export default function PlatformConsole() {
   const [activeTab, setActiveTab] = useState('overview');
   const [search, setSearch] = useState('');
   const [confirmTarget, setConfirmTarget] = useState<PlatformClinic | null>(null);
+  const [userConfirmTarget, setUserConfirmTarget] = useState<PlatformUser | null>(null);
   const [isToggling, setIsToggling] = useState(false);
 
   // ---------------- Data fetchers (stable identities) ----------------
@@ -90,12 +91,37 @@ export default function PlatformConsole() {
     }
   };
 
+  const handleToggleUser = async () => {
+    if (!userConfirmTarget) return;
+    setIsToggling(true);
+    try {
+      if (userConfirmTarget.is_active) {
+        await deactivateUserNow(userConfirmTarget.id, 'Deactivated from platform console');
+        toast({ title: 'User deactivated', description: userConfirmTarget.email });
+      } else {
+        await reactivateUserNow(userConfirmTarget.id);
+        toast({ title: 'User reactivated', description: userConfirmTarget.email });
+      }
+      setUserConfirmTarget(null);
+      loadUsers();
+      loadMetrics();
+    } catch (err) {
+      toast({
+        title: 'Action failed',
+        description: err instanceof Error ? err.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsToggling(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Platform Console</h1>
         <p className="text-muted-foreground">
-          Cross-tenant SaaS operations — clinics, subscriptions, users and security events.
+          Cross-tenant SaaS operations â€” clinics, subscriptions, users and security events.
         </p>
       </div>
 
@@ -117,6 +143,7 @@ export default function PlatformConsole() {
           onToggleClinic={setConfirmTarget}
           users={usersPage?.users ?? []}
           isLoadingUsers={isLoadingUsers}
+          onToggleUser={setUserConfirmTarget}
           subs={subsPage?.subscriptions ?? []}
           isLoadingSubs={isLoadingSubs}
           events={eventsPage?.events ?? []}
@@ -142,6 +169,28 @@ export default function PlatformConsole() {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isToggling}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleToggleClinic} disabled={isToggling}>
+              {isToggling ? 'Working...' : 'Confirm'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Deactivate / reactivate user confirm */}
+      <AlertDialog open={!!userConfirmTarget} onOpenChange={(open) => !open && setUserConfirmTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {userConfirmTarget?.is_active ? 'Deactivate' : 'Reactivate'} user?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {userConfirmTarget?.is_active
+                ? 'This user will be blocked from logging in. No data is deleted; this is reversible.'
+                : 'This user will be able to log in again.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isToggling}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleToggleUser} disabled={isToggling}>
               {isToggling ? 'Working...' : 'Confirm'}
             </AlertDialogAction>
           </AlertDialogFooter>

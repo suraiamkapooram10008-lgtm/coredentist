@@ -5,15 +5,18 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import type { BadgeProps } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import { UserX, UserCheck } from 'lucide-react';
 import type { PlatformUser } from '@/services/platformApi';
 
 interface UsersTableProps {
   users: PlatformUser[];
   isLoading: boolean;
+  onToggleUser?: (user: PlatformUser) => void;
 }
 
 const ROLE_COLORS: Record<string, NonNullable<BadgeProps['variant']>> = {
@@ -28,7 +31,7 @@ const ROLE_COLORS: Record<string, NonNullable<BadgeProps['variant']>> = {
   super_admin: 'destructive',
 };
 
-export function UsersTable({ users, isLoading }: UsersTableProps) {
+export function UsersTable({ users, isLoading, onToggleUser }: UsersTableProps) {
   if (isLoading) {
     return (
       <div className="space-y-2">
@@ -57,6 +60,7 @@ export function UsersTable({ users, isLoading }: UsersTableProps) {
               <TableHead>Verified</TableHead>
               <TableHead>Last login</TableHead>
               <TableHead>Status</TableHead>
+              {onToggleUser && <TableHead className="text-right">Actions</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -83,6 +87,23 @@ export function UsersTable({ users, isLoading }: UsersTableProps) {
                     {u.is_active ? 'Active' : 'Inactive'}
                   </Badge>
                 </TableCell>
+                {onToggleUser && (
+                  <TableCell className="text-right">
+                    {u.role !== 'super_admin' && (
+                      <Button
+                        size="sm"
+                        variant={u.is_active ? 'destructive' : 'outline'}
+                        onClick={() => onToggleUser(u)}
+                      >
+                        {u.is_active ? (
+                          <><UserX className="h-4 w-4 mr-1" /> Deactivate</>
+                        ) : (
+                          <><UserCheck className="h-4 w-4 mr-1" /> Reactivate</>
+                        )}
+                      </Button>
+                    )}
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>

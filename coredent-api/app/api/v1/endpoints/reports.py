@@ -6,7 +6,7 @@ Aggregation logic for dashboard and clinic analytics
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.core.database import get_db
@@ -257,9 +257,137 @@ async def get_dashboard_metrics(
     total_outstanding = Decimal(str(outstanding_res.scalar() or 0))
     avg_per_visit = (total_revenue / Decimal(str(completed))) if completed > 0 else Decimal('0')
 
-    # byMonth aggregation
-    # (Simplified: just grouping by current range)
-    # (Multi-month breakdown can be added here if the range is large.)
+    # 2b. Revenue by month (invoice date basis) + collections by payment date
+    _BILLABLE = [
+        InvoiceStatus.PENDING,
+        InvoiceStatus.PARTIALLY_PAID,
+        InvoiceStatus.PAID,
+        InvoiceStatus.OVERDUE,
+    ]
+    _SETTLED = [
+        PaymentStatus.COMPLETED,
+        PaymentStatus.REFUNDED,
+        PaymentStatus.PARTIALLY_REFUNDED,
+    ]
+    revenue_by_month: dict[int, Decimal] = {}
+    collected_by_month: dict[int, Decimal] = {}
+
+    def _month_key(moment: datetime) -> int:
+        local = moment.astimezone(practice_tz)
+        return local.year * 100 + local.month
+
+    if row_locks_supported():
+        month_stmt = select(
+            func.date_trunc("month", Invoice.created_at).label("month"),
+            func.sum(Invoice.total).label("revenue"),
+        ).where(
+            and_(
+                Invoice.practice_id == practice_id,
+                Invoice.status.in_(_BILLABLE),
+                *invoice_range,
+            )
+        ).group_by(func.date_trunc("month", Invoice.created_at))
+        for row in (await db.execute(month_stmt)).all():
+            mkey = row.month.year * 100 + row.month.month
+            revenue_by_month[mkey] = Decimal(str(row.revenue or 0))
+
+        pay_month_stmt = select(
+            func.date_trunc("month", Payment.created_at).label("month"),
+            func.sum(
+                Payment.amount - func.coalesce(Payment.refunded_amount, 0)
+            ).label("collected"),
+        ).join(Invoice).where(
+            and_(
+                Invoice.practice_id == practice_id,
+                Payment.status.in_(_SETTLED),
+                *payment_range,
+            )
+        ).group_by(func.date_trunc("month", Payment.created_at))
+        for row in (await db.execute(pay_month_stmt)).all():
+            mkey = row.month.year * 100 + row.month.month
+            collected_by_month[mkey] = Decimal(str(row.collected or 0))
+    else:
+        inv_rows = (
+            await db.execute(
+                select(Invoice.created_at, Invoice.total).where(
+                    and_(
+                        Invoice.practice_id == practice_id,
+                        Invoice.status.in_(_BILLABLE),
+                        *invoice_range,
+                    )
+                )
+            )
+        ).all()
+        for created_at, total in inv_rows:
+            mkey = _month_key(created_at)
+            revenue_by_month[mkey] = revenue_by_month.get(mkey, Decimal("0")) + Decimal(str(total or 0))
+
+        pay_rows = (
+            await db.execute(
+                select(Payment.created_at, Payment.amount, Payment.refunded_amount)
+                .join(Invoice)
+                .where(
+                    and_(
+                        Invoice.practice_id == practice_id,
+                        Payment.status.in_(_SETTLED),
+                        *payment_range,
+                    )
+                )
+            )
+        ).all()
+        for created_at, amount, refunded in pay_rows:
+            mkey = _month_key(created_at)
+            net = Decimal(str(amount or 0)) - Decimal(str(refunded or 0))
+            collected_by_month[mkey] = collected_by_month.get(mkey, Decimal("0")) + net
+
+    by_month = [
+        {
+            "month": f"{mkey // 100:04d}-{mkey % 100:02d}",
+            "revenue": str(revenue_by_month.get(mkey, Decimal("0"))),
+            "collected": str(collected_by_month.get(mkey, Decimal("0"))),
+        }
+        for mkey in sorted(set(revenue_by_month) | set(collected_by_month))
+    ]
+
+    # 2c. Revenue by procedure (from invoice line items). Invoices store
+    # line items as JSON; the dashboard is practice-scoped and range-bounded,
+    # so a Python aggregation over the billable invoice set is both
+    # DB-agnostic (SQLite + Postgres) and cheap in practice.
+    proc_rows = (
+        await db.execute(
+            select(Invoice.status, Invoice.line_items).where(
+                and_(
+                    Invoice.practice_id == practice_id,
+                    Invoice.status.in_(_BILLABLE),
+                    *invoice_range,
+                )
+            )
+        )
+    ).all()
+    procedure_revenue: dict[str, Decimal] = {}
+    procedure_count: dict[str, int] = {}
+    for _status, line_items in proc_rows:
+        for item in line_items or []:
+            if not isinstance(item, dict):
+                continue
+            desc = str(item.get("description") or "").strip() or "Other"
+            try:
+                amount = Decimal(str(item.get("total") or 0))
+            except (TypeError, ValueError):
+                amount = Decimal("0")
+            procedure_revenue[desc] = procedure_revenue.get(desc, Decimal("0")) + amount
+            procedure_count[desc] = procedure_count.get(desc, 0) + 1
+
+    by_procedure = [
+        {
+            "procedure": name,
+            "revenue": str(round(amount, 2)),
+            "count": procedure_count.get(name, 0),
+        }
+        for name, amount in sorted(
+            procedure_revenue.items(), key=lambda kv: kv[1], reverse=True
+        )
+    ]
 
     # 3. Treatment Acceptance (SQL-Level Aggregation)
     plan_stmt = select(
@@ -283,6 +411,49 @@ async def get_dashboard_metrics(
     acceptance_rate = (accepted / proposed * 100) if proposed > 0 else 0
     plan_completion_rate = (completed_plans / accepted * 100) if accepted > 0 else 0
 
+    # 3b. Treatment acceptance by month (created_date, date basis)
+    plan_month_rows = (
+        await db.execute(
+            select(TreatmentPlan.created_date, TreatmentPlan.status).where(
+                and_(
+                    TreatmentPlan.practice_id == practice_id,
+                    TreatmentPlan.created_date >= from_date,
+                    TreatmentPlan.created_date <= to_date,
+                )
+            )
+        )
+    ).all()
+    plans_by_month: dict[int, dict] = {}
+    for created_date, status_val in plan_month_rows:
+        if created_date is None:
+            continue
+        mkey = created_date.year * 100 + created_date.month
+        bucket = plans_by_month.setdefault(
+            mkey, {"proposed": 0, "accepted": 0, "completed": 0}
+        )
+        bucket["proposed"] += 1
+        if status_val in (
+            TreatmentPlanStatus.ACCEPTED,
+            TreatmentPlanStatus.IN_PROGRESS,
+            TreatmentPlanStatus.COMPLETED,
+        ):
+            bucket["accepted"] += 1
+        if status_val == TreatmentPlanStatus.COMPLETED:
+            bucket["completed"] += 1
+
+    treatment_by_month = [
+        {
+            "month": f"{mkey // 100:04d}-{mkey % 100:02d}",
+            "proposed": bucket["proposed"],
+            "accepted": bucket["accepted"],
+            "completed": bucket["completed"],
+            "acceptanceRate": round(bucket["accepted"] / bucket["proposed"] * 100, 1)
+            if bucket["proposed"] > 0
+            else 0,
+        }
+        for mkey, bucket in sorted(plans_by_month.items())
+    ]
+
     # 4. Chair Utilization
     chair_query = select(Chair).where(Chair.practice_id == practice_id)
     chair_result = await db.execute(chair_query)
@@ -305,6 +476,84 @@ async def get_dashboard_metrics(
     booked_minutes = duration_res.scalar() or 0
     avg_util = min(100.0, round((booked_minutes / total_available_minutes) * 100, 1))
 
+    # 4a. Utilization by chair (durations need no timezone conversion)
+    chair_util_stmt = (
+        select(
+            Chair.name.label("chair_name"),
+            func.count(Appointment.id).label("appointments"),
+            func.coalesce(func.sum(Appointment.duration), 0).label("minutes"),
+        )
+        .join(Appointment, Appointment.chair_id == Chair.id)
+        .where(
+            and_(
+                Chair.practice_id == practice_id,
+                *appointment_range,
+                Appointment.status.notin_(
+                    [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW]
+                ),
+            )
+        )
+        .group_by(Chair.name)
+    )
+    chair_rows = (await db.execute(chair_util_stmt)).all()
+    chair_available_min = 8 * 60 * days_count
+    by_chair = [
+        {
+            "chair": name,
+            "appointments": count,
+            "utilization": min(100.0, round(minutes / chair_available_min * 100, 1))
+            if chair_available_min
+            else 0.0,
+        }
+        for name, count, minutes in chair_rows
+    ]
+
+    # 4b. Peak hours + day-of-week utilization (Python bucketing, tz-aware)
+    appt_rows = (
+        await db.execute(
+            select(Appointment.start_time, Appointment.duration).where(
+                and_(
+                    Appointment.practice_id == practice_id,
+                    *appointment_range,
+                    Appointment.status.notin_(
+                        [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW]
+                    ),
+                    Appointment.start_time.isnot(None),
+                )
+            )
+        )
+    ).all()
+    minutes_by_hour: dict[int, int] = {}
+    minutes_by_dow: dict[int, int] = {}
+    for start_time, duration in appt_rows:
+        local = start_time.astimezone(practice_tz)
+        minutes_by_hour[local.hour] = minutes_by_hour.get(local.hour, 0) + (duration or 0)
+        # Python weekday(): Mon=0 ... Sun=6
+        minutes_by_dow[local.weekday()] = minutes_by_dow.get(local.weekday(), 0) + (duration or 0)
+
+    hour_available = num_chairs * 60
+    peak_hours = [
+        {
+            "hour": f"{hour:02d}:00",
+            "utilization": min(100.0, round(minutes / hour_available * 100, 1))
+            if hour_available
+            else 0.0,
+        }
+        for hour, minutes in sorted(minutes_by_hour.items())
+    ]
+
+    day_available = num_chairs * 8 * 60
+    _DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    by_day_of_week = [
+        {
+            "day": _DOW_NAMES[dow],
+            "utilization": min(100.0, round(minutes / day_available * 100, 1))
+            if day_available
+            else 0.0,
+        }
+        for dow, minutes in sorted(minutes_by_dow.items())
+    ]
+
     return {
         "appointments": {
             "total": total_appts,
@@ -322,8 +571,8 @@ async def get_dashboard_metrics(
             "totalCollected": str(total_collected),
             "totalOutstanding": str(total_outstanding),
             "averagePerVisit": str(round(avg_per_visit, 2)),
-            "byMonth": [],
-            "byProcedure": [],
+            "byMonth": by_month,
+            "byProcedure": by_procedure,
         },
         "treatmentAcceptance": {
             "proposedPlans": proposed,
@@ -331,13 +580,13 @@ async def get_dashboard_metrics(
             "completedPlans": completed_plans,
             "acceptanceRate": round(acceptance_rate, 1),
             "completionRate": round(plan_completion_rate, 1),
-            "byMonth": [],
+            "byMonth": treatment_by_month,
         },
         "chairUtilization": {
             "totalChairs": len(chairs),
             "averageUtilization": avg_util,
-            "peakHours": [],
-            "byChair": [],
-            "byDayOfWeek": [],
+            "peakHours": peak_hours,
+            "byChair": by_chair,
+            "byDayOfWeek": by_day_of_week,
         }
     }

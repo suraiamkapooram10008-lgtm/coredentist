@@ -115,6 +115,12 @@ export const patientApi = {
     );
   },
 
+  anonymizePatient: async (id: string): Promise<PatientRecord> =>
+    requireApiData(
+      await apiClient.post<PatientRecord>(`/patients/${id}/anonymize`, {}),
+      "Failed to anonymize patient",
+    ),
+
   addNote: async (
     patientId: string,
     note: Omit<PatientNote, "id" | "createdAt">,

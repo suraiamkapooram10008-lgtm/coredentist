@@ -157,7 +157,8 @@ export const platformApi = {
     );
   },
 
-  async listUsers(params?: {    search?: string;
+  async listUsers(params?: {
+    search?: string;
     role?: string;
     clinic_id?: string;
     page?: number;
@@ -204,6 +205,25 @@ export const platformApi = {
       `/platform/audit-events${qs ? `?${qs}` : ''}`,
     );
   },
+
+  async deactivateUser(
+    userId: string,
+    reason?: string,
+  ): Promise<ApiResponse<{ is_active: boolean; email: string }>> {
+    return apiClient.put<{ is_active: boolean; email: string }>(
+      `/platform/users/${userId}/deactivate`,
+      { reason },
+    );
+  },
+
+  async reactivateUser(
+    userId: string,
+  ): Promise<ApiResponse<{ is_active: boolean; email: string }>> {
+    return apiClient.put<{ is_active: boolean; email: string }>(
+      `/platform/users/${userId}/reactivate`,
+      {},
+    );
+  },
 };
 
 // Unwrapped variants for one-shot calls (mutations) where a caller wants
@@ -224,5 +244,24 @@ export async function reactivateClinicNow(
   return requireApiData(
     await platformApi.reactivateClinic(clinicId),
     'Failed to reactivate clinic',
+  );
+}
+
+export async function deactivateUserNow(
+  userId: string,
+  reason?: string,
+): Promise<{ is_active: boolean; email: string }> {
+  return requireApiData(
+    await platformApi.deactivateUser(userId, reason),
+    'Failed to deactivate user',
+  );
+}
+
+export async function reactivateUserNow(
+  userId: string,
+): Promise<{ is_active: boolean; email: string }> {
+  return requireApiData(
+    await platformApi.reactivateUser(userId),
+    'Failed to reactivate user',
   );
 }

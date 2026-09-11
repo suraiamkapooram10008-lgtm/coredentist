@@ -30,6 +30,7 @@ const EVENT_LABELS: Record<AutomationEvent, string> = {
   invoice_created: 'Invoice Created',
   invoice_overdue: 'Invoice Overdue Warning',
   payment_received: 'Payment Received',
+  payment_refunded: 'Payment Refunded',
   review_request: 'Review Request',
   treatment_plan_approved: 'Treatment Plan Approved',
   treatment_plan_created: 'Treatment Plan Formulated',
@@ -295,6 +296,8 @@ export function AutomationsTab() {
                   <SelectItem value="patient_created">New Patient Registered</SelectItem>
                   <SelectItem value="invoice_created">Invoice Created</SelectItem>
                   <SelectItem value="invoice_overdue">Invoice Overdue Warning</SelectItem>
+                  <SelectItem value="payment_received">Payment Received</SelectItem>
+                  <SelectItem value="payment_refunded">Payment Refunded</SelectItem>
                   <SelectItem value="treatment_plan_created">Treatment Plan Formulated</SelectItem>
                 </SelectContent>
               </Select>

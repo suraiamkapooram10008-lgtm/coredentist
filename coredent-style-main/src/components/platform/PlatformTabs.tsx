@@ -47,6 +47,7 @@ interface PlatformTabsProps {
   onToggleClinic: (clinic: PlatformClinic) => void;
   users: PlatformUser[];
   isLoadingUsers: boolean;
+  onToggleUser?: (user: PlatformUser) => void;
   subs: PlatformSubscription[];
   isLoadingSubs: boolean;
   events: PlatformAuditEvent[];
@@ -59,7 +60,7 @@ export function PlatformTabs(props: PlatformTabsProps) {
   const {
     metrics, metricsError, isLoadingMetrics,
     clinics, isLoadingClinics, onToggleClinic,
-    users, isLoadingUsers,
+    users, isLoadingUsers, onToggleUser,
     subs, isLoadingSubs,
     events, isLoadingEvents,
     search, onSearchChange,
@@ -161,7 +162,7 @@ export function PlatformTabs(props: PlatformTabsProps) {
             onChange={(e) => onSearchChange(e.target.value)}
           />
         </div>
-        <UsersTable users={users} isLoading={isLoadingUsers} />
+        <UsersTable users={users} isLoading={isLoadingUsers} onToggleUser={onToggleUser} />
       </TabsContent>
 
       {/* ---------- Subscriptions ---------- */}

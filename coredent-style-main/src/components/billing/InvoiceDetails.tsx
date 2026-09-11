@@ -21,7 +21,7 @@ import {
   Receipt,
   History
 } from 'lucide-react';
-import type { Invoice } from '@/types/billing';
+import type { Invoice, InvoicePayment } from '@/types/billing';
 
 interface InvoiceDetailsProps {
   open: boolean;
@@ -30,6 +30,7 @@ interface InvoiceDetailsProps {
   onRecordPayment: () => void;
   onDownload: () => void;
   onSend: () => void;
+  onRefund: (payment: InvoicePayment) => void;
 }
 
 export function InvoiceDetails({
@@ -39,6 +40,7 @@ export function InvoiceDetails({
   onRecordPayment,
   onDownload,
   onSend,
+  onRefund,
 }: InvoiceDetailsProps) {
   const { formatCurrency } = useCurrencyFormatter();
 
@@ -220,6 +222,7 @@ export function InvoiceDetails({
                       <th className="py-2 px-3">Method</th>
                       <th className="py-2 px-3">Ref</th>
                       <th className="py-2 px-3 text-right">Amount</th>
+                      <th className="py-2 px-3 text-right">Refunded</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/40">
@@ -232,6 +235,23 @@ export function InvoiceDetails({
                         <td className="py-2 px-3 text-muted-foreground font-mono">{payment.reference || '-'}</td>
                         <td className="py-2 px-3 text-right font-bold font-mono text-emerald-500">
                           {formatCurrency(payment.amount)}
+                        </td>
+                        <td className="py-2 px-3 text-right">
+                          {payment.refundedAmount > 0 && (
+                            <span className="text-muted-foreground font-mono text-[9px]">
+                              -{formatCurrency(payment.refundedAmount)}
+                            </span>
+                          )}
+                          {payment.refundedAmount < payment.amount && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-1.5 text-[9px] text-foreground hover:text-destructive"
+                              onClick={() => onRefund(payment)}
+                            >
+                              Refund
+                            </Button>
+                          )}
                         </td>
                       </tr>
                     ))}

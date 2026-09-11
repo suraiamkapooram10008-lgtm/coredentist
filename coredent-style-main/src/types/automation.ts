@@ -9,6 +9,7 @@ export type AutomationEvent =
   | 'invoice_created'
   | 'invoice_overdue'
   | 'payment_received'
+  | 'payment_refunded'
   | 'review_request'
   | 'treatment_plan_approved'
   | 'treatment_plan_created';
