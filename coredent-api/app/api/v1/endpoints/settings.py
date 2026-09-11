@@ -37,6 +37,8 @@ def _practice_settings_payload(practice: Practice) -> dict:
         # Data-retention override (docs/DATA_RETENTION_POLICY.md § 6): NULL
         # means the platform default applies; min 0 prevents negative windows.
         "retentionYears": practice.retention_years if practice.retention_years is not None else None,
+        # Practice jurisdiction for the retention preset picker (NULL = none picked).
+        "jurisdiction": practice.jurisdiction or None,
         "updatedAt": practice.updated_at.isoformat() if practice.updated_at else None,
     }
 
@@ -99,6 +101,11 @@ async def update_practice_settings(
     # default. Allow unset (not provided) and explicit null (clears override).
     if "retentionYears" in update_data:
         practice.retention_years = update_data["retentionYears"]
+
+    # Jurisdiction code for the retention preset picker. Explicit null clears
+    # the stored pick (back to "none picked"); unset leaves it untouched.
+    if "jurisdiction" in update_data:
+        practice.jurisdiction = update_data["jurisdiction"]
 
     address = update_data.get("address")
     if address is not None:

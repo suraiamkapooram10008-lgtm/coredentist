@@ -74,7 +74,7 @@ their own account data (deactivated at removal + 60-day window per R5).
 | Celery purge job: `portal_lockout`, `revoked_token`, `patient_portal_sessions` expiry sweep | ✅ Implemented (see models) |
 | Celery purge job: anonymized-row hard delete after R2 window | ✅ Implemented (`app.core.tasks.purge_expired_anonymized_patients`, daily beat, 7-year default window, write-once `patient_purged` audit = certificate of destruction) |
 | Destruction-log / certificate-of-destruction | ❌ TODO |
-| Retention-region config per practice (state/jurisdiction override) | ❌ TODO |
+| Retention-region config per practice (state/jurisdiction override) | ✅ Implemented: `practices.retention_years` + `practices.jurisdiction` (migration b5e2f7a9c4d1 + e9f1a4b3d0c6); Settings UI with a jurisdiction preset picker (`src/lib/retentionPresets.ts` — 50 states + DC + 5 countries, adult/minor guidance, platform-floor guarantee); purge takes max(practice, platform floor) so retention can only extend |
 
 ## 6. Review & sign-off
 

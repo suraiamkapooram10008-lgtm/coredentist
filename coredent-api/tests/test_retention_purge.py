@@ -224,6 +224,51 @@ class TestPerPracticeRetentionOverride:
         assert all(e["patient_id"] != patient.id for e in eligible)
 
 
+class TestPracticeJurisdictionEndpoint:
+    """Settings API exposes + persists the jurisdiction pick for the preset picker."""
+
+    async def test_settings_expose_and_persist_jurisdiction(
+        self, async_client, auth_headers
+    ):
+        headers = auth_headers
+
+        # Default: none picked -> null.
+        resp = await async_client.get("/api/v1/settings/", headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert "jurisdiction" in resp.json()
+        assert resp.json()["jurisdiction"] is None
+
+        # PUT a pick plus retention years together.
+        put = await async_client.put(
+            "/api/v1/settings/",
+            headers=headers,
+            json={"jurisdiction": "CA", "retentionYears": 7},
+        )
+        assert put.status_code == 200, put.text
+        assert put.json()["jurisdiction"] == "CA"
+        assert put.json()["retentionYears"] == 7
+
+        # READ it back.
+        re_get = await async_client.get("/api/v1/settings/", headers=headers)
+        assert re_get.status_code == 200
+        assert re_get.json()["jurisdiction"] == "CA"
+
+        # Explicit null clears the pick.
+        clear = await async_client.put(
+            "/api/v1/settings/", headers=headers, json={"jurisdiction": None}
+        )
+        assert clear.status_code == 200, clear.text
+        assert clear.json()["jurisdiction"] is None
+
+    async def test_jurisdiction_schema_rejects_too_short(
+        self, async_client, auth_headers
+    ):
+        resp = await async_client.put(
+            "/api/v1/settings/", headers=auth_headers, json={"jurisdiction": "C"}
+        )
+        assert resp.status_code == 422
+
+
 class TestPracticeRetentionSettingsEndpoint:
     """Settings API exposes + persists the per-practice retention override."""
 

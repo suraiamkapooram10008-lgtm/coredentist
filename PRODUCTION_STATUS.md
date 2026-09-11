@@ -46,6 +46,7 @@ This is the single source of truth for CoreDent's production readiness. All othe
 | **Platform console (SaaS ops)** | ✅ `/platform/*` metrics, clinics (+suspend/reactivate), users (+deactivate/reactivate w/ locks), subscriptions, audit feed |
 | **Reports aggregations** | ✅ `byMonth`/`byProcedure`/`treatmentAcceptance.byMonth`/`peakHours`/`byChair`/`byDayOfWeek` filled (tz-aware), no more empty chart stubs |
 | **Accountant role** | ✅ `UserRole.ACCOUNTANT`, billing/reports server-side + routes/sidebar |
+| **Per-practice retention override + jurisdiction presets** | ✅ `practices.retention_years`/`jurisdiction` (migrations b5e2f7a9c4d1/e9f1a4b3d0c6); purge takes max(practice, platform floor); Settings jurisdiction dropdown auto-fills suggested years + minor-rule guidance (`src/lib/retentionPresets.ts`, 50 states + DC + 5 countries) |
 | **Data Retention Policy** | 🟡 `docs/DATA_RETENTION_POLICY.md` v0.1 (7-yr defaults) — attorney review + hard-purge job are TODOs |
 | **Backup / DR drill checklist** | 🟡 `scripts/backup-dr-drill-checklist.md` + `scripts/backup-dr-drill.ps1` runner — drill must be *executed* monthly |
 | **Live-integration smoke** | 🟡 `scripts/live-integration-smoke.ps1` + `scripts/gate-production.ps1` — requires staging creds to execute fully |

@@ -21,6 +21,8 @@ export interface ClinicSettings {
   /** Retention override in years (docs/DATA_RETENTION_POLICY.md § 6).
    *  null = platform default (7y). Purging never shortens below the floor. */
   retentionYears?: number | null;
+  /** Jurisdiction code for the retention preset picker (e.g. 'CA', 'USA'). */
+  jurisdiction?: string | null;
   updatedAt: string;
 }
 

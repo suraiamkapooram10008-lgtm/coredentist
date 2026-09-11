@@ -8,6 +8,11 @@ import { useToast } from '@/hooks/use-toast';
 import { clinicApi } from '@/services/clinicApi';
 import type { ClinicSettings } from '@/types/clinic';
 import { US_STATES } from '@/types/clinic';
+import {
+  RETENTION_PRESET_OPTIONS,
+  getRetentionPreset,
+  PLATFORM_RETENTION_FLOOR_YEARS,
+} from '@/lib/retentionPresets';
 import { Loader2, Save } from 'lucide-react';
 
 interface GeneralSettingsTabProps {
@@ -34,7 +39,27 @@ export function GeneralSettingsTab({ settings, onUpdate }: GeneralSettingsTabPro
     currency: settings.currency || 'USD',
     dateFormat: settings.dateFormat || 'MM/DD/YYYY',
     retentionYears: settings.retentionYears ?? null,
+    jurisdiction: settings.jurisdiction || '',
   });
+
+  // The guidance preset matching the stored jurisdiction (fallback = US default).
+  const activePreset = getRetentionPreset(
+    formData.jurisdiction === '' ? null : formData.jurisdiction
+  );
+
+  const handleJurisdictionChange = (code: string) => {
+    const preset = getRetentionPreset(code);
+    setFormData({
+      ...formData,
+      jurisdiction: code,
+      // Auto-fill the suggested years; the practice can still adjust upward.
+      // Never lower an already-higher value on a mere jurisdiction switch.
+      retentionYears:
+        formData.retentionYears != null && formData.retentionYears > preset.adultYears
+          ? formData.retentionYears
+          : preset.adultYears,
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,6 +75,7 @@ export function GeneralSettingsTab({ settings, onUpdate }: GeneralSettingsTabPro
         currency: formData.currency,
         dateFormat: formData.dateFormat as any,
         retentionYears: formData.retentionYears,
+        jurisdiction: formData.jurisdiction || null,
         address: {
           street: formData.street,
           suite: formData.suite,
@@ -249,6 +275,53 @@ export function GeneralSettingsTab({ settings, onUpdate }: GeneralSettingsTabPro
                   How long anonymized patient records are kept before the scheduled purge.
                   Values below the platform floor (7 yrs) are ignored; this can only extend, never shorten.
                 </p>
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label className="text-xs font-black uppercase tracking-widest text-slate-400">Jurisdiction (retention guidance)</Label>
+                <Select value={formData.jurisdiction} onValueChange={handleJurisdictionChange}>
+                  <SelectTrigger className="h-12 rounded-xl border-slate-200 font-medium">
+                    <SelectValue placeholder="Select jurisdiction for guidance..." />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-80">
+                    {RETENTION_PRESET_OPTIONS.map((group) => (
+                      <React.Fragment key={group.group}>
+                        <div className="px-2 py-1.5 text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                          {group.group}
+                        </div>
+                        {group.items.map((item) => (
+                          <SelectItem key={item.code} value={item.code}>
+                            {item.label} — suggested {item.adultYears}y
+                          </SelectItem>
+                        ))}
+                      </React.Fragment>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {formData.jurisdiction !== '' && (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] text-slate-500 leading-snug space-y-1">
+                    <p>
+                      <span className="font-bold">Suggested: {activePreset.adultYears} years.</span>{' '}
+                      {activePreset.adultYears !== formData.retentionYears && (
+                        <button
+                          type="button"
+                          className="text-blue-600 underline"
+                          onClick={() =>
+                            setFormData({ ...formData, retentionYears: activePreset.adultYears })
+                          }
+                        >
+                          Apply suggestion
+                        </button>
+                      )}
+                    </p>
+                    <p>Minors: {activePreset.minorRule}</p>
+                    {activePreset.note && <p className="italic">{activePreset.note}</p>}
+                    <p>
+                      Effective purge window is the maximum of the platform floor (
+                      {PLATFORM_RETENTION_FLOOR_YEARS}y) and this value. Guidance only — verify
+                      against your state board / counsel before relying on it.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

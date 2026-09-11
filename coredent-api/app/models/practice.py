@@ -81,6 +81,10 @@ class Practice(Base):
     # eligibility check takes max(practice value, platform default) so a
     # practice can only EXTEND retention, never shorten it below the floor.
     retention_years = Column(Integer, nullable=True)
+    # Jurisdiction for the retention preset picker (e.g. 'CA', 'USA').
+    # NULL = none picked. Purely a UI convenience; purge enforcement only
+    # ever reads retention_years (with the platform floor via max()).
+    jurisdiction = Column(String(16), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

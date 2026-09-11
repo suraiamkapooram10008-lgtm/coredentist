@@ -37,6 +37,10 @@ class PracticeSettingsUpdate(BaseModel):
     # enforced at the schema level (the service takes max(floor, value)), but
     # the sweep treats values < RETENTION_ANONYMIZED_PURGE_YEARS as no-op.
     retentionYears: Optional[int] = Field(None, ge=0, le=100)
+    # Practice jurisdiction code ('CA', 'USA', ...). Validated against the
+    # known preset universe server-side only by shape; unknown codes fall back
+    # client-side. Max length allows future ISO-alpha-3 + region suffixes.
+    jurisdiction: Optional[str] = Field(None, min_length=2, max_length=16)
 
     @field_validator("timezone")
     @classmethod
