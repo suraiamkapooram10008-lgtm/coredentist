@@ -33,6 +33,7 @@ export function GeneralSettingsTab({ settings, onUpdate }: GeneralSettingsTabPro
     timezone: settings.timezone || 'America/New_York',
     currency: settings.currency || 'USD',
     dateFormat: settings.dateFormat || 'MM/DD/YYYY',
+    retentionYears: settings.retentionYears ?? null,
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -48,6 +49,7 @@ export function GeneralSettingsTab({ settings, onUpdate }: GeneralSettingsTabPro
         timezone: formData.timezone,
         currency: formData.currency,
         dateFormat: formData.dateFormat as any,
+        retentionYears: formData.retentionYears,
         address: {
           street: formData.street,
           suite: formData.suite,
@@ -226,6 +228,27 @@ export function GeneralSettingsTab({ settings, onUpdate }: GeneralSettingsTabPro
                     <SelectItem value="YYYY-MM-DD">YYYY-MM-DD</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-black uppercase tracking-widest text-slate-400">Record Retention (years)</Label>
+                <Input
+                  type="number"
+                  min="7"
+                  max="100"
+                  value={formData.retentionYears ?? ''}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      retentionYears: e.target.value === '' ? null : Number(e.target.value),
+                    })
+                  }
+                  placeholder="7 (platform default)"
+                  className="h-12 rounded-xl border-slate-200 font-medium"
+                />
+                <p className="text-[11px] text-slate-400 leading-snug">
+                  How long anonymized patient records are kept before the scheduled purge.
+                  Values below the platform floor (7 yrs) are ignored; this can only extend, never shorten.
+                </p>
               </div>
             </div>
           </div>

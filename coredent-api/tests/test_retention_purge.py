@@ -150,6 +150,124 @@ class TestRetentionPurgeHappyPath:
         assert all(e["patient_id"] != patient.id for e in eligible)
 
 
+class TestPerPracticeRetentionOverride:
+    """practices.retention_years extends (never shortens) the platform floor."""
+
+    async def test_null_practice_uses_platform_default(self, db_session, test_practice):
+        from app.services.retention_service import RetentionService
+
+        assert test_practice.retention_years is None
+        got = await RetentionService.effective_retention_years(
+            db_session, test_practice.id, platform_default=7
+        )
+        assert got == 7
+
+    async def test_longer_practice_window_extends(self, db_session, test_practice):
+        from app.services.retention_service import RetentionService
+
+        test_practice.retention_years = 10
+        db_session.add(test_practice)
+        await db_session.commit()
+
+        got = await RetentionService.effective_retention_years(
+            db_session, test_practice.id, platform_default=7
+        )
+        assert got == 10
+
+    async def test_shorter_practice_window_cannot_below_floor(
+        self, db_session, test_practice
+    ):
+        from app.services.retention_service import RetentionService
+
+        # A misconfigured practice (3y) must not shorten below the 7y floor.
+        test_practice.retention_years = 3
+        db_session.add(test_practice)
+        await db_session.commit()
+
+        got = await RetentionService.effective_retention_years(
+            db_session, test_practice.id, platform_default=7
+        )
+        assert got == 7
+
+    async def test_extended_window_defers_purge(
+        self, db_session, test_practice
+    ):
+        """An 8y-old anchor with a 10y practice override must NOT purge."""
+        import uuid as uuid_lib
+        from app.models.patient import Patient, PatientStatus
+        from app.services.retention_service import RetentionService
+
+        test_practice.retention_years = 10
+        db_session.add(test_practice)
+        await db_session.commit()
+
+        patient = Patient(
+            id=uuid_lib.uuid4(),
+            practice_id=test_practice.id,
+            first_name="[deleted]",
+            last_name="[deleted]",
+            date_of_birth=datetime.date(1970, 1, 1),
+            status=PatientStatus.INACTIVE,
+            # 8.7 years before "now" (2026-09-11): eligible under the 7y floor
+            # but NOT yet under the 10y practice override (window = 2028-01-01).
+            updated_at=datetime.datetime(2018, 1, 1, tzinfo=datetime.timezone.utc),
+        )
+        db_session.add(patient)
+        await db_session.commit()
+
+        # 2026-09-11 vs 2016-01-01 anchor: eligible under 7y (default) but NOT
+        # under the 10y practice override.
+        now = datetime.datetime(2026, 9, 11, tzinfo=datetime.timezone.utc)
+        eligible = await RetentionService.eligible_anonymized_patients(
+            db_session, now=now, retention_years=7, limit=1000
+        )
+        assert all(e["patient_id"] != patient.id for e in eligible)
+
+
+class TestPracticeRetentionSettingsEndpoint:
+    """Settings API exposes + persists the per-practice retention override."""
+
+    async def test_settings_expose_and_persist_retention_years(
+        self, async_client, auth_headers
+    ):
+        """GET /settings returns retentionYears; PUT persists it (owner only)."""
+        headers = auth_headers
+        resp = await async_client.get("/api/v1/settings/", headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert "retentionYears" in resp.json()
+
+        # PUT a 10-year override.
+        put = await async_client.put(
+            "/api/v1/settings/",
+            headers=headers,
+            json={"retentionYears": 10},
+        )
+        assert put.status_code == 200, put.text
+        assert put.json()["retentionYears"] == 10
+
+        # READ it back.
+        re_get = await async_client.get("/api/v1/settings/", headers=headers)
+        assert re_get.status_code == 200
+        assert re_get.json()["retentionYears"] == 10
+
+        # Explicit null clears the override.
+        clear = await async_client.put(
+            "/api/v1/settings/", headers=headers, json={"retentionYears": None}
+        )
+        assert clear.status_code == 200, clear.text
+        assert clear.json()["retentionYears"] is None
+
+    async def test_retention_years_schema_rejects_out_of_range(
+        self, async_client, auth_headers
+    ):
+        resp = await async_client.put(
+            "/api/v1/settings/",
+            headers=auth_headers,
+            json={"retentionYears": 250},
+        )
+        assert resp.status_code == 422
+
+
 class TestRetentionPurgeAsyncShape:
     """The async purge path shares sync ordering; exercise it on a fresh marker."""
 

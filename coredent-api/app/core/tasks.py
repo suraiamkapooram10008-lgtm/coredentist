@@ -1170,18 +1170,19 @@ def process_dunning_task(self) -> Dict[str, Any]:
 def purge_expired_anonymized_patients(self) -> Dict[str, Any]:
     """Daily hard purge of anonymized patients past the retention window.
 
-    Implements docs/DATA_RETENTION_POLICY.md § 2: once every billing disposition
-    for a fully-anonymized patient ([deleted]/[deleted], INACTIVE) is older than
-    RETENTION_ANONYMIZED_PURGE_YEARS (default 7), the orphaned rows + the
-    placeholder row itself are deleted and a write-once ``patient_purged`` audit
-    row records the per-table counts (the certificate of destruction).
+    Implements docs/DATA_RETENTION_POLICY.md § 2 + § 6: once every billing
+    disposition for a fully-anonymized patient ([deleted]/[deleted], INACTIVE)
+    is older than the EFFECTIVE retention window — max(per-practice
+    ``practices.retention_years``, RETENTION_ANONYMIZED_PURGE_YEARS) — the
+    orphaned rows + the placeholder row itself are deleted and a write-once
+    ``patient_purged`` audit row records the per-table counts (the certificate
+    of destruction).
 
     Batch-bounded (RETENTION_ANONYMIZED_PURGE_BATCH_SIZE, default 50) and
     disabled via RETENTION_ANONYMIZED_PURGE_ENABLED=false.
     """
     from app.core.config_simple import settings
     from app.core.audit import log_audit_event_sync
-    from app.models.patient import Patient
     from app.services.retention_service import RetentionService
 
     db = SessionLocal()
@@ -1192,28 +1193,32 @@ def purge_expired_anonymized_patients(self) -> Dict[str, Any]:
             return {"status": "skipped", "reason": "another purge run is active"}
 
         now = datetime.now(timezone.utc)
-        batch = max(1, settings.RETENTION_ANONYMIZED_PURGE_BATCH_SIZE)
-        candidates = (
-            db.query(Patient)
-            .filter(
-                Patient.first_name == "[deleted]",
-                Patient.last_name == "[deleted]",
-                Patient.status == "INACTIVE",
-            )
-            .order_by(Patient.updated_at.asc().nullslast())
-            .limit(batch)
-            .all()
-        )
+        platform_default = max(0, settings.RETENTION_ANONYMIZED_PURGE_YEARS)
+        # Marker matching happens in Python (Fernet-encrypted names defeat SQL
+        # equality); reuse the service's candidate scan for consistency with
+        # the async path.
+        candidates = db.query(Patient).filter(
+            Patient.status == "INACTIVE",
+        ).order_by(Patient.updated_at.asc().nullslast()).limit(
+            max(1, settings.RETENTION_ANONYMIZED_PURGE_BATCH_SIZE) * 10
+        ).all()
+        candidates = [
+            p for p in candidates
+            if p.first_name == "[deleted]" and p.last_name == "[deleted]"
+        ][: max(1, settings.RETENTION_ANONYMIZED_PURGE_BATCH_SIZE)]
 
         purged: int = 0
         scanned = len(candidates)
         detail: list = []
         for patient in candidates:
             anchor = _retention_anchor_sync(db, patient)
+            effective_years = await_retention_years(
+                db, patient.practice_id, platform_default=platform_default
+            )
             if not RetentionService.is_eligible_for_purge(
                 anchor,
                 now=now,
-                retention_years=max(0, settings.RETENTION_ANONYMIZED_PURGE_YEARS),
+                retention_years=effective_years,
             ):
                 continue
             result = RetentionService.purge_patient_hard(db, patient)
@@ -1226,6 +1231,7 @@ def purge_expired_anonymized_patients(self) -> Dict[str, Any]:
                 None,
                 {
                     "anchor": anchor.isoformat() if anchor else None,
+                    "retention_years": effective_years,
                     "deleted": result["deleted"],
                 },
             )
@@ -1242,8 +1248,27 @@ def purge_expired_anonymized_patients(self) -> Dict[str, Any]:
         db.close()
 
 
+def await_retention_years(db, practice_id, *, platform_default: int) -> int:
+    """Sync effective retention window: max(practice, platform default).
+
+    Mirrors RetentionService.effective_retention_years without async, since
+    the purge task runs on a sync Celery session.
+    """
+    from sqlalchemy import func as _func
+
+    from app.models.practice import Practice as _Practice
+
+    value = (
+        db.query(_func.max(_Practice.retention_years))
+        .filter(_Practice.id == practice_id)
+        .scalar()
+    )
+    if value is None:
+        return platform_default
+    return max(int(value), int(platform_default))
+
+
 def _retention_anchor_sync(db, patient):
-    """Latest billing disposition instant for a patient, sync flavor (UTC-aware)."""
     from sqlalchemy import func as _func
 
     from app.models.billing import Invoice as _Invoice

@@ -33,6 +33,10 @@ class PracticeSettingsUpdate(BaseModel):
     currency: Optional[str] = Field(None, min_length=3, max_length=3)
     address: Optional[PracticeAddressUpdate] = None
     workingHours: Optional[Dict[str, Any]] = None
+    # Data-retention override: NULL = platform default. Floor of 7 is NOT
+    # enforced at the schema level (the service takes max(floor, value)), but
+    # the sweep treats values < RETENTION_ANONYMIZED_PURGE_YEARS as no-op.
+    retentionYears: Optional[int] = Field(None, ge=0, le=100)
 
     @field_validator("timezone")
     @classmethod

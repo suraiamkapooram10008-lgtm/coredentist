@@ -143,22 +143,50 @@ class RetentionService:
         retention_years: int = 7,
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        """Anonymized patients whose billing history is past the window."""
+        """Anonymized patients whose billing history is past the window.
+
+        Per-practice override: a practice's ``retention_years`` (when set) is
+        combined with the platform default via ``max()`` — a practice can only
+        EXTEND retention beyond the platform floor, never shorten it below.
+        """
         moment = now or datetime.now(timezone.utc)
         out: List[Dict[str, Any]] = []
         for patient in await RetentionService.find_anonymized_candidates(db, limit=limit):
             anchor = await RetentionService.billing_anchor_async(db, patient)
+            effective_years = await RetentionService.effective_retention_years(
+                db, patient.practice_id, platform_default=retention_years
+            )
             if RetentionService.is_eligible_for_purge(
-                anchor, now=moment, retention_years=retention_years
+                anchor, now=moment, retention_years=effective_years
             ):
                 out.append(
                     {
                         "patient_id": patient.id,
                         "practice_id": patient.practice_id,
                         "anchor": anchor,
+                        "retention_years": effective_years,
                     }
                 )
         return out
+
+    @staticmethod
+    async def effective_retention_years(
+        db: AsyncSession, practice_id: Any, *, platform_default: int = 7
+    ) -> int:
+        """max(practice.retention_years, platform_default); NULL practice = default.
+
+        The floor is the platform default so a misconfigured practice can never
+        shorten retention below the statutory safe harbor.
+        """
+        from app.models.practice import Practice
+
+        row = await db.execute(
+            select(Practice.retention_years).where(Practice.id == practice_id)
+        )
+        value = row.scalar_one_or_none()
+        if value is None:
+            return platform_default
+        return max(int(value), int(platform_default))
 
 
     # ----------------------------------------------------------------------

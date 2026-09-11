@@ -18,6 +18,9 @@ export interface ClinicSettings {
   timezone: string;
   dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD';
   currency: string;
+  /** Retention override in years (docs/DATA_RETENTION_POLICY.md § 6).
+   *  null = platform default (7y). Purging never shortens below the floor. */
+  retentionYears?: number | null;
   updatedAt: string;
 }
 

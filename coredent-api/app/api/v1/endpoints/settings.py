@@ -34,6 +34,9 @@ def _practice_settings_payload(practice: Practice) -> dict:
             "country": practice.country or "US",
         },
         "settings": practice.settings or {},
+        # Data-retention override (docs/DATA_RETENTION_POLICY.md § 6): NULL
+        # means the platform default applies; min 0 prevents negative windows.
+        "retentionYears": practice.retention_years if practice.retention_years is not None else None,
         "updatedAt": practice.updated_at.isoformat() if practice.updated_at else None,
     }
 
@@ -89,6 +92,13 @@ async def update_practice_settings(
     for schema_field, model_field in scalar_map.items():
         if schema_field in update_data:
             setattr(practice, model_field, update_data[schema_field])
+
+    # Data-retention override: Pydantic schema enforces ge=0/le=100; the
+    # effective-window service takes max(floor, practice value), so a
+    # deliberately-lower value (e.g. 0) still cannot shorten below the platform
+    # default. Allow unset (not provided) and explicit null (clears override).
+    if "retentionYears" in update_data:
+        practice.retention_years = update_data["retentionYears"]
 
     address = update_data.get("address")
     if address is not None:

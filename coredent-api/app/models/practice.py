@@ -3,7 +3,7 @@ Practice Model
 Represents dental practices/clinics
 """
 
-from sqlalchemy import Column, String, DateTime, JSON, ForeignKey, Boolean
+from sqlalchemy import Column, String, DateTime, JSON, ForeignKey, Boolean, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -74,6 +74,13 @@ class Practice(Base):
     chairs = Column(JSON, default=[])  # Stored as JSON for flexibility
 
     is_active = Column(Boolean, default=True)
+    # Data-retention override (docs/DATA_RETENTION_POLICY.md § 1 / § 6).
+    # NULL = use the platform default (RETENTION_ANONYMIZED_PURGE_YEARS, 7).
+    # A practice in a jurisdiction with a longer statutory minimum (e.g. some
+    # US states, or a 10-year country rule) sets a larger value; the hard-purge
+    # eligibility check takes max(practice value, platform default) so a
+    # practice can only EXTEND retention, never shorten it below the floor.
+    retention_years = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
