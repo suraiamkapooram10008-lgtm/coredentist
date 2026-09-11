@@ -35,6 +35,7 @@ import {
   Boxes,
   Building2,
   Megaphone,
+  Server,
 } from 'lucide-react';
 import type { UserRole } from '@/types/api';
 
@@ -57,7 +58,7 @@ const navItems: NavItem[] = [
     label: 'Dashboard',
     icon: LayoutDashboard,
     href: '/dashboard',
-    roles: ['owner', 'admin', 'dentist', 'front_desk'],
+    roles: ['owner', 'admin', 'dentist', 'front_desk', 'accountant'],
   },
   {
     label: 'Patients',
@@ -93,19 +94,20 @@ const navItems: NavItem[] = [
     label: 'Billing',
     icon: CreditCard,
     href: '/billing',
-    roles: ['owner', 'admin', 'front_desk'],
+    // accountant (2026-09): finance staff own billing; no clinical access.
+    roles: ['owner', 'admin', 'front_desk', 'accountant'],
   },
   {
     label: 'Reports',
     icon: BarChart3,
     href: '/reports',
-    roles: ['owner', 'admin'],
+    roles: ['owner', 'admin', 'accountant'],
   },
   {
     label: 'Revenue',
     icon: BarChart3,
     href: '/revenue',
-    roles: ['owner', 'admin'],
+    roles: ['owner', 'admin', 'accountant'],
   },
   {
     label: 'Online Booking',
@@ -136,6 +138,13 @@ const navItems: NavItem[] = [
     icon: Building2,
     href: '/enterprise/hq',
     roles: ['group_owner', 'group_admin'],
+  },
+  {
+    label: 'Platform Console',
+    icon: Server,
+    href: '/platform/console',
+    // super_admin (2026-09): SaaS operator console — cross-tenant by design.
+    roles: ['super_admin'],
   },
   {
     label: 'Settings',

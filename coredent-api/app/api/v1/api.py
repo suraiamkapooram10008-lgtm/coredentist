@@ -32,6 +32,7 @@ from app.api.v1.endpoints import (
     payments,
     automations,
     enterprise,
+    platform,
 )
 
 api_router = APIRouter()
@@ -64,3 +65,7 @@ api_router.include_router(documents.router, prefix="/documents", tags=["Document
 api_router.include_router(clinical.router, prefix="/clinical", tags=["Clinical"])
 api_router.include_router(clinical_notes.router, prefix="/notes", tags=["Clinical Notes"])
 api_router.include_router(patient_portal.router, prefix="/portal", tags=["Patient Portal"])
+# Platform (super-admin) console. Cross-tenant by design; every route is
+# gated on UserRole.SUPER_ADMIN. Mounted last so its broad prefixes cannot
+# shadow any clinic-facing router above.
+api_router.include_router(platform.router, prefix="/platform", tags=["Platform (Super Admin)"])

@@ -35,7 +35,15 @@ async def get_dashboard_metrics(
     request: Request,
     from_date: date = Query(..., alias="from"),
     to_date: date = Query(..., alias="to"),
-    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    current_user: User = Depends(
+        require_role(
+            UserRole.OWNER,
+            UserRole.ADMIN,
+            # ACCOUNTANT (2026-09): finance reporting is the accountant's core
+            # job; the dashboard report is revenue/appointments/production.
+            UserRole.ACCOUNTANT,
+        )
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> DashboardMetricsResponse:
     """
@@ -199,7 +207,12 @@ async def get_dashboard_metrics(
         and_(
             Invoice.practice_id == practice_id,
             *payment_range,
-            Payment.status.in_([PaymentStatus.COMPLETED, PaymentStatus.REFUNDED])
+            # PARTIALLY_REFUNDED counts net-of-refund like REFUNDED (2026-09).
+            Payment.status.in_([
+                PaymentStatus.COMPLETED,
+                PaymentStatus.REFUNDED,
+                PaymentStatus.PARTIALLY_REFUNDED,
+            ])
         )
     )
     collected_res = await db.execute(collected_stmt)
@@ -217,7 +230,11 @@ async def get_dashboard_metrics(
         ), 0))
         .where(
             Payment.invoice_id == Invoice.id,
-            Payment.status.in_([PaymentStatus.COMPLETED, PaymentStatus.REFUNDED]),
+            Payment.status.in_([
+                PaymentStatus.COMPLETED,
+                PaymentStatus.REFUNDED,
+                PaymentStatus.PARTIALLY_REFUNDED,
+            ]),
         )
         .correlate(Invoice)
         .scalar_subquery()

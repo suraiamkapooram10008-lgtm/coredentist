@@ -12,7 +12,7 @@ export type InvoiceStatus =
   | 'cancelled';
 
 export type PaymentMethod = 'cash' | 'card' | 'check' | 'insurance' | 'upi' | 'other';
-export type PaymentStatus = 'completed' | 'pending' | 'failed' | 'refunded';
+export type PaymentStatus = 'completed' | 'pending' | 'failed' | 'refunded' | 'partially_refunded';
 
 export interface InvoiceLineItem {
   description: string;

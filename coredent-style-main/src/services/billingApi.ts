@@ -40,6 +40,28 @@ interface PaymentWire {
   createdAt: string;
 }
 
+/** Wire shape of POST /billing/payments/{id}/refund (currency units, same as recordPayment). */
+interface RefundWire {
+  payment_id: string;
+  invoice_id: string;
+  refunded_amount: MoneyWire;
+  remaining_refundable: MoneyWire;
+  payment_status: PaymentStatus;
+  invoice_status: InvoiceStatus;
+  message: string;
+}
+
+/** Domain result of billingApi.refundPayment (currency units). */
+export interface RefundResult {
+  invoice: Invoice;
+  paymentId: string;
+  refundedAmount: number;
+  remainingRefundable: number;
+  paymentStatus: PaymentStatus;
+  invoiceStatus: InvoiceStatus;
+  message: string;
+}
+
 interface InvoiceWire {
   id: string;
   patientId: string;
@@ -94,6 +116,8 @@ function parseMoney(value: MoneyWire, field: string): number {
 }
 
 function toCents(value: number): number {
+  // Misnomer kept for backward compatibility: normalizes to whole cents as a
+  // currency-unit amount (the API accepts dollars with 2-decimal precision).
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
@@ -279,6 +303,34 @@ export const billingApi = {
       await apiClient.delete<{ message: string }>(`/billing/invoices/${invoiceId}`),
       'Failed to cancel invoice',
     );
+  },
+
+  /**
+   * Refund all or part of a recorded payment (2026-09 production gap).
+   * Server endpoint: POST /billing/payments/{paymentId}/refund
+   * Mirrors recordPayment: currency units on the wire, invoice refreshed after.
+   */
+  async refundPayment(paymentId: string, refund: {
+    amount: number;
+    reason?: string;
+  }): Promise<RefundResult> {
+    const wire = requireApiData(
+      await apiClient.post<RefundWire>(`/billing/payments/${paymentId}/refund`, {
+        amount: toCents(refund.amount),
+        reason: refund.reason,
+      }),
+      'Failed to refund payment',
+    );
+    const invoice = await billingApi.getInvoice(wire.invoice_id);
+    return {
+      invoice,
+      paymentId: wire.payment_id,
+      refundedAmount: parseMoney(wire.refunded_amount, 'refund.refunded_amount'),
+      remainingRefundable: parseMoney(wire.remaining_refundable, 'refund.remaining_refundable'),
+      paymentStatus: wire.payment_status,
+      invoiceStatus: wire.invoice_status,
+      message: wire.message,
+    };
   },
 
   generateReceiptHTML(invoice: Invoice, currency: string = 'USD'): string {

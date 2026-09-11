@@ -53,7 +53,9 @@ export type UserRole =
   | 'hygienist'
   | 'front_desk'
   | 'group_owner'
-  | 'group_admin';
+  | 'group_admin'
+  | 'accountant'
+  | 'super_admin';
 
 export interface NotificationSummary {
   unreadCount: number;

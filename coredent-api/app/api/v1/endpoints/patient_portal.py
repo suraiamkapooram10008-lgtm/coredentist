@@ -957,7 +957,11 @@ async def get_my_billing(
                     case(
                         (
                             Payment.status.in_(
-                                [PaymentStatus.COMPLETED, PaymentStatus.REFUNDED]
+                                [
+                                    PaymentStatus.COMPLETED,
+                                    PaymentStatus.REFUNDED,
+                                    PaymentStatus.PARTIALLY_REFUNDED,
+                                ]
                             ),
                             Payment.amount - func.coalesce(Payment.refunded_amount, 0),
                         ),

@@ -222,7 +222,10 @@ export default function Landing() {
             © 2026 CoreDent PMS. All rights reserved.
           </div>
           <div className="flex gap-4 text-sm font-medium">
-            {/* TODO: Wire to real policy pages before launch */}
+            <Link to="/legal/privacy" className="text-muted-foreground hover:text-primary transition-colors">Privacy</Link>
+            <Link to="/legal/terms" className="text-muted-foreground hover:text-primary transition-colors">Terms</Link>
+            <Link to="/legal/security" className="text-muted-foreground hover:text-primary transition-colors">Security</Link>
+            <Link to="/legal/contact" className="text-muted-foreground hover:text-primary transition-colors">Contact</Link>
           </div>
         </div>
       </footer>

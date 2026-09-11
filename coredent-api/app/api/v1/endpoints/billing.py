@@ -60,6 +60,8 @@ from app.schemas.billing import (
     PaymentPlanInstallmentPay,
     PaymentPlanResponse,
     PaymentPlanListResponse,
+    RefundCreate,
+    RefundResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,7 +98,15 @@ def _split_gst(tax: Decimal, is_inter_state: str | None) -> tuple[Decimal, Decim
 # wrong blast radius for shared front-desk credentials. Deleting an invoice was
 # already OWNER/ADMIN-only, so the guards were also mutually inconsistent.
 # Widen this tuple if a practice genuinely needs clinicians to bill.
-_BILLING_WRITE_ROLES = (UserRole.OWNER, UserRole.ADMIN, UserRole.FRONT_DESK)
+_BILLING_WRITE_ROLES = (
+    UserRole.OWNER,
+    UserRole.ADMIN,
+    UserRole.FRONT_DESK,
+    # ACCOUNTANT (2026-09): finance staff get full billing write access —
+    # recording payments and issuing refunds is their job. The role has no
+    # access to clinical/Patient-profile routes (see routes/config.tsx).
+    UserRole.ACCOUNTANT,
+)
 
 router = APIRouter()
 
@@ -1035,7 +1045,14 @@ async def get_billing_summary(
         # C1 FIX: only completed money is "collected" — failed, pending and
         # refunded amounts used to inflate total_collected and understate
         # (even negate) the outstanding balance. Refunded amounts subtract.
-        Payment.status.in_((PaymentStatus.COMPLETED, PaymentStatus.REFUNDED)),
+        # PARTIALLY_REFUNDED (2026-09) counts net-of-refund like REFUNDED.
+        Payment.status.in_(
+            (
+                PaymentStatus.COMPLETED,
+                PaymentStatus.REFUNDED,
+                PaymentStatus.PARTIALLY_REFUNDED,
+            )
+        ),
         *payment_date_filter,
     )
 
@@ -1051,7 +1068,13 @@ async def get_billing_summary(
         ), 0))
         .where(
             Payment.invoice_id == Invoice.id,
-            Payment.status.in_((PaymentStatus.COMPLETED, PaymentStatus.REFUNDED)),
+            Payment.status.in_(
+                (
+                    PaymentStatus.COMPLETED,
+                    PaymentStatus.REFUNDED,
+                    PaymentStatus.PARTIALLY_REFUNDED,
+                )
+            ),
         )
         .correlate(Invoice)
         .scalar_subquery()
@@ -1541,3 +1564,139 @@ async def pay_payment_plan_installment(
         .options(selectinload(PaymentPlan.installments))
     )
     return result.scalar_one()
+
+
+# ---------------------------------------------------------------------------
+# Refunds (Phase-1 production gap: dedicated refund workflow)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/payments/{payment_id}/refund", response_model=RefundResponse)
+async def refund_payment(
+    payment_id: UUID,
+    refund_data: RefundCreate,
+    request: Request,
+    current_user: User = Depends(require_role(*_BILLING_WRITE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+) -> RefundResponse:
+    """Refund all or part of a recorded COMPLETED payment.
+
+    The ledger already carries `refunded_amount` and the summary math
+    subtracts it (`amount_paid` is net of refunds), but there was no
+    server-side path to *create* a refund — clinics could only cancel an
+    invoice or record new money. This closes that gap.
+
+    Guarantees (mirroring POST /payments/):
+    - Row locks the payment AND its invoice for the whole transaction so a
+      concurrent payment and refund cannot interleave.
+    - Never refunds more than the payment's remaining refundable balance.
+    - Never takes the invoice's net collected amount below zero.
+    - Recomputes both the payment status (REFUNDED / PARTIALLY_REFUNDED)
+      and the invoice status (PARTIALLY_PAID / PENDING) from the ledger.
+    - Full audit trail: who refunded how much of which payment, and why.
+    """
+    cent = Decimal("0.01")
+    refund_amount = Decimal(str(refund_data.amount)).quantize(cent, rounding=_MONEY_ROUNDING)
+    if refund_amount <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Refund amount must be greater than zero",
+        )
+
+    # Lock the payment row first (tenant-scoped).
+    payment_stmt = (
+        select(Payment)
+        .where(
+            Payment.id == payment_id,
+            Payment.practice_id == current_user.practice_id,
+        )
+    )
+    if row_locks_supported():
+        payment_stmt = payment_stmt.with_for_update()
+    payment_result = await db.execute(payment_stmt)
+    payment = payment_result.scalar_one_or_none()
+    if not payment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
+
+    # Only settled money can be refunded.
+    if payment.status not in (PaymentStatus.COMPLETED, PaymentStatus.REFUNDED, PaymentStatus.PARTIALLY_REFUNDED):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Payment is not refundable (status: {payment.status})",
+        )
+
+    already_refunded = Decimal(str(payment.refunded_amount or 0))
+    refundable = Decimal(str(payment.amount)) - already_refunded
+    if refund_amount > refundable:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Refund exceeds refundable balance ({refundable})",
+        )
+
+    # Lock the invoice row (tenant-scoped) so concurrent ledger writes serialize.
+    invoice_stmt = (
+        select(Invoice)
+        .where(
+            Invoice.id == payment.invoice_id,
+            Invoice.practice_id == current_user.practice_id,
+        )
+        .options(selectinload(Invoice.payments))
+    )
+    if row_locks_supported():
+        invoice_stmt = invoice_stmt.with_for_update()
+    invoice_result = await db.execute(invoice_stmt)
+    invoice = invoice_result.scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+    # Apply the refund to the payment ledger row.
+    payment.refunded_amount = already_refunded + refund_amount
+    if Decimal(str(payment.refunded_amount)) >= Decimal(str(payment.amount)):
+        payment.status = PaymentStatus.REFUNDED
+    else:
+        payment.status = PaymentStatus.PARTIALLY_REFUNDED
+
+    # Recompute invoice status from the net ledger. amount_paid is net of
+    # refunds; after a partial refund of a fully paid invoice it correctly
+    # drops to PARTIALLY_PAID, and a full refund returns it to PENDING.
+    # Note: refresh_invoice_status-style derive_invoice_status skips sticky
+    # statuses (CANCELLED / PAID-on-full-refund) — here we always recompute
+    # because a refund deliberately moves money *out*.
+    paid_total = Decimal(str(invoice.amount_paid))
+    invoice_total = Decimal(str(invoice.total or 0))
+    if invoice_total > 0 and paid_total >= invoice_total:
+        invoice.status = InvoiceStatus.PAID
+    elif paid_total > 0:
+        invoice.status = InvoiceStatus.PARTIALLY_PAID
+    else:
+        invoice.status = InvoiceStatus.PENDING
+
+    await log_audit_event(
+        db,
+        current_user,
+        "payment_refunded",
+        "payment",
+        payment.id,
+        request,
+        changes={
+            "invoice_number": invoice.invoice_number,
+            "payment_amount": str(payment.amount),
+            "refund_amount": str(refund_amount),
+            "total_refunded": str(payment.refunded_amount),
+            "payment_status": payment.status.value,
+            "invoice_status": invoice.status.value,
+            "reason": refund_data.reason,
+        },
+    )
+    await db.commit()
+
+    return RefundResponse(
+        payment_id=payment.id,
+        invoice_id=invoice.id,
+        refunded_amount=Decimal(str(payment.refunded_amount)),
+        remaining_refundable=Decimal(str(payment.amount)) - Decimal(str(payment.refunded_amount)),
+        payment_status=payment.status,
+        invoice_status=invoice.status,
+        message=f"Refunded {refund_amount}",
+    )

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Route Configuration
  * Centralized route definitions for better maintainability
  */
@@ -46,7 +46,7 @@ const Communications = React.lazy(() => import('@/pages/Communications'));
 const Payments = React.lazy(() => import('@/pages/Payments'));
 const PublicBooking = React.lazy(() => import('@/pages/PublicBooking'));
 const BookingSuccess = React.lazy(() => import('@/pages/BookingSuccess'));
-// M7 FIX: BillingPortal removed — it was a decorative page rendering
+// M7 FIX: BillingPortal removed â€” it was a decorative page rendering
 // hardcoded fake invoices/payment plans and a fabricated "$8,420 collected"
 // claim. Real billing lives at /billing.
 const ReferralHub = React.lazy(() => import('@/pages/ReferralHub'));
@@ -58,6 +58,15 @@ const DataMigration = React.lazy(() => import('@/pages/admin/DataMigration'));
 const SecurityCompliance = React.lazy(() => import('@/pages/admin/SecurityCompliance'));
 const StaffManagement = React.lazy(() => import('@/pages/admin/StaffManagement'));
 const ForceChangePassword = React.lazy(() => import('@/pages/ForceChangePassword'));
+// Platform (super-admin) console — SaaS operator, cross-tenant by design.
+const PlatformConsole = React.lazy(() => import('@/pages/platform/PlatformConsole'));
+// Legal / policy pages (public)
+const Privacy = React.lazy(() => import('@/pages/legal/Privacy'));
+const Terms = React.lazy(() => import('@/pages/legal/Terms'));
+const DpaPage = React.lazy(() => import('@/pages/legal/Dpa'));
+const SecurityLegal = React.lazy(() => import('@/pages/legal/SecurityPage'));
+const RefundPolicy = React.lazy(() => import('@/pages/legal/RefundPolicy'));
+const ContactPage = React.lazy(() => import('@/pages/legal/Contact'));
 
 /**
  * Public routes (no authentication required)
@@ -75,6 +84,13 @@ export const publicRoutes: RouteConfig[] = [
   { path: '/book/:practiceSlug/:slug', component: PublicBooking },
   // Patient self-service portal
   { path: '/patient-portal', component: PatientPortal },
+  // Legal / policy pages (public, linked from footer + auth screens)
+  { path: '/legal/privacy', component: Privacy },
+  { path: '/legal/terms', component: Terms },
+  { path: '/legal/dpa', component: DpaPage },
+  { path: '/legal/security', component: SecurityLegal },
+  { path: '/legal/refunds', component: RefundPolicy },
+  { path: '/legal/contact', component: ContactPage },
 ];
 
 /**
@@ -163,7 +179,7 @@ export const protectedRoutes: RouteConfig[] = [
   {
     path: '/billing',
     component: Billing,
-    roles: ['owner', 'admin', 'front_desk'],
+    roles: ['owner', 'admin', 'front_desk', 'accountant'],
     title: 'Billing',
   },
   {
@@ -177,7 +193,7 @@ export const protectedRoutes: RouteConfig[] = [
   {
     path: '/revenue',
     component: Reports,
-    roles: ['owner', 'admin'],
+    roles: ['owner', 'admin', 'accountant'],
     title: 'Revenue',
   },
 
@@ -185,7 +201,7 @@ export const protectedRoutes: RouteConfig[] = [
   {
     path: '/reports',
     component: Reports,
-    roles: ['owner', 'admin'],
+    roles: ['owner', 'admin', 'accountant'],
     title: 'Reports',
   },
   {
@@ -339,7 +355,7 @@ export const protectedRoutes: RouteConfig[] = [
   {
     path: '/payments',
     component: Payments,
-    roles: ['owner', 'admin', 'front_desk'],
+    roles: ['owner', 'admin', 'front_desk', 'accountant'],
     title: 'Payments',
   },
 
@@ -360,12 +376,21 @@ export const protectedRoutes: RouteConfig[] = [
   },
 
   // Force password change (first login after admin provisioning)
-  // No role restriction — the ProtectedRoute gate allows this through when
+  // No role restriction â€” the ProtectedRoute gate allows this through when
   // mustChangePassword is armed, regardless of role.
   {
     path: '/force-change-password',
     component: ForceChangePassword,
     title: 'Change Password',
+  },
+
+  // Platform (super-admin) console — SaaS operator only. Server enforces the
+  // same role gate on every /api/v1/platform/* call.
+  {
+    path: '/platform/console',
+    component: PlatformConsole,
+    roles: ['super_admin'],
+    title: 'Platform Console',
   },
 ];
 

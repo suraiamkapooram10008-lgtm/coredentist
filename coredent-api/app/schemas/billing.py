@@ -270,6 +270,35 @@ class PaymentPlanResponse(BaseModel):
         from_attributes = True
 
 
+# ---------------------------------------------------------------------------
+# Refunds
+# ---------------------------------------------------------------------------
+
+
+class RefundCreate(BaseModel):
+    """Request body for refunding a recorded payment."""
+    amount: Decimal = MoneyField(gt=0, description="Amount to refund, in currency units")
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+class RefundResponse(BaseModel):
+    """Result of a refund: the updated payment ledger row."""
+    payment_id: UUID
+    invoice_id: UUID
+    refunded_amount: Decimal
+    remaining_refundable: Decimal
+    payment_status: PaymentStatus
+    invoice_status: InvoiceStatus
+    message: str
+
+
+class PaymentRefundDialogState(BaseModel):
+    """Echoed server-side contract used by the frontend refund dialog."""
+    max_refundable: Decimal
+    payment_method: PaymentMethod
+    currency: str = "USD"
+
+
 class PaymentPlanListResponse(BaseModel):
     """Schema for a bounded page of payment plans."""
     payment_plans: List[PaymentPlanResponse]

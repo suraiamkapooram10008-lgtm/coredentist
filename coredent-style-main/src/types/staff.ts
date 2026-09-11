@@ -87,4 +87,14 @@ export const rolePermissions: Record<UserRole, RolePermissionDetails> = {
     color: 'bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 border-blue-500/20',
     permissions: ['enterprise_analytics', 'enterprise_locations'],
   },
+  accountant: {
+    label: 'Accountant',
+    color: 'bg-teal-500/10 text-teal-500 hover:bg-teal-500/20 border-teal-500/20',
+    permissions: ['billing', 'payments', 'reports_revenue'],
+  },
+  super_admin: {
+    label: 'Platform Admin',
+    color: 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 border-rose-500/20',
+    permissions: ['platform_console'],
+  },
 };

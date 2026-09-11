@@ -155,7 +155,11 @@ async def get_group_analytics(
                 and_(
                     Invoice.practice_id == practice.id,
                     Payment.status.in_(
-                        (PaymentStatus.COMPLETED, PaymentStatus.REFUNDED)
+                        (
+                            PaymentStatus.COMPLETED,
+                            PaymentStatus.REFUNDED,
+                            PaymentStatus.PARTIALLY_REFUNDED,
+                        )
                     ),
                     Payment.created_at >= window.start_utc,
                     Payment.created_at < window.end_utc,

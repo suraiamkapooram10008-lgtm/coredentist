@@ -23,6 +23,15 @@ class UserRole(str, enum.Enum):
     FRONT_DESK = "FRONT_DESK"
     GROUP_OWNER = "GROUP_OWNER"
     GROUP_ADMIN = "GROUP_ADMIN"
+    # 2026-09: production-readiness additions.
+    # ACCOUNTANT — finance-only staff (billing/payments/reports). The frontend
+    #   "front_desk" role previously carried all money handling; clinics that
+    #   hire bookkeepers need a least-privilege role for it.
+    # SUPER_ADMIN — the SaaS operator's own staff (platform-level, not a
+    #   clinic role). Super admins live in their own bootstrap practice and
+    #   are authorized via /platform/* endpoints, never clinic routes.
+    ACCOUNTANT = "ACCOUNTANT"
+    SUPER_ADMIN = "SUPER_ADMIN"
 
 
 class User(Base):

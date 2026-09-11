@@ -31,10 +31,13 @@ _CENT = Decimal("0.01")
 
 # Valid payment status transitions. REFUNDED is terminal; COMPLETED->FAILED
 # (retroactive failure) must go through a refund, not a status rewrite.
+# PARTIALLY_REFUNDED (2026-09) sits between COMPLETED and REFUNDED on the
+# manual-refund path (POST /billing/payments/{id}/refund).
 _PAYMENT_TRANSITIONS: Dict[PaymentStatus, set] = {
     PaymentStatus.PENDING: {PaymentStatus.COMPLETED, PaymentStatus.FAILED},
     PaymentStatus.FAILED: {PaymentStatus.COMPLETED},
-    PaymentStatus.COMPLETED: {PaymentStatus.REFUNDED},
+    PaymentStatus.COMPLETED: {PaymentStatus.REFUNDED, PaymentStatus.PARTIALLY_REFUNDED},
+    PaymentStatus.PARTIALLY_REFUNDED: {PaymentStatus.REFUNDED},
     PaymentStatus.REFUNDED: set(),
 }
 
@@ -218,7 +221,13 @@ class PaymentService:
                 Payment.invoice_id == invoice_id,
                 Invoice.id == invoice_id,
                 Invoice.practice_id == practice_id,
-                Payment.status.in_((PaymentStatus.COMPLETED, PaymentStatus.REFUNDED)),
+                Payment.status.in_(
+                    (
+                        PaymentStatus.COMPLETED,
+                        PaymentStatus.REFUNDED,
+                        PaymentStatus.PARTIALLY_REFUNDED,
+                    )
+                ),
             )
         )
         return _dec(result.scalar() or 0)

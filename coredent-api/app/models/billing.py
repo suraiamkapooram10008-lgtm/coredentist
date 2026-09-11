@@ -40,6 +40,11 @@ class PaymentStatus(str, enum.Enum):
     PENDING = "pending"
     FAILED = "failed"
     REFUNDED = "refunded"
+    # 2026-09: partial refunds via POST /billing/payments/{id}/refund. The
+    # separate payment-processing enum (payment.py) already had this member;
+    # the billing ledger enum now mirrors it so a partially refunded manual
+    # payment is representable on the ledger row itself.
+    PARTIALLY_REFUNDED = "partially_refunded"
 
 
 class PaymentPlanStatus(str, enum.Enum):
@@ -100,7 +105,14 @@ class Invoice(Base):
         """Effective collected amount (Decimal; refunds subtract)."""
         paid = Decimal("0")
         for p in self.payments:
-            if p.status in (PaymentStatus.COMPLETED, PaymentStatus.REFUNDED):
+            # PARTIALLY_REFUNDED joined the set in 2026-09: a partial refund
+            # still leaves net collected money on the ledger row, so it must
+            # keep counting (net of refunded_amount) exactly like REFUNDED.
+            if p.status in (
+                PaymentStatus.COMPLETED,
+                PaymentStatus.REFUNDED,
+                PaymentStatus.PARTIALLY_REFUNDED,
+            ):
                 refunded = p.refunded_amount if p.refunded_amount is not None else Decimal("0")
                 paid += Decimal(str(p.amount)) - Decimal(str(refunded))
         return paid

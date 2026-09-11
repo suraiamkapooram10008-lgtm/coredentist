@@ -27,7 +27,7 @@ from app.core.security import (
 )
 from app.core.config_simple import settings
 from app.core.email import log_email_failure
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.audit import Session as UserSession
 from app.models.password_reset import PasswordResetToken
 from app.schemas.auth import (
@@ -259,6 +259,27 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
         )
+
+    # Platform-suspension gate: a super admin can suspend a whole clinic
+    # (Practice.is_active=False) from the platform console. Every user of
+    # that practice is locked out at login. SUPER_ADMINs live in their own
+    # bootstrap practice and are never affected by tenant suspension.
+    if user.role != UserRole.SUPER_ADMIN:
+        from app.models.practice import Practice as _Practice
+
+        practice_row = await _await_if_needed(
+            db.execute(select(_Practice).where(_Practice.id == user.practice_id))
+        )
+        practice_obj = practice_row.scalar_one_or_none()
+        if practice_obj is not None and not practice_obj.is_active:
+            await log_audit_event(
+                db, user, "login_practice_suspended", "practice", user.practice_id, request,
+            )
+            await _await_if_needed(db.commit())
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This clinic account is suspended. Please contact support.",
+            )
 
     # Email verification gate: new self-registered accounts must verify
     # within the grace period before they can keep signing in.

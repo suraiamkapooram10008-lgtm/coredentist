@@ -52,6 +52,9 @@ _SUBSCRIPTION_BYPASS_PATH_PREFIXES = (
     "/api/v1/auth/",
     "/api/v1/subscriptions",
     "/api/v1/stripe/",
+    # Platform console is cross-tenant SaaS-ops, not clinic app usage; the
+    # super admin's own bootstrap practice carries no billable subscription.
+    "/api/v1/platform/",
 )
 
 
