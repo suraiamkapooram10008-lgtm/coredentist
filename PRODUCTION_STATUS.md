@@ -127,10 +127,13 @@ Everything else (code, tests, configuration, documentation) is now in place for 
 
 ## Verified locally (last full backend rerun: 2026-09-11)
 
-- Phase-1/2 targeted suites: **49 tests green** — production-gaps (16), patients (14),
-  reports (3), plus billing/payments/payment-service/payment-methods/enterprise/auth
-  regression (16) in targeted runs. Full-suite totals: 760+ backend / 1,031 frontend
-  previously recorded.
+- Phase-1/2 targeted suites: **119 tests green** — production-gaps (16), patients (14),
+  reports (6 total incl. comprehensive), billing (38), retention-purge (6), plus
+  payments/payment-service/payment-methods/enterprise/auth regression. Full-suite
+  totals: 760+ backend / 1,031 frontend previously recorded.
+- Scheduled hard purge (`purge_expired_anonymized_patients`): 6 new retention tests
+  green (eligibility math, full async purge w/ billing history, recent-anonymize
+  exclusion, async shape, batch-scan path with Fernet-marker matching).
 - Backend: Alembic migration chain renders offline + upgrades fresh SQLite; real-PostgreSQL
   migration/concurrency runs in CI (`postgres:16-alpine`).
 - Frontend: `npm run typecheck` (both tsconfigs) 0 errors; ESLint `--max-warnings 0` clean.

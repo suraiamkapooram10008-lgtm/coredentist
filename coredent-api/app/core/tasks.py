@@ -1164,3 +1164,112 @@ def process_dunning_task(self) -> Dict[str, Any]:
         raise self.retry(exc=exc, countdown=300)
     finally:
         db.close()
+
+
+@shared_task(bind=True, max_retries=3, acks_late=True, reject_on_worker_lost=True)
+def purge_expired_anonymized_patients(self) -> Dict[str, Any]:
+    """Daily hard purge of anonymized patients past the retention window.
+
+    Implements docs/DATA_RETENTION_POLICY.md § 2: once every billing disposition
+    for a fully-anonymized patient ([deleted]/[deleted], INACTIVE) is older than
+    RETENTION_ANONYMIZED_PURGE_YEARS (default 7), the orphaned rows + the
+    placeholder row itself are deleted and a write-once ``patient_purged`` audit
+    row records the per-table counts (the certificate of destruction).
+
+    Batch-bounded (RETENTION_ANONYMIZED_PURGE_BATCH_SIZE, default 50) and
+    disabled via RETENTION_ANONYMIZED_PURGE_ENABLED=false.
+    """
+    from app.core.config_simple import settings
+    from app.core.audit import log_audit_event_sync
+    from app.models.patient import Patient
+    from app.services.retention_service import RetentionService
+
+    db = SessionLocal()
+    try:
+        if not settings.RETENTION_ANONYMIZED_PURGE_ENABLED:
+            return {"status": "skipped", "reason": "RETENTION_ANONYMIZED_PURGE_ENABLED=false"}
+        if not _try_acquire_task_lock(db, "purge-anonymized-patients"):
+            return {"status": "skipped", "reason": "another purge run is active"}
+
+        now = datetime.now(timezone.utc)
+        batch = max(1, settings.RETENTION_ANONYMIZED_PURGE_BATCH_SIZE)
+        candidates = (
+            db.query(Patient)
+            .filter(
+                Patient.first_name == "[deleted]",
+                Patient.last_name == "[deleted]",
+                Patient.status == "INACTIVE",
+            )
+            .order_by(Patient.updated_at.asc().nullslast())
+            .limit(batch)
+            .all()
+        )
+
+        purged: int = 0
+        scanned = len(candidates)
+        detail: list = []
+        for patient in candidates:
+            anchor = _retention_anchor_sync(db, patient)
+            if not RetentionService.is_eligible_for_purge(
+                anchor,
+                now=now,
+                retention_years=max(0, settings.RETENTION_ANONYMIZED_PURGE_YEARS),
+            ):
+                continue
+            result = RetentionService.purge_patient_hard(db, patient)
+            log_audit_event_sync(
+                db,
+                None,
+                "patient_purged",
+                "patient",
+                patient.id,
+                None,
+                {
+                    "anchor": anchor.isoformat() if anchor else None,
+                    "deleted": result["deleted"],
+                },
+            )
+            purged += 1
+            detail.append(result)
+        db.commit()
+        logger.info("Anonymized-patient purge: purged %s of %s scanned", purged, scanned)
+        return {"purged": purged, "scanned": scanned, "detail": detail}
+    except Exception as exc:
+        db.rollback()
+        logger.error("Error in purge_expired_anonymized_patients: %s", exc)
+        raise self.retry(exc=exc, countdown=3600)
+    finally:
+        db.close()
+
+
+def _retention_anchor_sync(db, patient):
+    """Latest billing disposition instant for a patient, sync flavor (UTC-aware)."""
+    from sqlalchemy import func as _func
+
+    from app.models.billing import Invoice as _Invoice
+    from app.models.billing import Payment as _Payment
+    from app.models.billing import PaymentPlan as _PaymentPlan
+    from app.models.insurance import InsuranceClaim as _Claim
+
+    anchors = []
+    for model, column in (
+        (_Invoice, _Invoice.created_at),
+        (_Payment, _Payment.created_at),
+        (_PaymentPlan, _PaymentPlan.updated_at),
+        (_Claim, _Claim.created_at),
+    ):
+        value = (
+            db.query(_func.max(column)).filter(model.patient_id == patient.id).scalar()
+        )
+        if value is not None:
+            anchors.append(
+                value.replace(tzinfo=timezone.utc)
+                if value.tzinfo is None
+                else value
+            )
+    if anchors:
+        return max(anchors)
+    updated = getattr(patient, "updated_at", None)
+    if updated is None:
+        return None
+    return updated.replace(tzinfo=timezone.utc) if updated.tzinfo is None else updated

@@ -569,9 +569,13 @@ async def anonymize_patient(
 
     # Scrub every PHI column. Search HMACs must go too or the patient
     # remains findable by email/phone/name equality lookups.
+    # NOTE: date_of_birth is NOT NULL at the storage layer; it is scrubbed to
+    # the 1970-01-01 sentinel (DOB is only sensitive in combination with the
+    # name, which is gone). Revisit with a nullable migration if counsel
+    # prefers NULL.
     patient.first_name = "[deleted]"
     patient.last_name = "[deleted]"
-    patient.date_of_birth = None
+    patient.date_of_birth = datetime(1970, 1, 1).date()
     patient.gender = None
     patient.email = None
     patient.phone = None

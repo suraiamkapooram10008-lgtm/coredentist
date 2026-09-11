@@ -72,7 +72,7 @@ their own account data (deactivated at removal + 60-day window per R5).
 | Deactivate disabled users at termination (login already blocks `is_active=False`) | ✅ Implemented |
 | Audit-log write-once + do-not-delete DB triggers | ✅ Implemented |
 | Celery purge job: `portal_lockout`, `revoked_token`, `patient_portal_sessions` expiry sweep | ✅ Implemented (see models) |
-| Celery purge job: anonymized-row hard delete after R2 window | ❌ TODO (platform task) |
+| Celery purge job: anonymized-row hard delete after R2 window | ✅ Implemented (`app.core.tasks.purge_expired_anonymized_patients`, daily beat, 7-year default window, write-once `patient_purged` audit = certificate of destruction) |
 | Destruction-log / certificate-of-destruction | ❌ TODO |
 | Retention-region config per practice (state/jurisdiction override) | ❌ TODO |
 

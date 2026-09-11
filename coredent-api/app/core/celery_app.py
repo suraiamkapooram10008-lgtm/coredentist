@@ -103,6 +103,11 @@ celery_app.conf.beat_schedule = {
         "schedule": timedelta(hours=24),
         "options": {"queue": "communications", "expires": 3600},
     },
+    "purge-anonymized-patients": {
+        "task": "app.core.tasks.purge_expired_anonymized_patients",
+        "schedule": timedelta(hours=24),
+        "options": {"expires": 21600},
+    },
 }
 
 celery_app.conf.task_routes = {

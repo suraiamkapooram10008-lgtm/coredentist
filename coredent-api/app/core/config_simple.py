@@ -271,6 +271,14 @@ class SimpleSettings:
         self.PASSWORD_REQUIRE_LOWERCASE = os.getenv("PASSWORD_REQUIRE_LOWERCASE", "true").lower() == "true"
         self.PASSWORD_REQUIRE_DIGIT = os.getenv("PASSWORD_REQUIRE_DIGIT", "true").lower() == "true"
         self.PASSWORD_REQUIRE_SPECIAL = os.getenv("PASSWORD_REQUIRE_SPECIAL", "true").lower() == "true"
+        # Data-retention policy enforcement (docs/DATA_RETENTION_POLICY.md § R1-R2).
+        # Anonymized patient rows + orphaned billing history are eligible for the
+        # scheduled hard purge once the last billing disposition is older than
+        # RETENTION_ANONYMIZED_PURGE_YEARS. The purge task diagnoses eligibility
+        # with a UTC comparison; this setting is the default retention window.
+        self.RETENTION_ANONYMIZED_PURGE_YEARS = int(os.getenv("RETENTION_ANONYMIZED_PURGE_YEARS", "7"))
+        self.RETENTION_ANONYMIZED_PURGE_BATCH_SIZE = int(os.getenv("RETENTION_ANONYMIZED_PURGE_BATCH_SIZE", "50"))
+        self.RETENTION_ANONYMIZED_PURGE_ENABLED = os.getenv("RETENTION_ANONYMIZED_PURGE_ENABLED", "true").lower() == "true"
         # M-4 PRODUCT DECISION (explicit): PASSWORD_EXPIRE_DAYS is
         # intentionally NOT enforced. NIST SP 800-63B §5.1.1.2 deprecates
         # periodic rotation (it drives weaker passwords); rotation is enforced
