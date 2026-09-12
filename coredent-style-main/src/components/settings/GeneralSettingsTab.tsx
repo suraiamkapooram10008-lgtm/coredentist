@@ -40,6 +40,8 @@ export function GeneralSettingsTab({ settings, onUpdate }: GeneralSettingsTabPro
     dateFormat: settings.dateFormat || 'MM/DD/YYYY',
     retentionYears: settings.retentionYears ?? null,
     jurisdiction: settings.jurisdiction || '',
+    majorityAge: settings.majorityAge ?? 18,
+    minorRetentionYears: settings.minorRetentionYears ?? 7,
   });
 
   // The guidance preset matching the stored jurisdiction (fallback = US default).
@@ -52,12 +54,14 @@ export function GeneralSettingsTab({ settings, onUpdate }: GeneralSettingsTabPro
     setFormData({
       ...formData,
       jurisdiction: code,
-      // Auto-fill the suggested years; the practice can still adjust upward.
-      // Never lower an already-higher value on a mere jurisdiction switch.
+      // Auto-fill all suggested values; never lower an already-higher adult
+      // value on a mere jurisdiction switch (the practice can adjust upward).
       retentionYears:
         formData.retentionYears != null && formData.retentionYears > preset.adultYears
           ? formData.retentionYears
           : preset.adultYears,
+      majorityAge: preset.majorityAge,
+      minorRetentionYears: preset.minorRetentionYears,
     });
   };
 
@@ -76,6 +80,8 @@ export function GeneralSettingsTab({ settings, onUpdate }: GeneralSettingsTabPro
         dateFormat: formData.dateFormat as any,
         retentionYears: formData.retentionYears,
         jurisdiction: formData.jurisdiction || null,
+        majorityAge: formData.majorityAge,
+        minorRetentionYears: formData.minorRetentionYears,
         address: {
           street: formData.street,
           suite: formData.suite,
@@ -315,6 +321,30 @@ export function GeneralSettingsTab({ settings, onUpdate }: GeneralSettingsTabPro
                     </p>
                     <p>Minors: {activePreset.minorRule}</p>
                     {activePreset.note && <p className="italic">{activePreset.note}</p>}
+                    <div className="grid md:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Age of majority</Label>
+                        <Input
+                          type="number"
+                          min="14"
+                          max="21"
+                          value={formData.majorityAge}
+                          onChange={(e) => setFormData({ ...formData, majorityAge: Number(e.target.value) })}
+                          className="h-10 rounded-xl border-slate-200 font-medium"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Minor extra years</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          max="40"
+                          value={formData.minorRetentionYears}
+                          onChange={(e) => setFormData({ ...formData, minorRetentionYears: Number(e.target.value) })}
+                          className="h-10 rounded-xl border-slate-200 font-medium"
+                        />
+                      </div>
+                    </div>
                     <p>
                       Effective purge window is the maximum of the platform floor (
                       {PLATFORM_RETENTION_FLOOR_YEARS}y) and this value. Guidance only — verify

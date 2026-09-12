@@ -23,6 +23,10 @@ export interface ClinicSettings {
   retentionYears?: number | null;
   /** Jurisdiction code for the retention preset picker (e.g. 'CA', 'USA'). */
   jurisdiction?: string | null;
+  /** Age of majority used for minor-retention (default 18). */
+  majorityAge?: number | null;
+  /** Extra years past majority a minor record is kept (default 7). */
+  minorRetentionYears?: number | null;
   updatedAt: string;
 }
 

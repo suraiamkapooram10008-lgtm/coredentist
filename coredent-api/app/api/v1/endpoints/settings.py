@@ -39,6 +39,11 @@ def _practice_settings_payload(practice: Practice) -> dict:
         "retentionYears": practice.retention_years if practice.retention_years is not None else None,
         # Practice jurisdiction for the retention preset picker (NULL = none picked).
         "jurisdiction": practice.jurisdiction or None,
+        # Minor-record retention window (NULL = platform defaults 18 / 7).
+        "majorityAge": practice.majority_age if practice.majority_age is not None else 18,
+        "minorRetentionYears": practice.minor_retention_years
+        if practice.minor_retention_years is not None
+        else 7,
         "updatedAt": practice.updated_at.isoformat() if practice.updated_at else None,
     }
 
@@ -106,6 +111,13 @@ async def update_practice_settings(
     # the stored pick (back to "none picked"); unset leaves it untouched.
     if "jurisdiction" in update_data:
         practice.jurisdiction = update_data["jurisdiction"]
+
+    # Minor-record window: ge/le enforced by schema; NULL clears to platform
+    # default (18 / 7) which the anonymize endpoint reads.
+    if "majorityAge" in update_data:
+        practice.majority_age = update_data["majorityAge"]
+    if "minorRetentionYears" in update_data:
+        practice.minor_retention_years = update_data["minorRetentionYears"]
 
     address = update_data.get("address")
     if address is not None:

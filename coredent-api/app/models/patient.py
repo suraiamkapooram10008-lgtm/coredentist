@@ -122,6 +122,12 @@ class Patient(Base):
     # Status
     status = Column(Enum(PatientStatus), default=PatientStatus.ACTIVE)
 
+    # Minor-record retention snapshot (docs/DATA_RETENTION_POLICY.md R1). Set at
+    # ANONYMIZE TIME from DOB + practice minor config, BEFORE DOB is scrubbed,
+    # so the minor ceiling survives erasure without keeping PHI. NULL for rows
+    # anonymized before this column existed (adult rule only applies).
+    purge_eligible_at = Column(DateTime(timezone=True), nullable=True)
+
     # Global Compliance (India DPDP / US HIPAA)
     consent_recorded_at = Column(DateTime(timezone=True))
 

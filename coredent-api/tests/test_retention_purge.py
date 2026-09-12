@@ -313,6 +313,107 @@ class TestPracticeRetentionSettingsEndpoint:
         assert resp.status_code == 422
 
 
+class TestMinorRetentionEndpoints:
+    """Settings API exposes + persists majorityAge / minorRetentionYears."""
+
+    async def test_settings_expose_and_persist_minor_window(
+        self, async_client, auth_headers
+    ):
+        headers = auth_headers
+        resp = await async_client.get("/api/v1/settings/", headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["majorityAge"] == 18   # platform default
+        assert resp.json()["minorRetentionYears"] == 7
+
+        put = await async_client.put(
+            "/api/v1/settings/",
+            headers=headers,
+            json={"majorityAge": 19, "minorRetentionYears": 10},
+        )
+        assert put.status_code == 200, put.text
+        assert put.json()["majorityAge"] == 19
+        assert put.json()["minorRetentionYears"] == 10
+
+    async def test_minor_window_schema_validation(
+        self, async_client, auth_headers
+    ):
+        # majorityAge out of range -> 422
+        bad = await async_client.put(
+            "/api/v1/settings/", headers=auth_headers, json={"majorityAge": 5}
+        )
+        assert bad.status_code == 422
+        # negative minor years -> 422
+        bad2 = await async_client.put(
+            "/api/v1/settings/",
+            headers=auth_headers,
+            json={"minorRetentionYears": -1},
+        )
+        assert bad2.status_code == 422
+
+
+class TestMinorCeilingLogic:
+    """_compute_minor_ceiling_utc (anonymize snapshot helper). Pure logic."""
+
+    async def test_minor_ceiling_far_future_blocks_adult_purge(self):
+        from app.api.v1.endpoints.patients import _compute_minor_ceiling_utc
+        from app.services.retention_service import RetentionService
+
+        dob = datetime.date(2010, 5, 20)
+        ceiling = _compute_minor_ceiling_utc(dob, majority_age=18, minor_retention_years=7)
+        assert ceiling is not None
+        assert ceiling.year == 2035  # 2010 + 18 + 7
+
+        # Adult window (7y from anchor 2018) has long elapsed by "now", but the
+        # minor ceiling (2035) hasn't, so the record must NOT purge.
+        now = datetime.datetime(2026, 9, 11, tzinfo=datetime.timezone.utc)
+        anchor = datetime.datetime(2018, 3, 4, tzinfo=datetime.timezone.utc)
+        assert RetentionService.is_eligible_for_purge(
+            anchor, now=now, retention_years=7
+        ) is True  # adult alone would allow
+        assert RetentionService.is_eligible_for_purge(
+            anchor, now=now, retention_years=7, purge_eligible_at=ceiling
+        ) is False  # minor ceiling blocks
+
+    async def test_minor_ceiling_past_allows_purge(self):
+        from app.api.v1.endpoints.patients import _compute_minor_ceiling_utc
+        from app.services.retention_service import RetentionService
+
+        dob = datetime.date(1985, 1, 1)
+        ceiling = _compute_minor_ceiling_utc(dob, majority_age=18, minor_retention_years=7)
+        # 1985 + 18 + 7 = 2010 -> long past.
+        now = datetime.datetime(2026, 9, 11, tzinfo=datetime.timezone.utc)
+        anchor = datetime.datetime(2015, 1, 1, tzinfo=datetime.timezone.utc)
+        assert RetentionService.is_eligible_for_purge(
+            anchor, now=now, retention_years=7, purge_eligible_at=ceiling
+        ) is True
+
+    async def test_leap_day_dob_snaps_to_feb_28(self):
+        from app.api.v1.endpoints.patients import _compute_minor_ceiling_utc
+
+        dob = datetime.date(2000, 2, 29)
+        ceiling = _compute_minor_ceiling_utc(dob, majority_age=18, minor_retention_years=7)
+        # 2000+18+7 = 2025 (not a leap year) -> snap to 2025-02-28
+        assert ceiling is not None
+        assert ceiling.month == 2
+        assert ceiling.day == 28
+        assert ceiling.year == 2025
+
+    async def test_minor_ceiling_uses_practice_override(self):
+        from app.api.v1.endpoints.patients import _compute_minor_ceiling_utc
+        from app.services.retention_service import RetentionService
+
+        dob = datetime.date(2010, 5, 20)
+        ceiling = _compute_minor_ceiling_utc(dob, majority_age=19, minor_retention_years=10)
+        # 2010 + 19 + 10 = 2039
+        assert ceiling is not None
+        assert ceiling.year == 2039
+        now = datetime.datetime(2026, 9, 11, tzinfo=datetime.timezone.utc)
+        anchor = datetime.datetime(2018, 3, 4, tzinfo=datetime.timezone.utc)
+        assert RetentionService.is_eligible_for_purge(
+            anchor, now=now, retention_years=7, purge_eligible_at=ceiling
+        ) is False
+
+
 class TestRetentionPurgeAsyncShape:
     """The async purge path shares sync ordering; exercise it on a fresh marker."""
 

@@ -24,7 +24,7 @@ from app.core.rate_limit import user_rate_limit
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from typing import List
+from typing import List, Optional
 
 from app.models.clinical import ClinicalNote
 from app.schemas.clinical import ClinicalNoteResponse
@@ -501,6 +501,39 @@ async def delete_patient(
     await db.commit()
 
 
+def _compute_minor_ceiling_utc(
+    date_of_birth: Optional[date],
+    majority_age: int = 18,
+    minor_retention_years: int = 7,
+) -> Optional[datetime]:
+    """Compute the minor-record retention ceiling (UTC-aware instant).
+
+    docs/DATA_RETENTION_POLICY.md R1: a minor record may not be purged before
+    ``date_of_birth + majority_age + minor_retention_years``. Called at
+    anonymize time BEFORE DOB is scrubbed, and the resulting snapshot is
+    stored on ``patients.purge_eligible_at`` so the ceiling survives erasure
+    without retaining DOB/PHI.
+
+    Returns None when the DOB is absent (caller then applies the adult rule
+    only — the safe direction for a row that could be a minor).
+    """
+    from datetime import date as _date
+
+    if date_of_birth is None:
+        return None
+
+    def _plus_years(d: date, years: int) -> date:
+        """Exact calendar-year addition; Feb-29 snaps to Feb-28 in non-leap years."""
+        try:
+            return d.replace(year=d.year + max(0, years))
+        except ValueError:
+            return d.replace(year=d.year + max(0, years), day=28)
+
+    majority_date = _plus_years(date_of_birth, majority_age)
+    ceiling = _plus_years(majority_date, minor_retention_years)
+    return datetime.combine(ceiling, datetime.min.time(), tzinfo=timezone.utc)
+
+
 @router.post("/{patient_id}/anonymize", response_model=PatientResponse)
 async def anonymize_patient(
     request: Request,
@@ -566,6 +599,28 @@ async def anonymize_patient(
     )
     patient.portal_access_token = None
     patient.portal_token_expires = None
+
+    # Snapshot the minor-record retention ceiling BEFORE scrubbing DOB.
+    # docs/DATA_RETENTION_POLICY.md R1: a minor record may not be purged before
+    # date_of_birth + majority_age + minor_retention_years. We compute this at
+    # anonymize time (from the practice's config, else platform defaults) and
+    # store it so the ceiling survives erasure WITHOUT retaining DOB/PHI.
+    from app.models.practice import Practice as _Practice
+    practice_row = await db.execute(
+        select(_Practice).where(_Practice.id == practice_id)
+    )
+    practice_obj = practice_row.scalar_one_or_none()
+    _majority = (
+        practice_obj.majority_age if practice_obj and practice_obj.majority_age else 18
+    )
+    _minor_years = (
+        practice_obj.minor_retention_years
+        if practice_obj and practice_obj.minor_retention_years
+        else 7
+    )
+    patient.purge_eligible_at = _compute_minor_ceiling_utc(
+        patient.date_of_birth, _majority, _minor_years
+    )
 
     # Scrub every PHI column. Search HMACs must go too or the patient
     # remains findable by email/phone/name equality lookups.

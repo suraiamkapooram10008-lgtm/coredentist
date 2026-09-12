@@ -1215,10 +1215,12 @@ def purge_expired_anonymized_patients(self) -> Dict[str, Any]:
             effective_years = await_retention_years(
                 db, patient.practice_id, platform_default=platform_default
             )
+            minor_ceiling = getattr(patient, "purge_eligible_at", None)
             if not RetentionService.is_eligible_for_purge(
                 anchor,
                 now=now,
                 retention_years=effective_years,
+                purge_eligible_at=minor_ceiling,
             ):
                 continue
             result = RetentionService.purge_patient_hard(db, patient)
@@ -1232,6 +1234,7 @@ def purge_expired_anonymized_patients(self) -> Dict[str, Any]:
                 {
                     "anchor": anchor.isoformat() if anchor else None,
                     "retention_years": effective_years,
+                    "purge_eligible_at": minor_ceiling.isoformat() if minor_ceiling else None,
                     "deleted": result["deleted"],
                 },
             )

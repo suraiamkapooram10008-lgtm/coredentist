@@ -101,11 +101,31 @@ class RetentionService:
         *,
         now: datetime,
         retention_years: int,
+        purge_eligible_at: Optional[datetime] = None,
     ) -> bool:
-        """True when the last billing disposition is past the retention window."""
+        """True when the last billing disposition is past the retention window.
+
+        AND semantics with the minor-record ceiling: when ``purge_eligible_at``
+        is set (a minor record's snapshot from anonymize time), it must also
+        have elapsed — a record of a patient who was a minor must never be
+        purged before ``DOB + majority_age + minor_retention_years`` even if
+        the adult billing window has already passed.
+
+        Date granularity mirrors the backend snapshot (midnight UTC), so naive
+        DB datetimes normalize to midnight UTC too.
+        """
         if anchor is None:
             return False
-        return now >= anchor + _years_delta(retention_years)
+        cutoff = anchor + _years_delta(retention_years)
+        # Normalize day precision: the snapshot floors to the day (NaiveDates
+        # legitimately surface midnight), so a same-day ceiling is NOT
+        # elapsed until the next UTC day per GDPR "past the window" practice.
+        adult_ok = now >= cutoff
+        if not adult_ok:
+            return False
+        if purge_eligible_at is not None:
+            return now >= _as_aware(purge_eligible_at) + timedelta(days=1)
+        return True
 
     @staticmethod
     async def find_anonymized_candidates(
@@ -156,8 +176,13 @@ class RetentionService:
             effective_years = await RetentionService.effective_retention_years(
                 db, patient.practice_id, platform_default=retention_years
             )
+            # Minor-record ceiling snapshot from anonymize time (AND condition).
+            minor_ceiling = _as_aware(getattr(patient, "purge_eligible_at", None))
             if RetentionService.is_eligible_for_purge(
-                anchor, now=moment, retention_years=effective_years
+                anchor,
+                now=moment,
+                retention_years=effective_years,
+                purge_eligible_at=minor_ceiling,
             ):
                 out.append(
                     {
@@ -165,6 +190,7 @@ class RetentionService:
                         "practice_id": patient.practice_id,
                         "anchor": anchor,
                         "retention_years": effective_years,
+                        "purge_eligible_at": minor_ceiling,
                     }
                 )
         return out

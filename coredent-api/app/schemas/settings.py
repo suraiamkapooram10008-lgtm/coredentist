@@ -41,6 +41,10 @@ class PracticeSettingsUpdate(BaseModel):
     # known preset universe server-side only by shape; unknown codes fall back
     # client-side. Max length allows future ISO-alpha-3 + region suffixes.
     jurisdiction: Optional[str] = Field(None, min_length=2, max_length=16)
+    # Minor-record retention window (docs/DATA_RETENTION_POLICY.md R1).
+    # NULL/absent = platform defaults; values clamped to sane ranges.
+    majorityAge: Optional[int] = Field(None, ge=14, le=21)
+    minorRetentionYears: Optional[int] = Field(None, ge=0, le=40)
 
     @field_validator("timezone")
     @classmethod

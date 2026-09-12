@@ -85,6 +85,11 @@ class Practice(Base):
     # NULL = none picked. Purely a UI convenience; purge enforcement only
     # ever reads retention_years (with the platform floor via max()).
     jurisdiction = Column(String(16), nullable=True)
+    # Minor-record retention window (docs/DATA_RETENTION_POLICY.md R1).
+    # NULL = platform defaults (18 / 7). A minor record is not purged before
+    # date_of_birth + majority_age + minor_retention_years.
+    majority_age = Column(Integer, nullable=True)
+    minor_retention_years = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

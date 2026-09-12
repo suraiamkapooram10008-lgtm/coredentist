@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_MAJORITY_AGE,
+  DEFAULT_MINOR_RETENTION_YEARS,
   PLATFORM_RETENTION_FLOOR_YEARS,
   RETENTION_PRESETS,
   RETENTION_PRESET_OPTIONS,
+  computeMinorCeiling,
   getRetentionPreset,
   hasSpecificPreset,
   US_FALLBACK_PRESET,
@@ -56,5 +59,26 @@ describe('retentionPresets', () => {
     const all = RETENTION_PRESET_OPTIONS.flatMap((g) => g.items);
     expect(new Set(all.map((i) => i.code)).size).toBe(RETENTION_PRESETS.length);
     expect(all.length).toBe(RETENTION_PRESETS.length);
+  });
+
+  it('computeMinorCeiling honors practice overrides (age 19 + 10y)', () => {
+    // Mirrors backend _compute_minor_ceiling_utc snapshot:
+    // 2010-05-20 + 19y majority + 10y retention = 2039-05-20.
+    const ceiling = computeMinorCeiling(new Date(2010, 4, 20), 19, 10);
+    expect(ceiling).not.toBeNull();
+    expect(ceiling!.getFullYear()).toBe(2039);
+    expect(ceiling!.getMonth()).toBe(4);
+  });
+
+  it('computeMinorCeiling returns null without a DOB (adult rule only)', () => {
+    expect(computeMinorCeiling(null)).toBeNull();
+    expect(computeMinorCeiling(undefined)).toBeNull();
+    expect(computeMinorCeiling('')).toBeNull();
+    expect(computeMinorCeiling(new Date('not-a-date'))).toBeNull();
+  });
+
+  it('US fallback carries conservative defaults (18 / 7)', () => {
+    expect(US_FALLBACK_PRESET.majorityAge).toBe(DEFAULT_MAJORITY_AGE);
+    expect(US_FALLBACK_PRESET.minorRetentionYears).toBe(DEFAULT_MINOR_RETENTION_YEARS);
   });
 });

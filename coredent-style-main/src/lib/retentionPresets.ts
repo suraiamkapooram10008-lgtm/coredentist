@@ -14,7 +14,7 @@
 // state board / counsel before relying on this in a compliance filing.
 
 export interface RetentionPreset {
-  /** Jurisdiction code: 'CA' (state), 'US' (default), or ISO country ('IN','GB'). */
+  /** Jurisdiction code: 'CA' (state), 'US' (default), or ISO country ('IND','GBR'). */
   code: string;
   /** Dropdown label. */
   label: string;
@@ -22,12 +22,20 @@ export interface RetentionPreset {
   adultYears: number;
   /** Human-readable guidance for minor records (not machine-enforced). */
   minorRule: string;
+  /** Suggested majority age used with computeMinorCeiling (default 18). */
+  majorityAge: number;
+  /** Suggested extra years past majority for minor records (default 7). */
+  minorRetentionYears: number;
   /** Optional footnote (e.g. radiographs, claims). */
   note?: string;
 }
 
-/** Platform floor â€” mirrors RETENTION_ANONYMIZED_PURGE_YEARS default. */
+/** Platform floor - mirrors RETENTION_ANONYMIZED_PURGE_YEARS default. */
 export const PLATFORM_RETENTION_FLOOR_YEARS = 7;
+/** Common majority-age default across jurisdictions. */
+export const DEFAULT_MAJORITY_AGE = 18;
+/** Common minor-extra-years default. */
+export const DEFAULT_MINOR_RETENTION_YEARS = 7;
 
 /**
  * US states with commonly-cited guidance. Codes not listed here fall back to
@@ -102,8 +110,25 @@ const international: Array<[string, string, number, string, string?]> = [
 
 function fromTuple(t: [string, string, number, string, string?]): RetentionPreset {
   const [code, label, adultYears, minorRule, note] = t;
-  return { code, label, adultYears, minorRule, note };
+  return {
+    code,
+    label,
+    adultYears,
+    minorRule,
+    // Most jurisdictions use 18 as the age of majority; per-state overrides
+    // live in MAJORITY_AGE_OVERRIDES below (kept small to say explicit).
+    majorityAge: MAJORITY_AGE_OVERRIDES[code] ?? DEFAULT_MAJORITY_AGE,
+    minorRetentionYears: DEFAULT_MINOR_RETENTION_YEARS,
+    note,
+  };
 }
+
+// Age-18 is the US default everywhere except these (well-known exceptions).
+const MAJORITY_AGE_OVERRIDES: Record<string, number> = {
+  AL: 19, // Alabama: 19
+  MS: 21, // Mississippi: 21
+  NE: 19, // Nebraska: 19
+};
 
 export const US_FALLBACK_PRESET: RetentionPreset = fromTuple(international[0]);
 
@@ -147,3 +172,29 @@ export function hasSpecificPreset(code: string | null | undefined): boolean {
   if (!code) return false;
   return RETENTION_PRESETS.some((p) => p.code === code);
 }
+
+/**
+ * Compute the minor-record retention ceiling for a patient, in UTC.
+ * docs/DATA_RETENTION_POLICY.md R1: not purged before
+ *   date_of_birth + majority_age + minor_retention_years
+ * majorityAge default 18, minorRetentionYears default 7.
+ * Returns null when DOB is missing (caller applies the adult rule only,
+ * the safe direction for a row that *could* be a minor).
+ * This is snapshot at anonymize time as patients.purge_eligible_at so the
+ * ceiling survives DOB erasure.
+ */
+export function computeMinorCeiling(
+  dateOfBirth: Date | string | null | undefined,
+  majorityAge?: number | null,
+  minorRetentionYears?: number | null,
+): Date | null {
+  const dob = typeof dateOfBirth === 'string' ? new Date(dateOfBirth) : dateOfBirth;
+  if (!dob || Number.isNaN(dob.getTime())) return null;
+  const majority = majorityAge ?? 18;
+  const extraYears = minorRetentionYears ?? 7;
+  const ceiling = new Date(dob);
+  ceiling.setFullYear(ceiling.getFullYear() + majority);
+  ceiling.setFullYear(ceiling.getFullYear() + extraYears);
+  return ceiling;
+}
+
