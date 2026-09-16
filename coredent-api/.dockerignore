@@ -50,9 +50,11 @@ Thumbs.db
 docs/
 
 # Environment
+# Never bake env files into image layers. The plain ".env" pattern did not
+# cover ".env.staging", ".env.production", or the git-tracked
+# ".env.staging.railway", and "COPY . ." picked all of them up.
 .env
-.env.local
-.env.*.local
+.env.*
 
 # Alembic (keep only necessary files)
 alembic/__pycache__/
