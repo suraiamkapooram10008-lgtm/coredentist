@@ -1,6 +1,18 @@
 """
-Disaster Recovery Verification Tests
-Validates database schema, practice tenancy isolation, table structures, and encryption.
+Schema / tenancy / encryption integrity tests.
+
+SCOPE WARNING: despite the module name, nothing here exercises disaster
+recovery. Every assertion below runs against the *current* test session
+database - it never takes a backup and never restores one. A restore can be
+completely broken and this file still passes.
+
+Real restore verification is scripts/backup-dr-drill.ps1 (restores a dump into
+a scratch Postgres, measures RTO, checks core-table counts and the audit
+write-once guard) plus the checklist in scripts/backup-dr-drill-checklist.md.
+A pg_dump -> pg_restore round-trip test belongs here too and should be added
+once it can be developed against a real PostgreSQL server; it must skip when
+PostgreSQL or the client tools are unavailable, following the precedent in
+tests/test_postgres_concurrency.py.
 """
 
 import pytest

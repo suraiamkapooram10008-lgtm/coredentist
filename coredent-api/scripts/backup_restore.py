@@ -9,11 +9,11 @@ the.
 
 Subcommands
 -----------
-backup     Create a compressed, timestamped pg_dump in ``$BACKUP_DIR``.
-restore    Restore a pg_dump into a target database. Refuses to run
+backup     Create a timestamped pg_dump custom-format archive in ``$BACKUP_DIR``.
+restore    Restore a dump into a target database. Refuses to run
     against the production database URL unless the operator passes
     ``--confirm-production``.
-verify     Verify a backup file by counting tables referenced.
+verify     Verify an archive by reading its pg_restore table of contents.
 
 Env vars
 --------
@@ -21,12 +21,20 @@ DATABASE_URL        Postgres URL (required).
 BACKUP_DIR          Directory for backups. Default: ./backups.
 PG_DUMP_BIN         Path to ``pg_dump``. Default: ``pg_dump`` on PATH.
 PG_RESTORE_BIN      Path to ``pg_restore``. Default: ``pg_restore`` on PATH.
+
+Format note
+-----------
+The archive is ``pg_dump -Fc`` (a binary custom-format archive), written with a
+``.dump`` extension and read back by ``pg_restore``. This matches the other
+backup tooling in this repo (``scripts/backup-database.sh``,
+``scripts/restore-database.sh``, ``docker-compose.prod.yml``) and the
+``-SourceDump`` expected by ``scripts/backup-dr-drill.ps1``, so one artifact
+works with every tool.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import gzip
 import os
 import shutil
 import subprocess
@@ -73,20 +81,22 @@ def cmd_backup(args: argparse.Namespace) -> int:
 
     url = os.environ["DATABASE_URL"]
     timestamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out = backup_dir / f"coredent-{timestamp}.sql.gz"
+    out = backup_dir / f"coredent-{timestamp}.dump"
 
     pg_dump = os.environ.get("PG_DUMP_BIN", "pg_dump")
     if not shutil.which(pg_dump):
         print(f"ERROR: {pg_dump} not found on PATH", file=sys.stderr)
         return 2
 
-    argv = [pg_dump, *(_pg_args(url)), "-Fc"]
-    print(f"Running: {' '.join(argv)} > {out}")
-    with gzip.open(out, "wb") as gz:
-        proc = subprocess.run(argv, stdout=gz, stderr=subprocess.PIPE, check=False)
+    argv = [pg_dump, *(_pg_args(url)), "-Fc", "-f", str(out)]
+    print(f"Running: {' '.join(argv)}")
+    proc = subprocess.run(argv, stderr=subprocess.PIPE, check=False)
     if proc.returncode != 0:
         print(proc.stderr.decode("utf-8", errors="replace"), file=sys.stderr)
         print(f"ERROR: pg_dump exited {proc.returncode}", file=sys.stderr)
+        # Never leave a partial archive behind: anything that later globs the
+        # backup directory would treat a truncated file as a usable backup.
+        out.unlink(missing_ok=True)
         return proc.returncode
     print(f"Backup written to {out}")
     return 0
@@ -112,10 +122,9 @@ def cmd_restore(args: argparse.Namespace) -> int:
         print(f"ERROR: backup file not found: {backup_path}", file=sys.stderr)
         return 4
 
-    argv = [pg_restore, *(_pg_args(url)), "--clean", "--no-owner"]
-    print(f"Running: {' '.join(argv)} < {backup_path}")
-    with gzip.open(backup_path, "rb") as gz:
-        proc = subprocess.run(argv, stdin=gz, stderr=subprocess.PIPE, check=False)
+    argv = [pg_restore, *(_pg_args(url)), "--clean", "--no-owner", str(backup_path)]
+    print(f"Running: {' '.join(argv)}")
+    proc = subprocess.run(argv, stderr=subprocess.PIPE, check=False)
     if proc.returncode != 0:
         print(proc.stderr.decode("utf-8", errors="replace"), file=sys.stderr)
         return proc.returncode
@@ -124,18 +133,59 @@ def cmd_restore(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
+    """Verify an archive by reading its pg_restore table of contents.
+
+    The archive is pg_dump's binary custom format, so the previous
+    implementation - counting lines that start with "CREATE TABLE" - could
+    never match anything and always reported ~0 tables. That is worse than
+    having no verifier at all, because it looks like a real result.
+    ``pg_restore --list`` reads the archive TOC without restoring anything.
+    """
     backup_path = Path(args.backup_path)
     if not backup_path.exists():
         print(f"ERROR: backup file not found: {backup_path}", file=sys.stderr)
         return 4
 
-    table_lines = 0
-    with gzip.open(backup_path, "rb") as gz:
-        for raw in gz:
-            line = raw.decode("utf-8", errors="replace")
-            if line.startswith("CREATE TABLE") or line.startswith("ALTER TABLE"):
-                table_lines += 1
-    print(f"Backup {backup_path} references ~{table_lines} tables.")
+    pg_restore = os.environ.get("PG_RESTORE_BIN", "pg_restore")
+    if not shutil.which(pg_restore):
+        print(f"ERROR: {pg_restore} not found on PATH", file=sys.stderr)
+        return 2
+
+    proc = subprocess.run(
+        [pg_restore, "--list", str(backup_path)],
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stderr.decode("utf-8", errors="replace"), file=sys.stderr)
+        print(
+            f"ERROR: {backup_path} is not a readable pg_dump archive "
+            f"(pg_restore --list exited {proc.returncode})",
+            file=sys.stderr,
+        )
+        return proc.returncode
+
+    lines = proc.stdout.decode("utf-8", errors="replace").splitlines()
+    tables = [ln for ln in lines if " TABLE " in ln and "TABLE DATA" not in ln]
+    data_sections = [ln for ln in lines if " TABLE DATA " in ln]
+
+    db_name = ""
+    for line in lines[:12]:
+        if line.startswith(";") and "dbname:" in line:
+            db_name = line.split("dbname:", 1)[1].strip()
+
+    print(
+        f"Archive OK: {len(lines)} TOC entries, {len(tables)} tables, "
+        f"{len(data_sections)} table-data sections"
+        + (f", dbname={db_name}" if db_name else "")
+    )
+    if not tables:
+        print(
+            "ERROR: archive lists no TABLE entries - refusing to treat this as a "
+            "valid backup.",
+            file=sys.stderr,
+        )
+        return 6
     return 0
 
 
@@ -143,11 +193,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    b = sub.add_parser("backup", help="Create a compressed pg_dump.")
+    b = sub.add_parser("backup", help="Create a pg_dump custom-format archive.")
     b.set_defaults(func=cmd_backup)
 
-    r = sub.add_parser("restore", help="Restore a pg_dump into a target DB.")
-    r.add_argument("backup_path", help="Path to a .sql.gz backup file.")
+    r = sub.add_parser("restore", help="Restore a .dump archive into a target DB.")
+    r.add_argument("backup_path", help="Path to a .dump backup file.")
     r.add_argument(
         "--confirm-production",
         action="store_true",
@@ -156,7 +206,7 @@ def main() -> int:
     r.set_defaults(func=cmd_restore)
 
     v = sub.add_parser("verify", help="Verify a backup file by table count.")
-    v.add_argument("backup_path", help="Path to a .sql.gz backup file.")
+    v.add_argument("backup_path", help="Path to a .dump backup file.")
     v.set_defaults(func=cmd_verify)
 
     args = parser.parse_args()

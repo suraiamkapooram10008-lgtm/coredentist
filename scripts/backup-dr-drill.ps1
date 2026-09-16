@@ -68,7 +68,7 @@ if ($SourceDump -and (Test-Path $SourceDump)) {
     if ($LASTEXITCODE -ne 0) {
         $failures.Add("pg_restore exited $LASTEXITCODE (see output above)")
     } else {
-        $rtoSeconds = (New-Date).Subtract($restoreStart).TotalSeconds
+        $rtoSeconds = (Get-Date).Subtract($restoreStart).TotalSeconds
         Write-Host ("[OK]   restore finished in $([math]::Round($rtoSeconds,1))s; RTO within 4h: " + ($rtoSeconds -le $RestoreTimeoutSeconds))
         if ($rtoSeconds -gt $RestoreTimeoutSeconds) { $failures.Add("RTO > $RestoreTimeoutSeconds s") }
     }
@@ -82,12 +82,21 @@ foreach ($tbl in @('practices','users','patients','appointments','invoices','pay
 }
 
 # ---- 4. Audit write-once still enforced after restore (tamper attempt must fail) ----
-$tamper = Test-Pg $TargetPgDbUrl "UPDATE audit_logs SET action = action WHERE 1=0"
-if ("$tamper" -match 'error|violat|locked|trigger') {
-    Write-Host '[OK]   audit write-once trigger/guard still blocks tampering after restore'
+# The tamper must touch a REAL row. The write-once guard is a BEFORE UPDATE
+# FOR EACH ROW trigger, so the old "WHERE 1=0" matched no rows, fired no
+# trigger, raised no error and reported success while testing nothing.
+$auditRows = "$(Test-Pg $TargetPgDbUrl 'SELECT count(*) FROM audit_logs')".Trim()
+if (-not $auditRows -or $auditRows -eq '0') {
+    Write-Host '[SKIP] audit write-once (audit_logs is empty after restore; seed data first - checklist C7)'
 } else {
-    # SQLite/other dialect may not raise here; do a soft check in Python? Keep simple on PG.
-    Write-Host '[WARN] audit write-once could not be proven (expected a PG error; see checklist C7)'
+    $tamper = Test-Pg $TargetPgDbUrl "UPDATE audit_logs SET action = action WHERE id = (SELECT id FROM audit_logs LIMIT 1)"
+    if ($null -eq $tamper) {
+        $failures.Add('audit write-once check could not run (psql returned nothing)')
+    } elseif ("$tamper" -match 'error|violat|locked|trigger|permission|denied') {
+        Write-Host '[OK]   audit write-once trigger/guard still blocks tampering after restore'
+    } else {
+        $failures.Add("audit write-once NOT enforced after restore: tampering a real audit row succeeded (restored DB lost the guard)")
+    }
 }
 
 # ---- 5. App health against restored DB (optional) ----
