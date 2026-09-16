@@ -54,7 +54,7 @@ export default function Landing() {
 
       <main className="flex-1">
         {/* ── Hero Section ── */}
-        <section className="relative overflow-hidden pt-24 pb-32 lg:pt-36 lg:pb-40">
+        <section className="relative overflow-hidden pt-14 pb-16 lg:pt-20 lg:pb-20">
           {/* Background Gradients */}
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-7xl h-full -z-10 opacity-30 dark:opacity-20 pointer-events-none">
             <div className="absolute top-[20%] left-[10%] w-[500px] h-[500px] bg-primary/40 blur-[120px] rounded-full mix-blend-multiply" />
@@ -62,19 +62,19 @@ export default function Landing() {
           </div>
 
           <div className="container mx-auto px-4 text-center">
-            <div className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80 mb-8 animate-fade-in-up">
+            <div className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80 mb-6 animate-fade-in-up">
               <Sparkles className="h-3.5 w-3.5 mr-2 text-indigo-500" />
               Next-Gen Dental OS is Here
             </div>
             
-            <h1 className="max-w-4xl mx-auto text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight text-foreground mb-8 bg-clip-text">
+            <h1 className="max-w-4xl mx-auto text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight text-foreground mb-6 bg-clip-text">
               The Intelligent Platform for <br className="hidden md:block" />
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-indigo-600">
                 Modern Dental Enterprises
               </span>
             </h1>
             
-            <p className="max-w-2xl mx-auto text-xl text-muted-foreground mb-10">
+            <p className="max-w-2xl mx-auto text-xl text-muted-foreground mb-8">
               Unify your clinical charting, AI imaging, and billing in one lightning-fast platform. Built for growing DSOs and forward-thinking practices.
             </p>
             
@@ -87,7 +87,7 @@ export default function Landing() {
               </Link>
             </div>
             
-            <div className="mt-16 flex justify-center gap-8 text-sm font-medium text-muted-foreground/80">
+            <div className="mt-10 flex flex-wrap justify-center gap-x-8 gap-y-2 text-sm font-medium text-muted-foreground/80">
               <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-green-500" /> No credit card required</div>
               <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-green-500" /> 14-day free trial</div>
               <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-green-500" /> Cancel anytime</div>
