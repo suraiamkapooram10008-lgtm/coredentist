@@ -108,18 +108,28 @@ def _single_column_uniques(bind, table: str, column: str) -> tuple[list[str], li
     """
     insp = sa.inspect(bind)
 
+    constraint_names = [
+        uc.get("name") or f"uq_{table}_{column}"
+        for uc in insp.get_unique_constraints(table)
+        if list(uc.get("column_names") or []) == [column]
+    ]
+
+    # PostgreSQL backs every unique CONSTRAINT with an index of the SAME name,
+    # so ``get_indexes()`` reports it as a unique index too.  Such an index
+    # cannot be dropped with DROP INDEX -- Postgres raises
+    # "cannot drop index <name> because constraint <name> on table <t>
+    # requires it" -- and dropping the constraint removes the backing index
+    # anyway.  Without this exclusion the drop_index loop below aborted the
+    # whole migration transaction on PostgreSQL (SQLite does not expose
+    # constraint-backing indexes, which is why the test suite never caught it).
+    constraint_name_set = set(constraint_names)
     index_names = [
         ix["name"]
         for ix in insp.get_indexes(table)
         if ix.get("unique")
         and ix.get("name")
+        and ix["name"] not in constraint_name_set
         and list(ix.get("column_names") or []) == [column]
-    ]
-
-    constraint_names = [
-        uc.get("name") or f"uq_{table}_{column}"
-        for uc in insp.get_unique_constraints(table)
-        if list(uc.get("column_names") or []) == [column]
     ]
 
     return index_names, constraint_names
