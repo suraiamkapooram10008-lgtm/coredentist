@@ -47,98 +47,18 @@ if settings.ENVIRONMENT == "production":
 
 logger = logging.getLogger(__name__)
 
-# Initialize Sentry for error tracking and monitoring (SECURITY FIX)
-try:
-    import sentry_sdk
-    from sentry_sdk.integrations.fastapi import FastApiIntegration
-    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-    from sentry_sdk.integrations.logging import LoggingIntegration
-except Exception:
-    sentry_sdk = None
+# Sentry and Prometheus live in app/core/observability.py so that every process
+# role initializes them. While this block lived here, only the web process ever
+# called sentry_sdk.init(), so capture_exception() inside a Celery task was a
+# no-op and background failures left no trace.
+from app.core.observability import (
+    capture_security_event,
+    init_sentry,
+    record_http_request,
+    record_security_event,
+)
 
-if settings.SENTRY_DSN and sentry_sdk:
-    try:
-        # SECURITY FIX: Enhanced Sentry configuration with security event tracking
-        sentry_logging = LoggingIntegration(
-            level=logging.INFO,  # Capture info and above as breadcrumbs
-            event_level=logging.ERROR  # Send errors as events
-        )
-
-        sentry_sdk.init(
-            dsn=settings.SENTRY_DSN,
-            integrations=[
-                FastApiIntegration(),
-                SqlalchemyIntegration(),
-                sentry_logging,
-            ],
-            traces_sample_rate=0.1,  # 10% of transactions for performance monitoring
-            profiles_sample_rate=0.1,  # 10% for profiling
-            environment=settings.ENVIRONMENT,
-            release=f"{settings.APP_NAME}@{settings.APP_VERSION}",
-
-            # SECURITY: Filter sensitive data from error reports
-            before_send=lambda event, hint: filter_sensitive_data(event),
-
-            # SECURITY: Track security-relevant events
-            attach_stacktrace=True,
-            send_default_pii=False,  # Don't send PII by default
-        )
-
-        logger.info("Sentry monitoring initialized successfully")
-    except Exception as e:
-        logger.warning(f"Failed to initialize Sentry: {e}")
-        sentry_sdk = None
-else:
-    if not settings.SENTRY_DSN:
-        logger.info("Sentry DSN not configured - monitoring disabled")
-
-
-def filter_sensitive_data(event: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Filter sensitive data from Sentry events (privacy protection)
-    
-    Removes:
-    - Passwords
-    - Tokens
-    - API keys
-    - Patient data
-    - Email addresses
-    - Phone numbers
-    """
-    sensitive_keys = [
-        'password', 'token', 'secret', 'api_key', 'authorization',
-        'ssn', 'social_security', 'credit_card', 'card_number',
-        'patient_name', 'email', 'phone', 'address',
-        # Name/DOB coverage: matching is substring-based over key.lower(), so
-        # 'name' also catches camelCase 'firstName'/'lastName'/'fullName';
-        # 'dob' and 'dateofbirth' cover both DOB spellings.
-        'first_name', 'last_name', 'name', 'date_of_birth', 'dateofbirth', 'dob',
-    ]
-
-    def redact_dict(d: dict) -> dict:
-        """Recursively redact sensitive keys"""
-        if not isinstance(d, dict):
-            return d
-
-        for key in list(d.keys()):
-            if any(sensitive in key.lower() for sensitive in sensitive_keys):
-                d[key] = '[REDACTED]'
-            elif isinstance(d[key], dict):
-                d[key] = redact_dict(d[key])
-            elif isinstance(d[key], list):
-                d[key] = [redact_dict(item) if isinstance(item, dict) else item for item in d[key]]
-
-        return d
-
-    # Redact request data
-    if 'request' in event:
-        event['request'] = redact_dict(event['request'])
-
-    # Redact extra data
-    if 'extra' in event:
-        event['extra'] = redact_dict(event['extra'])
-
-    return event
+init_sentry("web")
 
 
 def log_security_event(
@@ -174,22 +94,8 @@ def log_security_event(
     else:
         logger.info(message, extra=log_data)
 
-    # Send to Sentry if configured
-    if sentry_sdk:
-        with sentry_sdk.push_scope() as scope:
-            scope.set_tag('event_type', event_type)
-            scope.set_tag('severity', severity)
-            scope.set_context('security_event', log_data)
-
-            if severity in ['error', 'critical']:
-                sentry_sdk.capture_message(message, level=severity)
-            else:
-                sentry_sdk.add_breadcrumb(
-                    category='security',
-                    message=message,
-                    level=severity,
-                    data=log_data
-                )
+    # Send to Sentry if configured (a no-op when the DSN is unset).
+    capture_security_event(event_type, severity, message, log_data)
 
 # ---------------------------------------------------------------------------
 # Lifespan (replaces deprecated @app.on_event)
@@ -408,6 +314,7 @@ async def security_monitoring_middleware(request: Request, call_next):
                     'user_agent': request.headers.get('user-agent', 'unknown')
                 }
             )
+            record_security_event('auth_failure')
 
         # Track rate limit violations
         elif response.status_code == 429:
@@ -421,6 +328,7 @@ async def security_monitoring_middleware(request: Request, call_next):
                     'ip': request.client.host if request.client else 'unknown'
                 }
             )
+            record_security_event('rate_limit')
 
         # Track server errors
         elif response.status_code >= 500:
@@ -435,6 +343,11 @@ async def security_monitoring_middleware(request: Request, call_next):
                     'duration_ms': (time.time() - start_time) * 1000
                 }
             )
+            record_security_event('server_error')
+
+        # Duration is recorded for every request, not just the error paths
+        # above, so latency alerting has full coverage.
+        record_http_request(request, response.status_code, time.time() - start_time)
 
         return response
 
@@ -450,6 +363,7 @@ async def security_monitoring_middleware(request: Request, call_next):
                 'error': str(e)
             }
         )
+        record_security_event('exception')
         raise
 
 # HIGH-01 FIX: Audit Logging Middleware for security and compliance
@@ -689,6 +603,69 @@ async def health_check():
         "status": "healthy" if db_status == "connected" else "degraded",
         "database": db_status,
     }
+
+
+@app.get("/ready", tags=["Health"])
+async def readiness_check():
+    """Readiness probe: can this replica serve traffic right now?
+
+    Distinct from /health, which only proves the process is up and the database
+    answers. /ready also checks Redis, because the shared rate limiter fails
+    CLOSED in production: when its Redis storage is unreachable, guarded
+    requests are rejected with a hard error instead of degrading. A replica in
+    that state should be taken out of rotation, not keep receiving traffic.
+
+    Returns 503 when a dependency is down so the platform health check can act.
+    """
+    import asyncio
+
+    from sqlalchemy import text
+
+    checks: Dict[str, str] = {"database": "unknown", "redis": "unknown"}
+
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        checks["database"] = "connected"
+    except Exception:
+        checks["database"] = "disconnected"
+
+    if not settings.REDIS_URL:
+        # Outside production the limiter falls back to process-local memory, so
+        # readiness must not depend on Redis being configured.
+        checks["redis"] = "not_configured"
+    else:
+        def _ping_redis() -> bool:
+            import redis
+
+            client = redis.from_url(
+                settings.REDIS_URL,
+                decode_responses=True,
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
+            try:
+                return bool(client.ping())
+            finally:
+                client.close()
+
+        try:
+            # redis-py's client is synchronous: run it off the event loop so a
+            # hung Redis cannot stall every other request on this worker.
+            checks["redis"] = (
+                "connected" if await asyncio.to_thread(_ping_redis) else "disconnected"
+            )
+        except Exception:
+            checks["redis"] = "disconnected"
+
+    ready = checks["database"] == "connected" and checks["redis"] in (
+        "connected",
+        "not_configured",
+    )
+    return JSONResponse(
+        status_code=status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"status": "ready" if ready else "not_ready", **checks},
+    )
 
 
 # CRIT-04 FIX: Metrics endpoint protected - only accessible in debug mode or with secret key

@@ -2,10 +2,12 @@
 
 from datetime import timedelta
 import logging
+import os
 
 from celery import Celery
 
 from app.core.config_simple import settings
+from app.core.observability import init_sentry, install_celery_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -118,5 +120,14 @@ celery_app.conf.task_routes = {
     "app.core.communication_queue.*": {"queue": "communications"},
     "app.core.email_tasks.*": {"queue": "emails"},
 }
+
+# Sentry and task metrics for the worker/beat roles. Sentry used to be
+# initialized only in app/main.py, which these processes never import, so every
+# capture_exception() inside a Celery task was a silent no-op: a background
+# failure was visible only if somebody read the container log.
+# PROCESS_TYPE distinguishes worker from beat in Sentry. init_sentry is
+# idempotent, so an in-process caller that already initialized it is a no-op.
+init_sentry(os.environ.get("PROCESS_TYPE", "worker").strip().lower() or "worker")
+install_celery_metrics(celery_app)
 
 logger.info("Celery app initialized with durable delivery settings")

@@ -1,0 +1,300 @@
+"""Sentry initialization and Prometheus metrics, shared by every process role.
+
+Two gaps this module closes:
+
+1. Sentry was initialized in ``app/main.py``, which only the web process
+   imports. Workers and beat never called ``sentry_sdk.init()``, so every
+   ``capture_exception`` inside a Celery task was a silent no-op: background
+   failures (email delivery, rate-limit backend loss, a wedged sweep) left no
+   trace beyond the container log.
+2. ``prometheus_client`` was installed and ``/metrics`` existed, but not a
+   single application metric was defined, so the endpoint exposed only the
+   default process/GC collectors and nothing was alertable.
+
+Initialization is deliberately role-agnostic: every integration is attached
+when its library is importable, and ``role`` is only a tag. ``app.core.celery_app``
+and ``app.main`` both call :func:`init_sentry`, and which one wins the import
+race depends on the process, so keying integrations off the role would make
+behaviour depend on import order.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any, Dict, Optional
+
+from prometheus_client import Counter, Histogram
+
+from app.core.config_simple import settings
+
+logger = logging.getLogger(__name__)
+
+_sentry_sdk: Any = None
+_sentry_initialized = False
+
+
+# ---------------------------------------------------------------------------
+# Sentry
+# ---------------------------------------------------------------------------
+
+def filter_sensitive_data(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Filter sensitive data from Sentry events (privacy protection)
+
+    Removes:
+    - Passwords
+    - Tokens
+    - API keys
+    - Patient data
+    - Email addresses
+    - Phone numbers
+    """
+    sensitive_keys = [
+        'password', 'token', 'secret', 'api_key', 'authorization',
+        'ssn', 'social_security', 'credit_card', 'card_number',
+        'patient_name', 'email', 'phone', 'address',
+        # Name/DOB coverage: matching is substring-based over key.lower(), so
+        # 'name' also catches camelCase 'firstName'/'lastName'/'fullName';
+        # 'dob' and 'dateofbirth' cover both DOB spellings.
+        'first_name', 'last_name', 'name', 'date_of_birth', 'dateofbirth', 'dob',
+    ]
+
+    def redact_dict(d: dict) -> dict:
+        """Recursively redact sensitive keys"""
+        if not isinstance(d, dict):
+            return d
+
+        for key in list(d.keys()):
+            if any(sensitive in key.lower() for sensitive in sensitive_keys):
+                d[key] = '[REDACTED]'
+            elif isinstance(d[key], dict):
+                d[key] = redact_dict(d[key])
+            elif isinstance(d[key], list):
+                d[key] = [redact_dict(item) if isinstance(item, dict) else item for item in d[key]]
+
+        return d
+
+    # Redact request data
+    if 'request' in event:
+        event['request'] = redact_dict(event['request'])
+
+    # Redact extra data
+    if 'extra' in event:
+        event['extra'] = redact_dict(event['extra'])
+
+    return event
+
+
+def _build_integrations() -> list:
+    """Attach every integration whose library is importable.
+
+    Each import is guarded independently: a deployment that installs
+    sentry-sdk without the Celery extra, or a web image without the Celery
+    package, must still get the integrations it does have.
+    """
+    integrations: list = []
+    for module, name in (
+        ("sentry_sdk.integrations.sqlalchemy", "SqlalchemyIntegration"),
+        ("sentry_sdk.integrations.logging", "LoggingIntegration"),
+        ("sentry_sdk.integrations.fastapi", "FastApiIntegration"),
+        ("sentry_sdk.integrations.celery", "CeleryIntegration"),
+    ):
+        try:
+            imported = __import__(module, fromlist=[name])
+            integration = getattr(imported, name)
+            # INFO+ becomes breadcrumbs, ERROR+ becomes an event.
+            if name == "LoggingIntegration":
+                integrations.append(integration(level=logging.INFO, event_level=logging.ERROR))
+            else:
+                integrations.append(integration())
+        except Exception:  # noqa: BLE001 - an unavailable integration is not fatal
+            logger.debug("Sentry integration unavailable: %s", name, exc_info=True)
+    return integrations
+
+
+def init_sentry(role: str = "web") -> bool:
+    """Initialize Sentry once per process. Returns True when it is active.
+
+    Idempotent, so ``app.main`` (web) and ``app.core.celery_app`` (worker/beat)
+    can both call it without caring which runs first.
+    """
+    global _sentry_sdk, _sentry_initialized
+
+    if _sentry_initialized:
+        return True
+    if not settings.SENTRY_DSN:
+        logger.info("Sentry DSN not configured - monitoring disabled")
+        return False
+
+    try:
+        import sentry_sdk
+    except Exception:
+        logger.warning("sentry-sdk is not installed - monitoring disabled")
+        return False
+
+    try:
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            integrations=_build_integrations(),
+            traces_sample_rate=0.1,  # 10% of transactions for performance monitoring
+            profiles_sample_rate=0.1,  # 10% for profiling
+            environment=settings.ENVIRONMENT,
+            release=f"{settings.APP_NAME}@{settings.APP_VERSION}",
+            # SECURITY: filter PHI/credentials out of every event before send.
+            before_send=lambda event, hint: filter_sensitive_data(event),
+            attach_stacktrace=True,
+            send_default_pii=False,  # Don't send PII by default
+        )
+        sentry_sdk.set_tag("process_role", role)
+    except Exception as exc:
+        logger.warning("Failed to initialize Sentry: %s", exc)
+        return False
+
+    _sentry_sdk = sentry_sdk
+    _sentry_initialized = True
+    logger.info("Sentry monitoring initialized (role=%s)", role)
+    return True
+
+
+def capture_security_event(
+    event_type: str,
+    severity: str,
+    message: str,
+    data: Dict[str, Any],
+) -> None:
+    """Push a tagged security event to Sentry (message or breadcrumb).
+
+    Never raises: an observability failure must not change request behaviour.
+    """
+    if _sentry_sdk is None:
+        return
+    try:
+        with _sentry_sdk.push_scope() as scope:
+            scope.set_tag("event_type", event_type)
+            scope.set_tag("severity", severity)
+            scope.set_context("security_event", data)
+
+            if severity in ("error", "critical"):
+                _sentry_sdk.capture_message(message, level=severity)
+            else:
+                _sentry_sdk.add_breadcrumb(
+                    category="security",
+                    message=message,
+                    level=severity,
+                    data=data,
+                )
+    except Exception:
+        logger.debug("Failed to capture security event", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics
+# ---------------------------------------------------------------------------
+# All prefixed to stay clear of the default process/GC collectors. Labels are
+# deliberately low-cardinality: `route` is the matched route template rather
+# than the raw path (see route_label), so scanner traffic cannot create a new
+# time series per request.
+
+http_requests_total = Counter(
+    "coredent_http_requests_total",
+    "HTTP requests handled, by method, route template and status.",
+    ["method", "route", "status"],
+)
+
+http_request_duration_seconds = Histogram(
+    "coredent_http_request_duration_seconds",
+    "HTTP request latency in seconds.",
+    ["method", "route"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+)
+
+security_events_total = Counter(
+    "coredent_security_events_total",
+    "Security-relevant events, by type (auth_failure, rate_limit, server_error, exception).",
+    ["event_type"],
+)
+
+celery_tasks_total = Counter(
+    "coredent_celery_tasks_total",
+    "Celery task completions, by task name and terminal state.",
+    ["task", "state"],
+)
+
+celery_task_duration_seconds = Histogram(
+    "coredent_celery_task_duration_seconds",
+    "Celery task wall-clock duration in seconds.",
+    ["task"],
+    buckets=(0.1, 0.5, 1.0, 5.0, 15.0, 60.0, 300.0),
+)
+
+
+def route_label(request: Any) -> str:
+    """Bounded-cardinality route label for a request.
+
+    Prefers the matched route template (``/api/v1/patients/{patient_id}``).
+    Unmatched requests - 404s from scanners, mostly - collapse into a single
+    bucket instead of minting a series per invented path.
+    """
+    try:
+        route = request.scope.get("route")
+        path = getattr(route, "path", None)
+        if isinstance(path, str) and path:
+            return path
+    except Exception:
+        logger.debug("Could not resolve route template", exc_info=True)
+    return "unmatched"
+
+
+def record_http_request(request: Any, status_code: int, duration_seconds: float) -> None:
+    """Record one completed request. Never raises."""
+    try:
+        route = route_label(request)
+        http_requests_total.labels(request.method, route, str(status_code)).inc()
+        http_request_duration_seconds.labels(request.method, route).observe(duration_seconds)
+    except Exception:
+        logger.debug("Failed to record HTTP metrics", exc_info=True)
+
+
+def record_security_event(event_type: str) -> None:
+    """Count one security event. Never raises."""
+    try:
+        security_events_total.labels(event_type).inc()
+    except Exception:
+        logger.debug("Failed to record security metric", exc_info=True)
+
+
+def install_celery_metrics(celery_app: Any) -> None:
+    """Attach task count/duration collectors to a Celery app.
+
+    ``task_failure`` reporting is left to Sentry's CeleryIntegration rather
+    than done here, so a failure is reported exactly once.
+    """
+    try:
+        from celery import signals
+    except Exception:
+        logger.debug("Celery signals unavailable; task metrics disabled", exc_info=True)
+        return
+
+    started: Dict[str, float] = {}
+
+    @signals.task_prerun.connect
+    def _task_prerun(task_id: Optional[str] = None, **_kwargs: Any) -> None:
+        if task_id:
+            started[task_id] = time.monotonic()
+
+    @signals.task_postrun.connect
+    def _task_postrun(
+        task_id: Optional[str] = None,
+        task: Any = None,
+        state: Optional[str] = None,
+        **_kwargs: Any,
+    ) -> None:
+        name = getattr(task, "name", "unknown")
+        try:
+            celery_tasks_total.labels(name, str(state or "UNKNOWN")).inc()
+            begun = started.pop(task_id, None) if task_id else None
+            if begun is not None:
+                celery_task_duration_seconds.labels(name).observe(time.monotonic() - begun)
+        except Exception:
+            logger.debug("Failed to record Celery metrics", exc_info=True)
