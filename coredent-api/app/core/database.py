@@ -23,13 +23,18 @@ engine_kwargs = {
     "echo": settings.DEBUG,
 }
 
-# PostgreSQL pool settings
+# PostgreSQL pool settings.
+# NOTE: pool_size/max_overflow are QueuePool options. NullPool (used for
+# DEBUG/local so every request gets a fresh connection) rejects them and
+# raises TypeError at import time, so the two are mutually exclusive.
 if engine_url.startswith("postgresql+"):
-    engine_kwargs.update(
-        pool_size=settings.DATABASE_POOL_SIZE,
-        max_overflow=settings.DATABASE_MAX_OVERFLOW,
-        poolclass=NullPool if settings.DEBUG else None,
-    )
+    if settings.DEBUG:
+        engine_kwargs["poolclass"] = NullPool
+    else:
+        engine_kwargs.update(
+            pool_size=settings.DATABASE_POOL_SIZE,
+            max_overflow=settings.DATABASE_MAX_OVERFLOW,
+        )
 
 engine = create_async_engine(
     engine_url,

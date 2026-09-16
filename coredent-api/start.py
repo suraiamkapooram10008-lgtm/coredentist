@@ -45,6 +45,14 @@ _MIGRATION_LOCK_TIMEOUT_SECONDS = 300
 CELERY_APP = "app.core.celery_app:celery_app"
 CELERY_QUEUES = "default,communications,reminders,emails"
 
+# Environments where a failed migration is tolerated (local iteration only).
+# Anything else — production, staging, uat, preview — must refuse to start:
+# booting with a half-applied schema serves 500s on every DB-backed route
+# while /health still reports healthy, which is far worse than a failed deploy.
+_LENIENT_MIGRATION_ENVIRONMENTS = frozenset(
+    {"development", "dev", "test", "testing", "local"}
+)
+
 
 def _normalise_db_url(database_url: str) -> str:
     """Railway hands out ``postgres://``; SQLAlchemy/Alembic need ``postgresql://``."""
@@ -150,10 +158,11 @@ def run_migrations() -> bool:
 
         logger.error(traceback.format_exc())
 
-        if environment == "production":
+        if environment not in _LENIENT_MIGRATION_ENVIRONMENTS:
             logger.critical(
-                "Refusing to start in production with failed migrations. "
-                "Fix the migration and redeploy."
+                "Refusing to start in %r with failed migrations. "
+                "Fix the migration and redeploy.",
+                environment,
             )
             sys.exit(1)
 
