@@ -86,7 +86,11 @@ mkdocs-material>=9.5.6,<10.0.0
 # Utilities
 python-dotenv>=1.0.1,<2.0.0
 pytz>=2024.1,<2025.0
-setuptools>=83.0.0,<84.0.0  # Required by razorpay; >=83 fixes PYSEC-2026-3447
+# setuptools<81 pins the legacy pkg_resources shim the containerized
+# razorpay 1.4.x SDK imports at module load (build-time safety removed it in
+# setuptools>=81). Upstream has not cut a 2.0 release; when it lands, prefer
+# dropping the pin and removing the razorpay dependency entirely.
+setuptools>=70.0.0,<81.0.0
 
 # SMS Service
 twilio>=9.0.0,<10.0.0
