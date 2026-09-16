@@ -37,6 +37,7 @@ from app.core.sms import SMSService
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.billing import Invoice, InvoiceStatus
 from app.models.daily_summary import DailySummaryOutbox, DailySummaryStatus
+from app.models.patient import Patient
 from app.models.practice import Practice
 from app.models.reminder import Reminder, ReminderStatus
 from app.models.user import User

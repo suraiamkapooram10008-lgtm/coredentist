@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -94,7 +94,9 @@ class PlatformService:
         subs = subs_result.scalars().all()
         per_practice: Dict[UUID, Subscription] = {}
         for sub in subs:
-            pid = sub.practice_id
+            # practice_id is a SQLAlchemy Column at the class level, so mypy
+            # infers Column[UUID] on the instance and rejects it as a dict key.
+            pid = cast(UUID, sub.practice_id)
             if pid is None:
                 continue
             current = per_practice.get(pid)
@@ -203,6 +205,13 @@ class PlatformService:
                 .group_by(User.practice_id)
             )
             user_counts = {pid: cnt for pid, cnt in rows.all()}
+
+            rows = await db.execute(
+                select(Patient.practice_id, func.count(Patient.id))
+                .where(Patient.practice_id.in_(clinic_ids))
+                .group_by(Patient.practice_id)
+            )
+            patient_counts = {pid: cnt for pid, cnt in rows.all()}
 
         items = [
             {

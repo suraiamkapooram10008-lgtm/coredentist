@@ -441,3 +441,97 @@ class TestRetentionPurgeAsyncShape:
         assert await db_session.get(Patient, marker.id) is None
 
 
+class TestPurgeTaskEntryPoint:
+    """The scheduled Celery task itself, not just RetentionService.
+
+    Regression guard: the task body referenced an undefined ``Patient`` name,
+    so every scheduled run raised NameError and the nightly purge silently did
+    nothing — while every service-level test above stayed green. Only invoking
+    the task entry point catches that class of defect.
+    """
+
+    async def test_task_purges_eligible_patient(self, db_session, test_practice):
+        from decimal import Decimal
+        import uuid as uuid_lib
+
+        from app.core.tasks import purge_expired_anonymized_patients
+        from app.models.billing import (
+            Invoice,
+            InvoiceStatus,
+            Payment,
+            PaymentMethod,
+            PaymentStatus,
+        )
+        from app.models.patient import Patient, PatientStatus
+
+        patient = Patient(
+            id=uuid_lib.uuid4(),
+            practice_id=test_practice.id,
+            first_name="[deleted]",
+            last_name="[deleted]",
+            date_of_birth=datetime.date(1970, 1, 1),
+            status=PatientStatus.INACTIVE,
+        )
+        old = datetime.datetime(2018, 3, 4, tzinfo=datetime.timezone.utc)
+        invoice = Invoice(
+            id=uuid_lib.uuid4(),
+            practice_id=test_practice.id,
+            patient_id=patient.id,
+            invoice_number="INV-TASK-1",
+            status=InvoiceStatus.PAID,
+            subtotal=Decimal("100.00"),
+            tax=Decimal("0"),
+            total=Decimal("100.00"),
+            line_items=[
+                {
+                    "description": "Cleaning",
+                    "quantity": 1,
+                    "unit_price": 100.0,
+                    "total": 100.0,
+                }
+            ],
+            created_at=old,
+            updated_at=old,
+        )
+        payment = Payment(
+            id=uuid_lib.uuid4(),
+            invoice_id=invoice.id,
+            patient_id=patient.id,
+            practice_id=test_practice.id,
+            amount=Decimal("100.00"),
+            refunded_amount=Decimal("0"),
+            payment_method=PaymentMethod.CASH,
+            transaction_id="TXN-TASK-1",
+            status=PaymentStatus.COMPLETED,
+            created_at=old,
+        )
+        db_session.add_all([patient, invoice, payment])
+        await db_session.commit()
+
+        # Capture plain ids: expire_all() below expires the ORM instances, and
+        # touching an expired attribute outside a greenlet raises MissingGreenlet.
+        patient_id, invoice_id, payment_id = patient.id, invoice.id, payment.id
+
+        # Invoked synchronously; the task opens its own sync session.
+        result = purge_expired_anonymized_patients()
+
+        assert result["purged"] >= 1
+        assert result["scanned"] >= 1
+
+        # The task committed on a different session, so drop this session's
+        # identity map before re-reading.
+        db_session.expire_all()
+        assert await db_session.get(Patient, patient_id) is None
+        assert await db_session.get(Invoice, invoice_id) is None
+        assert await db_session.get(Payment, payment_id) is None
+
+    async def test_task_is_disabled_by_setting(self, db_session, monkeypatch):
+        """RETENTION_ANONYMIZED_PURGE_ENABLED=false short-circuits the task."""
+        from app.core.config_simple import settings
+        from app.core.tasks import purge_expired_anonymized_patients
+
+        monkeypatch.setattr(settings, "RETENTION_ANONYMIZED_PURGE_ENABLED", False)
+        result = purge_expired_anonymized_patients()
+        assert result["status"] == "skipped"
+
+

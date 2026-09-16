@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import CursorResult, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -232,7 +232,9 @@ class RetentionService:
                     model.__table__.c.patient_id == patient.id
                 )
             )
-            counts[model.__tablename__] = rows.rowcount if rows.rowcount is not None else 0
+            # DML returns a CursorResult, which is where rowcount lives;
+            # db.execute() is annotated as Result and has no such attribute.
+            counts[model.__tablename__] = cast(CursorResult, rows).rowcount or 0
         # 2) ORM cascade handles invoices/payments/notes/appointments/etc.
         await db.delete(patient)
         await db.flush()

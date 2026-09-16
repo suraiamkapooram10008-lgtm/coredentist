@@ -294,13 +294,17 @@ class TestPlatformConsole:
             assert key in data, f"missing {key}"
 
     async def test_list_clinics_and_detail(
-        self, async_client, db_session, test_practice
+        self, async_client, db_session, test_practice, test_patient
     ):
         headers, _, _ = await self._super_admin_headers(async_client, db_session)
         resp = await async_client.get("/api/v1/platform/clinics", headers=headers)
         assert resp.status_code == 200
         clinics = resp.json()["clinics"]
-        assert any(c["id"] == str(test_practice.id) for c in clinics)
+        listed = next((c for c in clinics if c["id"] == str(test_practice.id)), None)
+        assert listed is not None
+        # Regression guard: the grouped patient-count query was described in a
+        # comment but never written, so patient_count was always 0.
+        assert listed["patient_count"] >= 1
 
         detail = await async_client.get(
             f"/api/v1/platform/clinics/{test_practice.id}", headers=headers
