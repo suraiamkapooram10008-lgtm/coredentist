@@ -45,7 +45,7 @@ import os
 from typing import Iterable, List, Optional, Tuple
 
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy.types import JSON, String, TypeDecorator
+from sqlalchemy.types import JSON, String, Text, TypeDecorator
 
 from app.core.config_simple import settings
 
@@ -274,7 +274,15 @@ class EncryptedString(TypeDecorator):
     no separate column is strictly required.
     """
 
-    impl = String
+    # Text, not String. The column stores a Fernet envelope, and its length is a
+    # function of the ciphertext, not of the plaintext: a 4-character name still
+    # produces a token of well over 100 characters. Declaring
+    # EncryptedString(100) therefore created a VARCHAR(100) that could not hold
+    # its own ciphertext, and PostgreSQL rejected the insert with
+    # StringDataRightTruncationError while SQLite happily ignored the length.
+    # The `length` argument is retained for API compatibility and no longer
+    # sizes the column.
+    impl = Text
     cache_ok = True
 
     def __init__(self, length: int = 255, *, column_name: Optional[str] = None):

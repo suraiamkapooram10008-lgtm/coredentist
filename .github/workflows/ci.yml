@@ -57,7 +57,15 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/coredent_ci
       TEST_DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/coredent_ci
       SECRET_KEY: ci-secret-key-not-for-production-use-32chars
-      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItY2ktb25seQ==' }}
+      # Test-only key, deliberately committed: it protects nothing but CI rows.
+      # It MUST be a valid 32-byte urlsafe-base64 Fernet key. The previous value
+      # was dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItY2ktb25seQ==, which decodes to
+      # "test-encryption-key-for-ci-only" - 31 bytes - so Fernet() raised and the
+      # keyring was unavailable for the whole run. EncryptedString swallows
+      # decryption failures and returns "[DECRYPTION_FAILED]", so every login
+      # compared a password against that string and failed with 401, and the
+      # entire tenant-isolation suite errored at fixture setup.
+      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'PvnBaoBQL_jDbSXK8XbpML8gEeATsgixL0jOTi6zBY0=' }}
       ENVIRONMENT: test
       DEBUG: "false"
       REDIS_URL: ""
@@ -272,7 +280,15 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/coredent_ci
       SECRET_KEY: ci-secret-key-not-for-production-use-32chars
-      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItY2ktb25seQ==' }}
+      # Test-only key, deliberately committed: it protects nothing but CI rows.
+      # It MUST be a valid 32-byte urlsafe-base64 Fernet key. The previous value
+      # was dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItY2ktb25seQ==, which decodes to
+      # "test-encryption-key-for-ci-only" - 31 bytes - so Fernet() raised and the
+      # keyring was unavailable for the whole run. EncryptedString swallows
+      # decryption failures and returns "[DECRYPTION_FAILED]", so every login
+      # compared a password against that string and failed with 401, and the
+      # entire tenant-isolation suite errored at fixture setup.
+      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'PvnBaoBQL_jDbSXK8XbpML8gEeATsgixL0jOTi6zBY0=' }}
       ENVIRONMENT: test
       DEBUG: "false"
       REDIS_URL: ""
@@ -329,7 +345,15 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/coredent_ci
       TEST_DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/coredent_ci
       SECRET_KEY: ci-secret-key-not-for-production-use-32chars
-      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItY2ktb25seQ==' }}
+      # Test-only key, deliberately committed: it protects nothing but CI rows.
+      # It MUST be a valid 32-byte urlsafe-base64 Fernet key. The previous value
+      # was dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItY2ktb25seQ==, which decodes to
+      # "test-encryption-key-for-ci-only" - 31 bytes - so Fernet() raised and the
+      # keyring was unavailable for the whole run. EncryptedString swallows
+      # decryption failures and returns "[DECRYPTION_FAILED]", so every login
+      # compared a password against that string and failed with 401, and the
+      # entire tenant-isolation suite errored at fixture setup.
+      ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY || 'PvnBaoBQL_jDbSXK8XbpML8gEeATsgixL0jOTi6zBY0=' }}
       ENVIRONMENT: test
       DEBUG: "false"
       REDIS_URL: ""
