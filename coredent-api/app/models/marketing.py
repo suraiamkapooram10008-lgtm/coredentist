@@ -1,9 +1,16 @@
 """
 Marketing Models
 Campaign and marketing automation tracking
+
+Column types match the migrations. These models previously declared String for
+id/practice_id/campaign_id/patient_id while the migrations created UUID, and the
+database enforces what the migration created: SQLite accepts a varchar against a
+uuid column, PostgreSQL rejects it with DatatypeMismatchError on the first
+insert. Caught by scripts/check_schema_drift.py, which now runs in CI.
 """
 
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, JSON, func
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 import uuid
 import enum
@@ -34,8 +41,8 @@ class AudienceType(str, enum.Enum):
 
 class Campaign(Base):
     __tablename__ = "marketing_campaigns"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    practice_id = Column(String, ForeignKey("practices.id"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     campaign_type = Column(String(50), nullable=False, default="email")
@@ -58,8 +65,8 @@ class Campaign(Base):
 
 class MarketingTemplate(Base):
     __tablename__ = "marketing_templates"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    practice_id = Column(String, ForeignKey("practices.id"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
     name = Column(String(255), nullable=False)
     subject = Column(String(255), nullable=True)
     body_content = Column(Text, nullable=True)
@@ -72,8 +79,8 @@ class MarketingTemplate(Base):
 
 class CampaignSegment(Base):
     __tablename__ = "marketing_campaign_segments"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    campaign_id = Column(String, ForeignKey("marketing_campaigns.id"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    campaign_id = Column(UUID(as_uuid=True), ForeignKey("marketing_campaigns.id"), nullable=False)
     name = Column(String(255), nullable=False)
     criteria = Column(JSON, nullable=True)
     patient_count = Column(Integer, default=0)
@@ -83,9 +90,9 @@ class CampaignSegment(Base):
 
 class MarketingEmail(Base):
     __tablename__ = "marketing_emails"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    campaign_id = Column(String, ForeignKey("marketing_campaigns.id"), nullable=False)
-    patient_id = Column(String, ForeignKey("patients.id"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    campaign_id = Column(UUID(as_uuid=True), ForeignKey("marketing_campaigns.id"), nullable=False)
+    patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
     email_address = Column(String(255), nullable=False)
     subject = Column(String(255), nullable=True)
     status = Column(String(50), default="pending")
@@ -101,8 +108,8 @@ class MarketingEmail(Base):
 
 class NewsletterSubscription(Base):
     __tablename__ = "newsletter_subscriptions"
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    practice_id = Column(String, ForeignKey("practices.id"), nullable=False)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
     patient_id = Column(String, ForeignKey("patients.id"), nullable=True)
     email = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
