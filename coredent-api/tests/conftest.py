@@ -190,7 +190,14 @@ async def test_practice(db_session: AsyncSession) -> Practice:
         address_zip="12345",
     )
     db_session.add(practice)
-    await db_session.flush()
+    # commit(), not flush(). The API under test uses its own session, taken from
+    # the engine pool, so it only sees COMMITTED rows. On SQLite the test engine
+    # uses StaticPool - one shared connection - so an uncommitted row was visible
+    # anyway and every fixture appeared to work; on PostgreSQL the request pulls a
+    # different connection, the row is invisible, and login returns 401 for a user
+    # the fixture had just created. Isolation is unaffected: setup_database
+    # truncates every table at teardown.
+    await db_session.commit()
     await db_session.refresh(practice)
     return practice
 
@@ -215,7 +222,7 @@ async def test_user(db_session: AsyncSession, test_practice: Practice) -> User:
         is_active=True,
     )
     db_session.add(user)
-    await db_session.flush()
+    await db_session.commit()
     await db_session.refresh(user)
     return user
 
@@ -249,7 +256,7 @@ async def test_patient(db_session: AsyncSession, test_practice: Practice) -> Pat
     patient.search_index_phone = hmac_index("+1234567890")
     patient.search_index_last_name = hmac_index("Doe")
     db_session.add(patient)
-    await db_session.flush()
+    await db_session.commit()
     await db_session.refresh(patient)
     return patient
 
@@ -277,7 +284,7 @@ async def test_appointment(
         notes="Regular cleaning appointment",
     )
     db_session.add(appointment)
-    await db_session.flush()
+    await db_session.commit()
     await db_session.refresh(appointment)
     return appointment
 
@@ -316,7 +323,7 @@ async def other_practice(db_session: AsyncSession) -> Practice:
         address_zip="54321",
     )
     db_session.add(practice)
-    await db_session.flush()
+    await db_session.commit()
     await db_session.refresh(practice)
     return practice
 
@@ -336,7 +343,7 @@ async def other_user(db_session: AsyncSession, other_practice: Practice) -> User
         is_active=True,
     )
     db_session.add(user)
-    await db_session.flush()
+    await db_session.commit()
     await db_session.refresh(user)
     return user
 
@@ -366,7 +373,7 @@ async def other_patient(db_session: AsyncSession, other_practice: Practice) -> P
         status="active",
     )
     db_session.add(patient)
-    await db_session.flush()
+    await db_session.commit()
     await db_session.refresh(patient)
     return patient
 
@@ -392,7 +399,7 @@ async def other_appointment(
         notes="Other practice appointment",
     )
     db_session.add(appointment)
-    await db_session.flush()
+    await db_session.commit()
     await db_session.refresh(appointment)
     return appointment
 
