@@ -223,7 +223,7 @@ class InsuranceClaim(Base):
     paid_amount = Column(Numeric(10, 2), default=0)
     patient_responsibility = Column(Numeric(10, 2), default=0)
 
-    # Procedure Codes (stored as JSON array)
+    # Procedure Codes (stored as JSON)
     # Structure: [{ code: "D0120", description: "Periodic oral evaluation", fee: 75.00 }]
     procedure_codes = Column(JSON, default=list)
 

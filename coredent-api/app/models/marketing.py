@@ -110,7 +110,7 @@ class NewsletterSubscription(Base):
     __tablename__ = "newsletter_subscriptions"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
-    patient_id = Column(String, ForeignKey("patients.id"), nullable=True)
+    patient_id = Column(UUID(as_uuid=True), ForeignKey("patients.id"), nullable=True)
     email = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
     subscribed_at = Column(DateTime(timezone=True), server_default=func.now())
