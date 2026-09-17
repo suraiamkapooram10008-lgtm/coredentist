@@ -113,6 +113,39 @@ Set on both: same Variables as API with `RUN_MIGRATIONS_ON_START=false` and
 Both must point at the same Postgres + Redis + ENCRYPTION_KEYS as API (a worker
 that can't decrypt PHI corrupts on write).
 
+### Gotchas that will crash-loop the worker if missed
+
+1. **Clear the Healthcheck Path.** Railway's Deploy → Healthcheck Path defaults
+   to `/health`, and `railway.json` at the repo root sets it too. Worker and beat
+   have **no HTTP listener**, so an HTTP healthcheck can never pass: the container
+   is killed on every boot and the deploy is marked failed. Leave the field empty
+   for both. The image's own `healthcheck.py` is PROCESS_TYPE-aware (broker PING
+   for worker/beat) and is the probe that should be used.
+2. **No public domain, and no cron schedule on beat.** Beat is a long-running
+   scheduler, not a one-shot job.
+3. **Watch the connection budget.** `DATABASE_POOL_SIZE + DATABASE_MAX_OVERFLOW`
+   applies per replica, and web + worker + beat are three replicas:
+   3 × (5 + 5) = 30 connections to the same Postgres.
+
+### Verify the worker is actually doing work
+
+The failure mode here is silent — every service shows Online while no scheduled
+job ever runs.
+
+```bash
+# Every beat entry must name a registered task and be routed to a queue the
+# worker consumes. Exits non-zero on a problem; also runs in CI.
+cd coredent-api
+python scripts/check_celery_wiring.py
+
+# Then confirm the worker is consuming and beat is scheduling:
+railway logs -s worker | findstr "celery@"
+railway logs -s beat   | findstr "Scheduler"
+```
+
+A worker with no `celery@` ready line, or a beat that never logs a schedule, is
+not running the jobs it appears to be running.
+
 ---
 
 ## 5. Vercel frontend (~5 min)

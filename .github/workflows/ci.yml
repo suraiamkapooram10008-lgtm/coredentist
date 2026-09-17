@@ -78,6 +78,14 @@ jobs:
       - name: Compile backend
         run: python -m compileall -q app
 
+      # A background job that never fires is invisible. This asserts every beat
+      # entry names a registered task AND is routed to a queue the worker
+      # consumes, so a scheduled job cannot be published into a queue nobody
+      # reads. It is the same class of defect as the retention purge that raised
+      # NameError on every run while nothing observed it.
+      - name: Verify Celery beat schedule is runnable
+        run: python scripts/check_celery_wiring.py
+
       - name: Apply all migrations to a fresh PostgreSQL database
         run: python -m alembic upgrade head
 
