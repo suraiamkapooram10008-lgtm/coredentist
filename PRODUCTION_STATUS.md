@@ -86,7 +86,9 @@ This is the single source of truth for CoreDent's production readiness. All othe
 16. **Security incident response plan** — new `docs/SECURITY_INCIDENT_RESPONSE.md` with severity matrix, 4 incident playbooks (compromised account, SQLi, ransomware, lost device), and breach-notification templates.
 17. **Pen-test scope** — new `docs/PENTEST_SCOPE.md` with 2-week black/grey-box RFP, OWASP WSTG+ASVS Level 2 methodology, deliverable spec, budget, candidate firms.
 18. **Public security policy** — new `SECURITY.md` at the repo root for vulnerability disclosure + safe harbor.
-19. **OWASP ZAP** — added as an additional CI step. The CI runs the new `tests/test_tenant_isolation.py` and `tests/test_phi_encrypted_at_rest.py` as required jobs.
+19. **CI gates** — the workflow runs six jobs: backend migrate/audit/lint/test, backend dependency audit, backend model/migration schema drift, frontend audit+typecheck+lint+coverage+build, frontend dependency audit, and a nightly full backend suite. `tests/test_tenant_isolation.py` and `tests/test_phi_encrypted_at_rest.py` run inside the backend gate step rather than as separate jobs.
+
+    **There is no OWASP ZAP step.** An earlier revision of this document claimed one had been added to CI; it never was. Automated dynamic scanning remains outstanding and is covered by the contracted penetration test scoped in `docs/PENTEST_SCOPE.md`.
 
 ---
 
@@ -118,7 +120,7 @@ These require external human work, external systems integration, or broader prod
 - **True Multi-Location/DSO Data Model**: The tenancy model limits database operations to single isolated practices; multi-location consolidation (DSO view) is not supported.
 
 ### Legal, Administrative, & Security Programs (Operational Compliance)
-- **Vendor BAAs**: Completed Business Associate Agreements (BAAs) with Railway, Sentry, Stripe, Twilio, and AWS.
+- **Vendor BAAs**: **Not in place.** BAAs still need to be signed with Railway, Sentry, Stripe, Twilio, and AWS — see the unchecked item in the pre-beta checklist above. An earlier revision of this document claimed these were completed; they are not, and this is the blocking item for handling real ePHI.
 - **Healthcare-Attorney Review**: Privacy policy, terms of service, and clinical consent workflows need specialized attorney sign-off.
 - **SRA, Training, & Testing**: A formal Security Risk Assessment (SRA), workforce security training, professional penetration testing, and disaster-recovery/business-continuity exercises are still outstanding.
 
