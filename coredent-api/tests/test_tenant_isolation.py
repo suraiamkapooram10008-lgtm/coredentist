@@ -155,7 +155,7 @@ class TestBillingTenantIsolation:
             )
 
     async def test_cannot_read_other_practice_invoice(
-        self, async_client, auth_headers, other_practice, db_session
+        self, async_client, auth_headers, other_practice, other_patient, db_session
     ):
         """Create an invoice in the other practice directly, then try to read it."""
         from app.models.billing import Invoice, InvoiceStatus
@@ -166,7 +166,11 @@ class TestBillingTenantIsolation:
         inv = Invoice(
             id=uuid_lib.uuid4(),
             practice_id=other_practice.id,
-            patient_id=uuid_lib.uuid4(),  # arbitrary
+            # Must be a real patient. This was uuid_lib.uuid4() with the comment
+            # "arbitrary", which SQLite accepts because it does not enforce
+            # foreign keys by default and PostgreSQL rejects with
+            # ForeignKeyViolationError on invoices_patient_id_fkey.
+            patient_id=other_patient.id,
             invoice_number=f"INV-X-{uuid_lib.uuid4().hex[:6]}",
             status=InvoiceStatus.PENDING,
             subtotal=Decimal("10.00"),
