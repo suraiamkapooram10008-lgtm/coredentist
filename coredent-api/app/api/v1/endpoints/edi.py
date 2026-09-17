@@ -380,8 +380,14 @@ async def submit_claim(
         status=ClaimStatus.SUBMITTING,
         billed_amount=claim_data.total_amount,
         service_date=claim_data.service_date,
-        diagnosis_codes=json.dumps(claim_data.diagnosis_codes) if claim_data.diagnosis_codes else "[]",
-        procedure_codes=json.dumps(procedures),
+        # Passed as values, not json.dumps(...). insurance_claims.procedure_codes
+        # and diagnosis_codes are JSON columns (migration b1c2d3e4f5a6); encoding
+        # them here would store a JSON *string* rather than an array, which is the
+        # discrepancy the reader at insurance.py:~690 still tolerates.
+        # InsurancePreAuthorization.procedure_codes is a different column and is
+        # still Text on purpose - this module's pre-auth route keeps json.dumps.
+        diagnosis_codes=claim_data.diagnosis_codes or [],
+        procedure_codes=procedures,
         submission_idempotency_key=idempotency_key,
         submission_attempts=1,
     )
