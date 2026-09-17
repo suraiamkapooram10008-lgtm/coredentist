@@ -223,39 +223,88 @@ def upgrade() -> None:
         logger.warning("e5a1c3f7d284: creating enum type processoreventstatus")
         status_enum.create(op.get_bind(), checkfirst=True)
         logger.warning("e5a1c3f7d284: enum type created; creating table")
-        op.create_table(
-            "processor_webhook_events",
-            sa.Column("id", sa.UUID(as_uuid=True), primary_key=True, nullable=False),
-            sa.Column("processor", sa.String(length=30), nullable=False),
-            sa.Column("event_id", sa.String(length=255), nullable=False),
-            sa.Column("event_type", sa.String(length=100), nullable=False),
-            sa.Column("status", status_enum_column, nullable=False),
-            sa.Column(
-                "practice_id",
-                sa.UUID(as_uuid=True),
-                sa.ForeignKey("practices.id"),
-                nullable=True,
-            ),
-            sa.Column("processor_object_id", sa.String(length=255), nullable=True),
-            sa.Column("amount_minor", sa.BigInteger(), nullable=True),
-            sa.Column("currency", sa.String(length=3), nullable=True),
-            sa.Column(
-                "payment_transaction_id",
-                sa.UUID(as_uuid=True),
-                sa.ForeignKey("payment_transactions.id"),
-                nullable=True,
-            ),
-            sa.Column("summary", sa.JSON(), nullable=True),
-            sa.Column("error_message", sa.Text(), nullable=True),
-            sa.Column("resolution_notes", sa.Text(), nullable=True),
-            sa.Column(
-                "received_at",
-                sa.DateTime(timezone=True),
-                server_default=sa.func.now(),
-                nullable=False,
-            ),
-            sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
-        )
+        if op.get_bind().dialect.name == "postgresql":
+            # Raw, explicit DDL in small steps, deliberately.
+            #
+            # op.create_table() for THIS table kills the container: the process
+            # dies with no Python traceback and no native fault immediately
+            # after the marker above, on every attempt. It is not a raised
+            # error (those are logged) and not a crash (faulthandler is on and
+            # prints nothing), so it is something external - and the way to
+            # narrow that down is to do less per statement. Each step logs, so
+            # a failure names its own command instead of vanishing.
+            logger.warning("e5a1c3f7d284: create table (columns only, raw DDL)")
+            op.execute(
+                """
+                CREATE TABLE processor_webhook_events (
+                    id UUID NOT NULL PRIMARY KEY,
+                    processor VARCHAR(30) NOT NULL,
+                    event_id VARCHAR(255) NOT NULL,
+                    event_type VARCHAR(100) NOT NULL,
+                    status processoreventstatus NOT NULL,
+                    practice_id UUID,
+                    processor_object_id VARCHAR(255),
+                    amount_minor BIGINT,
+                    currency VARCHAR(3),
+                    payment_transaction_id UUID,
+                    summary JSON,
+                    error_message TEXT,
+                    resolution_notes TEXT,
+                    received_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+                    resolved_at TIMESTAMP WITH TIME ZONE
+                )
+                """
+            )
+            logger.warning("e5a1c3f7d284: table created; adding FK to practices")
+            op.execute(
+                "ALTER TABLE processor_webhook_events ADD CONSTRAINT "
+                "fk_processor_events_practice_id FOREIGN KEY (practice_id) "
+                "REFERENCES practices (id)"
+            )
+            logger.warning(
+                "e5a1c3f7d284: FK to practices added; adding FK to payment_transactions"
+            )
+            op.execute(
+                "ALTER TABLE processor_webhook_events ADD CONSTRAINT "
+                "fk_processor_events_payment_transaction_id FOREIGN KEY "
+                "(payment_transaction_id) REFERENCES payment_transactions (id)"
+            )
+            logger.warning("e5a1c3f7d284: FKs added")
+        else:
+            # Non-PostgreSQL (SQLite in the test suite) keeps the portable path.
+            op.create_table(
+                "processor_webhook_events",
+                sa.Column("id", sa.UUID(as_uuid=True), primary_key=True, nullable=False),
+                sa.Column("processor", sa.String(length=30), nullable=False),
+                sa.Column("event_id", sa.String(length=255), nullable=False),
+                sa.Column("event_type", sa.String(length=100), nullable=False),
+                sa.Column("status", status_enum_column, nullable=False),
+                sa.Column(
+                    "practice_id",
+                    sa.UUID(as_uuid=True),
+                    sa.ForeignKey("practices.id"),
+                    nullable=True,
+                ),
+                sa.Column("processor_object_id", sa.String(length=255), nullable=True),
+                sa.Column("amount_minor", sa.BigInteger(), nullable=True),
+                sa.Column("currency", sa.String(length=3), nullable=True),
+                sa.Column(
+                    "payment_transaction_id",
+                    sa.UUID(as_uuid=True),
+                    sa.ForeignKey("payment_transactions.id"),
+                    nullable=True,
+                ),
+                sa.Column("summary", sa.JSON(), nullable=True),
+                sa.Column("error_message", sa.Text(), nullable=True),
+                sa.Column("resolution_notes", sa.Text(), nullable=True),
+                sa.Column(
+                    "received_at",
+                    sa.DateTime(timezone=True),
+                    server_default=sa.func.now(),
+                    nullable=False,
+                ),
+                sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
+            )
         logger.warning("e5a1c3f7d284: table created")
 
     logger.warning("e5a1c3f7d284: creating processor_webhook_events indexes")
