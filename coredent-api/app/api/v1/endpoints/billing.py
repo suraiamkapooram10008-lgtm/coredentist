@@ -814,7 +814,15 @@ async def create_payment(
         .options(joinedload(Invoice.patient), selectinload(Invoice.payments))
     )
     if row_locks_supported():
-        stmt = stmt.with_for_update()
+        # of=Invoice: lock only the invoice row. joinedload(Invoice.patient)
+        # emits a LEFT OUTER JOIN, and PostgreSQL rejects FOR UPDATE against the
+        # nullable side of an outer join outright with
+        #   FeatureNotSupportedError: FOR UPDATE cannot be applied to the
+        #   nullable side of an outer join
+        # so this query failed every time on PostgreSQL - recording a payment
+        # was broken in production - while SQLite, which has no row locking,
+        # never reached the clause.
+        stmt = stmt.with_for_update(of=Invoice)
     result = await db.execute(stmt)
     invoice = result.scalar_one_or_none()
 
@@ -1480,7 +1488,9 @@ async def pay_payment_plan_installment(
                 .options(joinedload(Invoice.patient), selectinload(Invoice.payments))
             )
             if row_locks_supported():
-                stmt = stmt.with_for_update()
+                # of=Invoice - see the note on the payment path: FOR UPDATE
+                # cannot apply to the nullable side of the patient outer join.
+                stmt = stmt.with_for_update(of=Invoice)
             invoice_result = await db.execute(stmt)
             invoice = invoice_result.scalar_one_or_none()
 
