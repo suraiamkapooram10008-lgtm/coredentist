@@ -210,6 +210,14 @@ def upgrade() -> None:
     logger.warning("e5a1c3f7d284: start")
 
     status_enum = sa.Enum(*_PROCESSOR_EVENT_STATUS, name="processoreventstatus")
+    # The column must reference the type WITHOUT emitting its own CREATE TYPE:
+    # the type is created explicitly just below, and a second CREATE TYPE for an
+    # existing type fails on PostgreSQL. This is what killed the container -
+    # the run reached "enum type created; creating table" and died inside
+    # op.create_table, every time, with no traceback.
+    status_enum_column = sa.Enum(
+        *_PROCESSOR_EVENT_STATUS, name="processoreventstatus", create_type=False
+    )
 
     if not _has_table("processor_webhook_events"):
         logger.warning("e5a1c3f7d284: creating enum type processoreventstatus")
@@ -221,7 +229,7 @@ def upgrade() -> None:
             sa.Column("processor", sa.String(length=30), nullable=False),
             sa.Column("event_id", sa.String(length=255), nullable=False),
             sa.Column("event_type", sa.String(length=100), nullable=False),
-            sa.Column("status", status_enum, nullable=False),
+            sa.Column("status", status_enum_column, nullable=False),
             sa.Column(
                 "practice_id",
                 sa.UUID(as_uuid=True),
