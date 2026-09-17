@@ -67,10 +67,14 @@ def upgrade() -> None:
             batch_op.add_column(sa.Column("public_slug", sa.String(100), nullable=True))
 
         logger.warning("%s: 1b backfill practices.public_slug", revision)
+        # CAST(id AS TEXT), not hex(id): PostgreSQL has no hex() for uuid, so
+        # the original form raised "function hex(uuid) does not exist" and the
+        # migration could never complete. SQLite does have hex(), which is why
+        # this passed the whole test suite while being broken in production.
         op.execute(
             sa.text(
                 "UPDATE practices SET public_slug = "
-                "'practice-' || replace(lower(hex(id)), '-', '') "
+                "'practice-' || replace(CAST(id AS TEXT), '-', '') "
                 "WHERE public_slug IS NULL OR public_slug = ''"
             )
         )
@@ -86,7 +90,7 @@ def upgrade() -> None:
         op.add_column("practices", sa.Column("public_slug", sa.String(100), nullable=True))
         op.execute(
             "UPDATE practices SET public_slug = "
-            "'practice-' || replace(lower(hex(id)), '-', '') "
+            "'practice-' || replace(CAST(id AS TEXT), '-', '') "
             "WHERE public_slug IS NULL OR public_slug = ''"
         )
         op.alter_column("practices", "public_slug", existing_type=sa.String(100), nullable=False)
