@@ -197,18 +197,6 @@ def upgrade() -> None:
         _upgrade_offline_static()
         return
 
-    # Progress logging is deliberate, not noise. This revision kills the
-    # container on the deployed PostgreSQL: the process dies immediately after
-    # alembic prints "Running upgrade ... -> e5a1c3f7d284" with no traceback and
-    # no log line at all, which means it is being killed rather than raising.
-    # These markers turn a silent death into a precise location.
-    #
-    # WARNING, not INFO, on purpose: alembic.ini gives the "alembic" logger no
-    # handlers and sets root to WARN, so INFO from a migration module is
-    # silently discarded. At WARNING these markers do reach the container log.
-    # Remove them once this revision is confirmed working in production.
-    logger.warning("e5a1c3f7d284: start")
-
     status_enum = sa.Enum(*_PROCESSOR_EVENT_STATUS, name="processoreventstatus")
     # The column must reference the type WITHOUT emitting its own CREATE TYPE:
     # the type is created explicitly just below, and a second CREATE TYPE for an
@@ -220,20 +208,17 @@ def upgrade() -> None:
     )
 
     if not _has_table("processor_webhook_events"):
-        logger.warning("e5a1c3f7d284: creating enum type processoreventstatus")
         status_enum.create(op.get_bind(), checkfirst=True)
-        logger.warning("e5a1c3f7d284: enum type created; creating table")
         if op.get_bind().dialect.name == "postgresql":
-            # Raw, explicit DDL in small steps, deliberately.
+            # Raw, explicit DDL rather than op.create_table().
             #
-            # op.create_table() for THIS table kills the container: the process
-            # dies with no Python traceback and no native fault immediately
-            # after the marker above, on every attempt. It is not a raised
-            # error (those are logged) and not a crash (faulthandler is on and
-            # prints nothing), so it is something external - and the way to
-            # narrow that down is to do less per statement. Each step logs, so
-            # a failure names its own command instead of vanishing.
-            logger.warning("e5a1c3f7d284: create table (columns only, raw DDL)")
+            # op.create_table() for this specific table killed the container in
+            # production: the process died with no Python traceback and no
+            # native fault (faulthandler was enabled and printed nothing), on
+            # every attempt. The cause was never identified - a process killed
+            # from outside leaves no evidence behind - but issuing the DDL as
+            # plain statements made it succeed, and it keeps each step small
+            # enough to identify itself if it ever fails again.
             op.execute(
                 """
                 CREATE TABLE processor_webhook_events (
@@ -255,21 +240,16 @@ def upgrade() -> None:
                 )
                 """
             )
-            logger.warning("e5a1c3f7d284: table created; adding FK to practices")
             op.execute(
                 "ALTER TABLE processor_webhook_events ADD CONSTRAINT "
                 "fk_processor_events_practice_id FOREIGN KEY (practice_id) "
                 "REFERENCES practices (id)"
-            )
-            logger.warning(
-                "e5a1c3f7d284: FK to practices added; adding FK to payment_transactions"
             )
             op.execute(
                 "ALTER TABLE processor_webhook_events ADD CONSTRAINT "
                 "fk_processor_events_payment_transaction_id FOREIGN KEY "
                 "(payment_transaction_id) REFERENCES payment_transactions (id)"
             )
-            logger.warning("e5a1c3f7d284: FKs added")
         else:
             # Non-PostgreSQL (SQLite in the test suite) keeps the portable path.
             op.create_table(
@@ -305,9 +285,7 @@ def upgrade() -> None:
                 ),
                 sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
             )
-        logger.warning("e5a1c3f7d284: table created")
 
-    logger.warning("e5a1c3f7d284: creating processor_webhook_events indexes")
     if not _has_index("processor_webhook_events", "uq_processor_webhook_events_event_id"):
         op.create_index(
             "uq_processor_webhook_events_event_id",
@@ -335,14 +313,7 @@ def upgrade() -> None:
         )
 
     if not _has_index("payment_transactions", "uq_payment_transactions_processor_txn_id"):
-        logger.warning(
-            "e5a1c3f7d284: checking payment_transactions for duplicate processor ids"
-        )
         _abort_if_duplicate_processor_ids()
-        logger.warning(
-            "e5a1c3f7d284: creating unique index on "
-            "payment_transactions.processor_transaction_id"
-        )
         op.create_index(
             "uq_payment_transactions_processor_txn_id",
             "payment_transactions",
@@ -350,7 +321,6 @@ def upgrade() -> None:
             unique=True,
         )
 
-    logger.warning("e5a1c3f7d284: done")
 
 
 def downgrade() -> None:

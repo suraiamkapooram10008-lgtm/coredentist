@@ -53,20 +53,11 @@ def upgrade() -> None:
     except sa.exc.NoInspectionAvailable:
         has_inspection = False
 
-    # Progress markers, WARNING level on purpose (alembic.ini gives the
-    # "alembic" logger no handlers and root is WARN, so INFO from a migration
-    # module is discarded). The container dies inside this revision with no
-    # traceback and no native fault, so the only way to locate the statement is
-    # to announce each one. Remove these once the revision is confirmed working.
-    logger.warning("%s: start", revision)
-
     # 1. practices.public_slug — nullable add, deterministic backfill, NOT NULL + unique index.
     if has_inspection:
-        logger.warning("%s: 1a add practices.public_slug (nullable)", revision)
         with op.batch_alter_table("practices") as batch_op:
             batch_op.add_column(sa.Column("public_slug", sa.String(100), nullable=True))
 
-        logger.warning("%s: 1b backfill practices.public_slug", revision)
         # CAST(id AS TEXT), not hex(id): PostgreSQL has no hex() for uuid, so
         # the original form raised "function hex(uuid) does not exist" and the
         # migration could never complete. SQLite does have hex(), which is why
@@ -79,7 +70,6 @@ def upgrade() -> None:
             )
         )
 
-        logger.warning("%s: 1c public_slug NOT NULL + unique index", revision)
         with op.batch_alter_table("practices") as batch_op:
             batch_op.alter_column(
                 "public_slug", existing_type=sa.String(100), nullable=False
@@ -97,7 +87,6 @@ def upgrade() -> None:
         op.create_index("uq_practices_public_slug", "practices", ["public_slug"], unique=True)
 
     # 2. Drop the global unique index on booking_pages.page_slug.
-    logger.warning("%s: 2 drop global booking_pages.page_slug unique index", revision)
     if has_inspection:
         with op.batch_alter_table("booking_pages") as batch_op:
             batch_op.drop_index("ix_booking_pages_page_slug")
@@ -105,7 +94,6 @@ def upgrade() -> None:
         op.drop_index("ix_booking_pages_page_slug", table_name="booking_pages")
 
     # 3. Composite unique constraint (practice_id, page_slug).
-    logger.warning("%s: 3 add composite unique (practice_id, page_slug)", revision)
     if has_inspection:
         with op.batch_alter_table("booking_pages") as batch_op:
             batch_op.create_unique_constraint(_UQ_NAME, ["practice_id", "page_slug"])
@@ -114,7 +102,6 @@ def upgrade() -> None:
             _UQ_NAME, "booking_pages", ["practice_id", "page_slug"]
         )
 
-    logger.warning("%s: done", revision)
 
     if has_inspection:
         logger.info(
