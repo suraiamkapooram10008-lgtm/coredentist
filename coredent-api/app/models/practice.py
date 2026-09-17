@@ -3,7 +3,16 @@ Practice Model
 Represents dental practices/clinics
 """
 
-from sqlalchemy import Column, String, DateTime, JSON, ForeignKey, Boolean, Integer
+from sqlalchemy import (
+    Column,
+    String,
+    DateTime,
+    JSON,
+    ForeignKey,
+    Boolean,
+    Integer,
+    Numeric,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -59,7 +68,19 @@ class Practice(Base):
     settings = Column(JSON, default={})
 
     # Billing preferences
-    tax_rate = Column(JSON, default=0.0)  # Can be float or dict for multiple tax rates
+    # Percent, 0..100 (see the units note in billing.py). Numeric(5, 2) to match
+    # practices.tax_rate as created by bb372b5f2d4a_baseline_schema.py.
+    #
+    # This was declared JSON, which no migration ever produced. SQLite tolerates
+    # the mismatch, so the whole suite passed locally; PostgreSQL rejects the
+    # insert with
+    #   DatatypeMismatchError: column "tax_rate" is of type numeric but
+    #   expression is of type json
+    # and every consumer already treats it as a number - billing.py,
+    # settings.py and tasks.py all do Decimal(str(practice.tax_rate)) - and
+    # Invoice.tax_rate is Numeric(8, 6). The "float or dict" comment described a
+    # capability nothing implemented.
+    tax_rate = Column(Numeric(5, 2), default=0.0)
     invoice_prefix = Column(String(10), default="INV")
     payment_terms = Column(JSON, default=30)  # Days
     late_fee_percentage = Column(JSON, default=0.0)
