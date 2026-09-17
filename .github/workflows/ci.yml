@@ -17,11 +17,14 @@ jobs:
   backend:
     name: Backend — migrate, audit, lint & test
     runs-on: ubuntu-latest
-    # 60, not 30. With the fixtures fixed the suite actually executes now, and
-    # the full run exceeds 30 minutes - the previous run was cancelled by the
-    # job timeout at 30m58s, which reads as a cancellation rather than a
-    # failure and hides that the tests were still going.
-    timeout-minutes: 60
+    # 120, not 30. With the fixture and schema defects fixed the suite executes
+    # for the first time, and it runs far longer than an hour against
+    # PostgreSQL - the previous two attempts were cancelled by the job timeout
+    # at 30m58s and again past 59m, which reads as a cancellation and hides that
+    # the tests were still running. The cap is deliberately generous so the
+    # suite can complete once and produce a verdict plus the --durations report
+    # needed to find what is actually slow. Tighten it once that is known.
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: coredent-api
@@ -94,7 +97,7 @@ jobs:
         run: python -m alembic upgrade head
 
       - name: Run backend test and coverage gate
-        run: python -m pytest tests --tb=short
+        run: python -m pytest tests --tb=short --durations=25
 
       - name: Upload backend coverage
         if: always()
