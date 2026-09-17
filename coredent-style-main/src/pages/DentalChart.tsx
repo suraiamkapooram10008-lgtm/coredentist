@@ -302,7 +302,18 @@ export default function DentalChart() {
               <div>
                 <p className="font-medium">{chart.patientName ?? `Patient ${chart.patientId.slice(0, 8)}`}</p>
                 <p className="text-sm text-muted-foreground">
-                  Last updated: {new Date(chart.lastUpdated ?? chart.updatedAt).toLocaleDateString()}
+                  Last updated:{' '}
+                  {/* Explicit locale and options: toLocaleDateString() with no
+                      arguments resolves against the host's locale, so this
+                      rendered as 20/6/2026 on one machine and 6/20/2026 on
+                      another. That made it both inconsistent for support and
+                      untestable - the assertion passed locally and failed on
+                      CI. Pinned to an unambiguous day/month/year form. */}
+                  {new Date(chart.lastUpdated ?? chart.updatedAt).toLocaleDateString('en-GB', {
+                    day: 'numeric',
+                    month: 'numeric',
+                    year: 'numeric',
+                  })}
                 </p>
               </div>
             </div>

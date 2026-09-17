@@ -245,6 +245,6 @@ describe('DentalChart page', () => {
     await user.click(screen.getByRole('button', { name: /refresh/i }));
     await waitFor(() => expect(dentalChartApi.getChart).toHaveBeenCalledTimes(2));
     expect(screen.getByTestId('selected-tooth')).toHaveTextContent('none');
-    expect(screen.getByText(/20\/6\/2026/)).toBeInTheDocument();
+    expect(screen.getByText(/20\/06\/2026/)).toBeInTheDocument();
   });
 });
