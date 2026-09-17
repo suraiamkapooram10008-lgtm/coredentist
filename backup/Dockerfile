@@ -2,10 +2,15 @@
 #
 # Deliberately NOT based on coredent-api/Dockerfile. pg_dump refuses to dump a
 # server whose major version is newer than its own, and the API image's Debian
-# base only carries postgresql-client 15 while the database is PostgreSQL 16.
-# The official postgres image guarantees the client matches the server, and it
-# keeps a full database dump off the API container's CPU and IO.
-FROM postgres:16
+# base carries an older postgresql-client than the server. The official postgres
+# image guarantees the client matches, and keeps a full database dump off the
+# API container's CPU and IO.
+#
+# TARGET MUST BE >= THE SERVER'S MAJOR VERSION. The deployed Railway Postgres
+# runs 18 (ghcr.io/railwayapp-templates/postgres-ssl:18). Bump this in the same
+# change as any server upgrade, or every backup run fails with
+# "server version mismatch".
+FROM postgres:18
 
 # AWS CLI v2 via the official installer rather than the distro package: the
 # Debian "awscli" package tracks v1 and is not present on every base release.

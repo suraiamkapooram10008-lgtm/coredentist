@@ -64,6 +64,20 @@ def do_run_migrations(connection: Connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         render_as_batch=is_sqlite,
+        # Commit each revision on its own instead of running the whole
+        # "upgrade head" as a single transaction.
+        #
+        # With one big transaction, a container killed part-way through (OOM,
+        # platform restart, failed healthcheck) has PostgreSQL roll the entire
+        # run back, so the next attempt starts from the same baseline having
+        # made zero progress. start.py then exits non-zero and the container
+        # restarts - an unbreakable loop that never reaches "head" and never
+        # leaves an error behind, because the process was killed rather than
+        # raising.
+        #
+        # Per-revision commits make progress durable: a retry resumes at the
+        # revision that failed, and that revision's name is the diagnosis.
+        transaction_per_migration=True,
     )
     with context.begin_transaction():
         context.run_migrations()

@@ -61,12 +61,31 @@ def _normalise_db_url(database_url: str) -> str:
     return database_url
 
 
+def _current_revision(database_url: str) -> str:
+    """Best-effort current Alembic revision. Diagnostics only, never raises."""
+    try:
+        from alembic.runtime.migration import MigrationContext
+        from sqlalchemy import create_engine
+
+        engine = create_engine(database_url, pool_pre_ping=True)
+        try:
+            with engine.connect() as conn:
+                return MigrationContext.configure(conn).get_current_revision() or "<none>"
+        finally:
+            engine.dispose()
+    except Exception as exc:  # noqa: BLE001 - diagnostics must not mask the real error
+        return f"<unavailable: {exc}>"
+
+
 def _alembic_upgrade(database_url: str) -> None:
     import alembic.command
     import alembic.config
 
     alembic_cfg = alembic.config.Config("alembic.ini")
     alembic_cfg.set_main_option("sqlalchemy.url", database_url)
+    # Revisions commit individually (see alembic/env.py), so on a retry this
+    # names the revision the previous attempt stopped at - i.e. the culprit.
+    logger.info("Current revision before upgrade: %s", _current_revision(database_url))
     logger.info("Executing: alembic upgrade head")
     alembic.command.upgrade(alembic_cfg, "head")
 
@@ -157,6 +176,12 @@ def run_migrations() -> bool:
         import traceback
 
         logger.error(traceback.format_exc())
+        # Revisions commit individually, so the revision reached here is exactly
+        # the one that failed - the actionable line in a crash-looping deploy.
+        try:
+            logger.error("Revision reached before failure: %s", _current_revision(database_url))
+        except Exception:  # noqa: BLE001 - never mask the original failure
+            pass
 
         if environment not in _LENIENT_MIGRATION_ENVIRONMENTS:
             logger.critical(
