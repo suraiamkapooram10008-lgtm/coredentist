@@ -17,7 +17,11 @@ jobs:
   backend:
     name: Backend — migrate, audit, lint & test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 60, not 30. With the fixtures fixed the suite actually executes now, and
+    # the full run exceeds 30 minutes - the previous run was cancelled by the
+    # job timeout at 30m58s, which reads as a cancellation rather than a
+    # failure and hides that the tests were still going.
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: coredent-api
