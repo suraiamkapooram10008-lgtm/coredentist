@@ -89,6 +89,17 @@ jobs:
       - name: Apply all migrations to a fresh PostgreSQL database
         run: python -m alembic upgrade head
 
+      # Model/migration drift. PostgreSQL-only and deliberately a separate step:
+      # SQLite cannot support the check (postgresql.UUID lands with NUMERIC
+      # affinity and TypeDecorators are unrepresentable, which produced ~50 false
+      # positives), so it skips anywhere that is not PostgreSQL. This is the
+      # gate that would have caught practices.tax_rate being declared JSON in
+      # the model while the baseline migration created it NUMERIC - a mismatch
+      # SQLite stores happily and PostgreSQL rejects on the first insert, which
+      # in production means the first practice sign-up.
+      - name: Check model/migration schema drift
+        run: python scripts/check_schema_drift.py
+
       - name: Run backend test and coverage gate
         run: python -m pytest tests --tb=short
 

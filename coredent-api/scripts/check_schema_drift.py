@@ -1,7 +1,31 @@
-"""One-off drift check: compare ORM metadata against the alembic-migrated schema.
+"""Compare ORM metadata against the alembic-migrated schema.
 
 Run: python scripts/check_schema_drift.py
-Exits non-zero when model columns are missing from the migrated database.
+
+Exits non-zero when the model and the migrations disagree.
+
+**PostgreSQL only.** SQLite cannot support this check: it stores
+``postgresql.UUID`` with NUMERIC affinity and has no representation for
+TypeDecorators such as ``EncryptedString``, so a SQLite comparison reports dozens
+of false positives. When the configured database is not PostgreSQL the check
+skips with an explanation rather than reporting noise. CI runs PostgreSQL, so
+this is enforced there.
+
+Two checks:
+
+1. A model table or column the migrations never created.
+2. A model column whose TYPE disagrees with the migration.
+
+(2) is why this file changed. The previous version only checked (1), so it would
+have sailed past ``practices.tax_rate`` being declared JSON in the model while
+the baseline migration created it NUMERIC - a mismatch SQLite stores happily and
+PostgreSQL rejects at insert time with
+
+  DatatypeMismatchError: column "tax_rate" is of type numeric but expression is
+  of type json
+
+Types are compared by family: length, precision and scale legitimately differ
+between the model and a migration and are not drift.
 """
 import os
 import sys
@@ -11,46 +35,127 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 os.environ.setdefault("SECRET_KEY", "drift-check-key-not-for-production-usage")
 os.environ.setdefault("ENCRYPTION_KEY", "dHJ1c3RlZC10ZXN0LWtleS1mb3ItZHJpZnQtY2hlY2s=")
-os.environ.setdefault("DEBUG", "True")
 os.environ.setdefault("ENVIRONMENT", "test")
 
-db_path = Path(".drift-check.sqlite")
-if db_path.exists():
-    db_path.unlink()
-os.environ["DATABASE_URL"] = f"sqlite:///{db_path.as_posix()}"
+# Model type name -> acceptable reflected type names. Types absent from this map
+# are reported as not-compared rather than silently skipped, so a new column type
+# cannot quietly opt out of the check.
+_COMPARABLE = {
+    "JSON": {"JSON", "JSONB"},
+    "Numeric": {"NUMERIC", "DECIMAL"},
+    "Float": {"FLOAT", "REAL", "DOUBLE PRECISION", "NUMERIC"},
+    "BigInteger": {"BIGINT", "BIGINTEGER"},
+    "Integer": {"INTEGER", "BIGINT", "SMALLINT"},
+    "SmallInteger": {"SMALLINT", "INTEGER"},
+    "Boolean": {"BOOLEAN"},
+    "DateTime": {"TIMESTAMP", "DATETIME", "TIMESTAMP WITHOUT TIME ZONE", "TIMESTAMP WITH TIME ZONE"},
+    "Date": {"DATE"},
+    "Time": {"TIME"},
+    "Text": {"TEXT"},
+    "String": {"VARCHAR", "CHARACTER VARYING", "CHAR", "CHARACTER", "TEXT"},
+    "LargeBinary": {"BYTEA"},
+    "UUID": {"UUID"},
+}
 
-from alembic import command  # noqa: E402
-from alembic.config import Config  # noqa: E402
 
-import app.models  # noqa: E402,F401
-from app.core.base import Base  # noqa: E402
+def model_type_names(column) -> list[str]:
+    """Candidate model type names, unwrapping TypeDecorators.
 
-config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-command.upgrade(config, "head")
+    ``EncryptedString`` wraps VARCHAR, ``EncryptedJSON`` wraps JSON. Comparing
+    the decorator's own name would flag every encrypted column, so the
+    underlying type is used.
+    """
+    names = []
+    for klass in type(column.type).__mro__:
+        if klass.__name__ in ("TypeDecorator", "TypeEngine", "object"):
+            break
+        names.append(klass.__name__)
+    impl = getattr(column.type, "impl", None)
+    if impl is not None:
+        for klass in type(impl).__mro__:
+            if klass.__name__ in ("TypeEngine", "object"):
+                break
+            names.append(klass.__name__)
+    return names
 
-import sqlite3  # noqa: E402
 
-conn = sqlite3.connect(db_path)
-missing = []
-for table in Base.metadata.sorted_tables:
-    rows = conn.execute(f"PRAGMA table_info({table.name})").fetchall()
-    if not rows:
-        missing.append((table.name, "<entire table missing>", [c.name for c in table.columns]))
-        continue
-    existing = {row[1] for row in rows}
-    for column in table.columns:
-        if column.name not in existing:
-            missing.append((table.name, column.name, None))
-conn.close()
-db_path.unlink(missing_ok=True)
+def acceptable(column) -> set[str] | None:
+    for name in model_type_names(column):
+        if name in _COMPARABLE:
+            return _COMPARABLE[name]
+    return None
 
-if missing:
-    print("SCHEMA DRIFT DETECTED (model column -> not in migrated DB):")
-    for table, column, all_cols in missing:
-        if all_cols is not None:
-            print(f"  TABLE MISSING: {table}")
-        else:
-            print(f"  {table}.{column}")
-    sys.exit(1)
 
-print("No schema drift: every model column exists in the migrated database.")
+def main() -> int:
+    from sqlalchemy import create_engine, inspect
+
+    from app.core.config_simple import settings
+    import app.models  # noqa: F401
+    from app.core.base import Base
+
+    url = settings.DATABASE_URL or ""
+    sync_url = url.replace("+asyncpg", "").replace("+aiosqlite", "")
+    if not sync_url.startswith("postgres"):
+        print(
+            "SKIP: schema drift check requires PostgreSQL.\n"
+            "  Configured database is not PostgreSQL, and SQLite cannot compare\n"
+            "  types meaningfully (UUID lands as NUMERIC and TypeDecorators are\n"
+            "  not representable). This check runs in CI against PostgreSQL."
+        )
+        return 0
+
+    engine = create_engine(sync_url)
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+
+    missing: list[str] = []
+    drifted: list[str] = []
+    not_compared: list[str] = []
+
+    for table in Base.metadata.sorted_tables:
+        if table.name not in table_names:
+            missing.append(f"{table.name} (<entire table missing>)")
+            continue
+
+        actual = {
+            col["name"]: str(col["type"]).upper()
+            for col in inspector.get_columns(table.name)
+        }
+        for column in table.columns:
+            if column.name not in actual:
+                missing.append(f"{table.name}.{column.name}")
+                continue
+            accepted = acceptable(column)
+            if accepted is None:
+                not_compared.append(f"{table.name}.{column.name} ({type(column.type).__name__})")
+                continue
+            declared = actual[column.name]
+            if not any(name in declared for name in accepted):
+                drifted.append(
+                    f"{table.name}.{column.name}: model says "
+                    f"{type(column.type).__name__}, migration created {declared}"
+                )
+
+    engine.dispose()
+
+    if missing or drifted:
+        if missing:
+            print("SCHEMA DRIFT: model tables/columns absent from the migrated database:")
+            for item in missing:
+                print(f"  {item}")
+        if drifted:
+            print("SCHEMA DRIFT: model column types disagree with the migrations:")
+            for item in drifted:
+                print(f"  {item}")
+        print(
+            "\nSQLite tolerates these mismatches; PostgreSQL enforces them and "
+            "rejects the INSERT at runtime. Fix the model or add a migration."
+        )
+        return 1
+
+    print(f"No schema drift: {len(not_compared)} column(s) had no comparable type mapping.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
