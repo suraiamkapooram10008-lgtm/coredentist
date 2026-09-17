@@ -123,9 +123,22 @@ async def setup_database(create_test_schema):
     """
     yield
     # Don't drop tables - truncate for speed while retaining the migrated schema.
+    #
+    # One statement on PostgreSQL, not one per table. The loop below issues a
+    # round trip per table per test (~40 tables x ~760 tests), which is nearly
+    # free in-process on SQLite and ruinous over a network: against PostgreSQL
+    # the suite could not finish inside the CI job timeout once the fixtures
+    # actually started running. TRUNCATE ... CASCADE is also what PostgreSQL is
+    # designed for here, and RESTART IDENTITY keeps sequences deterministic.
     async with TestingSessionLocal() as session:
-        for table in reversed(Base.metadata.sorted_tables):
-            await session.execute(table.delete())
+        if session.bind.dialect.name == "postgresql":
+            from sqlalchemy import text as _text
+
+            names = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
+            await session.execute(_text(f"TRUNCATE TABLE {names} RESTART IDENTITY CASCADE"))
+        else:
+            for table in reversed(Base.metadata.sorted_tables):
+                await session.execute(table.delete())
         await session.commit()
 
 
