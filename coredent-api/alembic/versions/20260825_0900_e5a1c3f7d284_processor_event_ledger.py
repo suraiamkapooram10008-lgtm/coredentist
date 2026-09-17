@@ -197,10 +197,24 @@ def upgrade() -> None:
         _upgrade_offline_static()
         return
 
+    # Progress logging is deliberate, not noise. This revision kills the
+    # container on the deployed PostgreSQL: the process dies immediately after
+    # alembic prints "Running upgrade ... -> e5a1c3f7d284" with no traceback and
+    # no log line at all, which means it is being killed rather than raising.
+    # These markers turn a silent death into a precise location.
+    #
+    # WARNING, not INFO, on purpose: alembic.ini gives the "alembic" logger no
+    # handlers and sets root to WARN, so INFO from a migration module is
+    # silently discarded. At WARNING these markers do reach the container log.
+    # Remove them once this revision is confirmed working in production.
+    logger.warning("e5a1c3f7d284: start")
+
     status_enum = sa.Enum(*_PROCESSOR_EVENT_STATUS, name="processoreventstatus")
 
     if not _has_table("processor_webhook_events"):
+        logger.warning("e5a1c3f7d284: creating enum type processoreventstatus")
         status_enum.create(op.get_bind(), checkfirst=True)
+        logger.warning("e5a1c3f7d284: enum type created; creating table")
         op.create_table(
             "processor_webhook_events",
             sa.Column("id", sa.UUID(as_uuid=True), primary_key=True, nullable=False),
@@ -234,7 +248,9 @@ def upgrade() -> None:
             ),
             sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
         )
+        logger.warning("e5a1c3f7d284: table created")
 
+    logger.warning("e5a1c3f7d284: creating processor_webhook_events indexes")
     if not _has_index("processor_webhook_events", "uq_processor_webhook_events_event_id"):
         op.create_index(
             "uq_processor_webhook_events_event_id",
@@ -262,13 +278,22 @@ def upgrade() -> None:
         )
 
     if not _has_index("payment_transactions", "uq_payment_transactions_processor_txn_id"):
+        logger.warning(
+            "e5a1c3f7d284: checking payment_transactions for duplicate processor ids"
+        )
         _abort_if_duplicate_processor_ids()
+        logger.warning(
+            "e5a1c3f7d284: creating unique index on "
+            "payment_transactions.processor_transaction_id"
+        )
         op.create_index(
             "uq_payment_transactions_processor_txn_id",
             "payment_transactions",
             ["processor_transaction_id"],
             unique=True,
         )
+
+    logger.warning("e5a1c3f7d284: done")
 
 
 def downgrade() -> None:
