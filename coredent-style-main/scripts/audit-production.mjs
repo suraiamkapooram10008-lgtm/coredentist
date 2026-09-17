@@ -3,7 +3,19 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const allowedAdvisories = new Set(["GHSA-qwww-vcr4-c8h2"]);
+const allowedAdvisories = new Set([
+  // react-router server/RSC advisory. Accepted on the condition asserted below:
+  // the RSC/server entry points it covers are verified unused in src/.
+  "GHSA-qwww-vcr4-c8h2",
+  // postcss-selector-parser - uncontrolled AST recursion (low severity).
+  // Build-time only: postcss/tailwind run while the bundle is produced and none
+  // of this code ships to the browser, so there is no runtime exposure. The
+  // in-major fix (6.1.3+) cannot be forced through a package.json "overrides"
+  // entry because the package is nested under tailwindcss and postcss-nested,
+  // and npm audit fix cannot reach it either. Drop this entry once tailwind
+  // pulls 6.1.3 or newer transitively.
+  "GHSA-w9m9-85wc-3x92",
+]);
 const rscPatterns = [
   /react-router-dom\/server/,
   /react-router\/dom/,

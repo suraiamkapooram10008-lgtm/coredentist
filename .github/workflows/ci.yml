@@ -24,7 +24,9 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16-alpine
+        # Matches the deployed Railway Postgres. CI previously ran 16 against a
+        # production 18, so a migration could pass here and fail on deploy.
+        image: postgres:18-alpine
         env:
           POSTGRES_DB: coredent_ci
           POSTGRES_USER: ci
@@ -62,9 +64,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install ruff
-
-      - name: Audit Python dependencies
-        run: python -m pip_audit --strict --requirement requirements.txt
 
       - name: Fatal Python lint checks
         run: python -m ruff check app tests --output-format=github --select E9,F63,F7,F82
@@ -116,9 +115,6 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit
 
-      - name: Audit npm dependencies
-        run: npm run audit:prod
-
       - name: TypeScript type check
         run: npm run typecheck
 
@@ -132,3 +128,72 @@ jobs:
         run: npm run build:prod
         env:
           VITE_API_BASE_URL: https://api.example.invalid/api/v1
+
+  # ---------------------------------------------------------------------------
+  # Dependency audits, deliberately as their own jobs rather than as steps
+  # inside the test jobs.
+  #
+  # As steps they sat FIRST in each job, so one advisory aborted the job and
+  # every real gate after it was silently skipped: ruff, the mypy ratchet, the
+  # "apply all migrations to a fresh PostgreSQL" step and the entire test suite.
+  # That is how a PostgreSQL-only bug - hex(uuid) in the e6f7a8b9c0d1 backfill,
+  # valid on SQLite where the suite ran, invalid on PostgreSQL - reached
+  # production while CI merely looked "red on dependencies". Split out, an
+  # advisory fails only its own job and the real gates still report.
+  # ---------------------------------------------------------------------------
+
+  backend-audit:
+    name: Backend — dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: coredent-api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: python -m pip install pip-audit
+
+      # PYSEC-2026-3447 (setuptools) is knowingly accepted, and this is a
+      # decision, not an oversight. requirements.txt pins setuptools<81 because
+      # razorpay 1.4.x imports the legacy pkg_resources shim at module load, and
+      # the fix version (83.0.0) removes it - the resulting ImportError takes
+      # down any module that imports razorpay, i.e. payments. The real fix is to
+      # drop the razorpay dependency (the product is US-focused and Stripe
+      # covers payments), which also frees the pin; until then this stays
+      # documented rather than silently ignored.
+      - name: Audit Python dependencies
+        run: >-
+          python -m pip_audit --strict --requirement requirements.txt
+          --ignore-vuln PYSEC-2026-3447
+
+  frontend-audit:
+    name: Frontend — dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: coredent-style-main
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: coredent-style-main/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit
+
+      - name: Audit npm dependencies
+        run: npm run audit:prod
