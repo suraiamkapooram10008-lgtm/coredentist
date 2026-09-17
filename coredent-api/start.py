@@ -27,9 +27,22 @@ configured addresses. In production set ``TRUSTED_PROXIES`` to the platform
 edge range to avoid spoofing via a client-set ``X-Forwarded-For`` header.
 """
 
+import faulthandler
 import logging
 import os
 import sys
+
+# Dump a native traceback on SIGSEGV/SIGABRT/SIGBUS/SIGFPE/SIGILL.
+#
+# A migration step kills this process with no Python traceback and no log line
+# at all, which means it is dying natively rather than raising: run_migrations()
+# already logs and re-raises every Python exception, and none appears. This
+# makes a native crash print its stack to stderr instead of exiting silently.
+#
+# If a deploy shows no output from this either, the process is being killed
+# from outside (a memory-cgroup OOM kill cannot be caught), which points at the
+# container's memory limit rather than at the migration itself.
+faulthandler.enable()
 
 logging.basicConfig(
     level=logging.INFO,
