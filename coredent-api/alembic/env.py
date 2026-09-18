@@ -18,9 +18,18 @@ config = context.config
 
 # Note: config is already loaded by Alembic, no need to reload it
 
-# Interpret the config file for Python logging
+# Interpret the config file for Python logging.
+#
+# disable_existing_loggers is explicitly False. The default (True) sets
+# ``disabled = True`` on every logger that already exists at this point, and
+# migrations run in-process here: start.py migrates before serving, and the test
+# session migrates once before any test runs. The result is that application
+# loggers created before the migration are silenced for the life of the process -
+# including start.py's own ``__main__`` logger, so post-migration startup
+# diagnostics never appear. It is also why an app-level log assertion in the
+# suite observed nothing at all.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Set sqlalchemy.url from settings (sync URL for Alembic)
 # SECURITY: Strip async driver suffixes (+asyncpg, +aiosqlite) so the

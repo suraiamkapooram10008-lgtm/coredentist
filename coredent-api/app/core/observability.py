@@ -20,11 +20,13 @@ behaviour depend on import order.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 from app.core.config_simple import settings
 
@@ -228,6 +230,17 @@ celery_task_duration_seconds = Histogram(
     buckets=(0.1, 0.5, 1.0, 5.0, 15.0, 60.0, 300.0),
 )
 
+celery_queue_depth = Gauge(
+    "coredent_celery_queue_depth",
+    "Messages waiting in a Celery queue. A rising trend means nothing is consuming it.",
+    ["queue"],
+)
+
+# Must match ``CELERY_QUEUES`` in start.py; the worker role is launched with
+# ``-Q`` built from that value. Kept as a literal here rather than imported
+# because start.py is a process entrypoint, and guarded by a drift test.
+DEFAULT_CONSUMED_QUEUES = "default,communications,reminders,emails"
+
 
 def route_label(request: Any) -> str:
     """Bounded-cardinality route label for a request.
@@ -298,3 +311,113 @@ def install_celery_metrics(celery_app: Any) -> None:
                 celery_task_duration_seconds.labels(name).observe(time.monotonic() - begun)
         except Exception:
             logger.debug("Failed to record Celery metrics", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# "Nothing is consuming the queue" detection
+# ---------------------------------------------------------------------------
+#
+# Publishing a task is not the same as running it: the message only leaves the
+# broker when a worker consumes it. With no worker role deployed, ``apply_async``
+# still succeeds against a live broker, so ``enqueue_email`` returns normally,
+# the caller's except-block never fires, and every beat schedule silently never
+# runs. The API has no other way to observe that - which is how registration
+# verification mail, password resets and the retention purge can all stop while
+# the deploy still looks healthy. Queue depth is that missing signal.
+
+def consumed_queues() -> List[str]:
+    """Queue names the worker role consumes, honouring the CELERY_QUEUES override."""
+    raw = os.environ.get("CELERY_QUEUES") or DEFAULT_CONSUMED_QUEUES
+    return [name.strip() for name in raw.split(",") if name.strip()]
+
+
+def broker_url() -> Optional[str]:
+    """Broker the API publishes to, or None when no broker is configured."""
+    return settings.CELERY_BROKER_URL or settings.REDIS_URL or None
+
+
+def _fetch_queue_depths(broker: str, queues: List[str]) -> Dict[str, int]:
+    """Read pending-message counts straight from the Redis broker.
+
+    celery does not use a key prefix for the default redis transport, so each
+    queue name is the list key holding its waiting messages.
+    """
+    import redis
+
+    client = redis.from_url(
+        broker,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+    )
+    try:
+        return {queue: int(client.llen(queue)) for queue in queues}
+    finally:
+        client.close()
+
+
+async def update_celery_queue_depth() -> None:
+    """Refresh the queue-depth gauges. Never raises.
+
+    Values are deliberately left unset when the broker cannot be read, so a
+    ``absent()`` alert can distinguish "broker unreachable" from "queue empty"
+    rather than both reading as zero.
+    """
+    broker = broker_url()
+    if not broker or not broker.startswith("redis"):
+        return
+
+    try:
+        depths = await asyncio.to_thread(_fetch_queue_depths, broker, consumed_queues())
+    except Exception:
+        logger.debug("Could not read Celery queue depth", exc_info=True)
+        return
+
+    for queue, depth in depths.items():
+        try:
+            celery_queue_depth.labels(queue).set(depth)
+        except Exception:
+            logger.debug("Failed to set queue-depth gauge", exc_info=True)
+
+
+async def check_celery_worker_presence(timeout: float = 1.0) -> Optional[bool]:
+    """Return True/False when the broker replied, None when the probe failed.
+
+    A worker probing itself is meaningless and beat has no task protocol, so the
+    caller is expected to gate this on the process role.
+    """
+    broker = broker_url()
+    if not broker:
+        return None
+    try:
+        from app.core.celery_app import celery_app
+
+        pong = await asyncio.to_thread(celery_app.control.ping, timeout=timeout)
+        return bool(pong)
+    except Exception:
+        logger.debug("Celery worker presence probe unavailable", exc_info=True)
+        return None
+
+
+async def report_missing_celery_worker() -> None:
+    """Log loudly when this process publishes work that nothing consumes.
+
+    Non-fatal by design: the API must still serve traffic with no worker
+    deployed, but the condition should be visible in the deploy log instead of
+    only as confirmation emails that never arrive.
+    """
+    role = (os.environ.get("PROCESS_TYPE") or "web").strip().lower()
+    if role in {"worker", "beat", "scheduler", "release", "migrate"}:
+        return
+
+    present = await check_celery_worker_presence()
+    if present is False:
+        logger.error(
+            "No Celery worker responded on the broker. Transactional email "
+            "(verification, password reset, staff invites), appointment "
+            "reminders, dunning, recalls and the retention purge are all "
+            "queued but will NOT run. Deploy the worker and beat services "
+            "(PROCESS_TYPE=worker and PROCESS_TYPE=beat); see "
+            "docs/RAILWAY_DEPLOY_STEPS.md section 4."
+        )
+    elif present:
+        logger.info("Celery worker detected on the broker")

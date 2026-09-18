@@ -56,6 +56,8 @@ from app.core.observability import (
     init_sentry,
     record_http_request,
     record_security_event,
+    report_missing_celery_worker,
+    update_celery_queue_depth,
 )
 
 init_sentry("web")
@@ -164,6 +166,13 @@ async def lifespan(app: FastAPI):
             logger.warning("=" * 70)
         else:
             logger.info("Production integrations check: all configured")
+
+    # Publishing a task is not the same as running it: the message only leaves
+    # the broker when a worker consumes it, so a deployment with no worker role
+    # still returns success from every enqueue_email() call while nothing is
+    # ever delivered. Probe once so the condition appears in the deploy log
+    # instead of only as confirmation emails that never arrive.
+    await report_missing_celery_worker()
 
     yield  # ---- application is running ----
 
@@ -689,6 +698,11 @@ async def metrics(request: Request):
             )
 
     from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+    # Broker backlog is a live value, not a counter, so refresh it before
+    # rendering: a worker that stopped consuming then surfaces as a rising
+    # queue depth as soon as anything is published to it.
+    await update_celery_queue_depth()
 
     return PlainTextResponse(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
