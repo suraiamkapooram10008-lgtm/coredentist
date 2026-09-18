@@ -20,6 +20,7 @@ from app.models import Base
 
 import logging
 import logging.config
+import os
 import re
 import traceback
 from datetime import datetime, timezone
@@ -61,6 +62,10 @@ from app.core.observability import (
 )
 
 init_sentry("web")
+
+# Environments where console email, local-disk storage and a skipped captcha are
+# intentional. Anything else can hold real data and is audited at startup.
+_LOCAL_ENVIRONMENTS = frozenset({"development", "dev", "test", "testing", "local"})
 
 
 def log_security_event(
@@ -122,50 +127,98 @@ async def lifespan(app: FastAPI):
     if settings.DEBUG:
         logger.info(f"API Docs: http://localhost:3000/docs")
 
-    # Production readiness audit — log warnings for unconfigured integrations.
+    # Readiness audit — log warnings for unconfigured integrations.
+    #
+    # This runs for every environment that can hold real data, not only
+    # "production". Keying it on production alone meant a deployment running as
+    # staging could have console email, local-disk file storage, an unscanned
+    # upload path and a skipped captcha while the audit that should have reported
+    # all of it was itself switched off - each of those behaviours is selected by
+    # comparing ENVIRONMENT to "production".
+    #
     # These are soft warnings because some integrations are genuinely optional
     # for some deployments (e.g. US-only deployments don't need Razorpay).
-    if settings.ENVIRONMENT == "production":
-        production_warnings = []
+    if settings.ENVIRONMENT not in _LOCAL_ENVIRONMENTS:
+        readiness_warnings = []
         if not settings.SENTRY_DSN:
-            production_warnings.append(
+            readiness_warnings.append(
                 "SENTRY_DSN not set — error monitoring disabled. "
                 "You will have NO visibility into production errors."
             )
         if not settings.SMTP_USER or settings.SMTP_HOST == "localhost":
-            production_warnings.append(
+            readiness_warnings.append(
                 "SMTP not configured — password resets, email verification, "
                 "and appointment reminders will fail silently."
             )
+        if settings.EMAIL_PROVIDER == "console":
+            readiness_warnings.append(
+                f"EMAIL_PROVIDER is 'console' (ENVIRONMENT={settings.ENVIRONMENT}). "
+                "Mail is written to the log and reported as DELIVERED, so nothing "
+                "reaches a recipient and no failure is ever recorded. Set "
+                "EMAIL_PROVIDER=smtp or aws_ses."
+            )
+        if settings.SMS_PROVIDER == "console":
+            readiness_warnings.append(
+                f"SMS_PROVIDER is 'console' (ENVIRONMENT={settings.ENVIRONMENT}). "
+                "Text messages are written to the log instead of being sent."
+            )
         if not settings.AWS_S3_BUCKET:
-            production_warnings.append(
+            readiness_warnings.append(
                 "AWS_S3_BUCKET not set — file/image uploads will fail."
             )
+        elif settings.ENVIRONMENT != "production":
+            # storage.get_storage() selects S3 only for ENVIRONMENT=production,
+            # so a configured bucket is silently unused in every other env.
+            readiness_warnings.append(
+                f"AWS_S3_BUCKET is set but ENVIRONMENT={settings.ENVIRONMENT}, so "
+                "uploads use LOCAL disk: files are lost on redeploy, never reach "
+                "the bucket, and are invisible to other replicas."
+            )
         if not settings.REDIS_URL:
-            production_warnings.append(
+            readiness_warnings.append(
                 "REDIS_URL not set — rate limiting falls back to in-memory, "
                 "which does NOT work across multiple instances."
             )
         if not settings.ALLOWED_HOSTS or settings.ALLOWED_HOSTS == ["localhost", "127.0.0.1"]:
-            production_warnings.append(
+            readiness_warnings.append(
                 "ALLOWED_HOSTS not configured for production — "
                 "TrustedHostMiddleware will not protect against Host header attacks."
             )
-        if settings.CORS_ORIGINS and any("localhost" in o for o in settings.CORS_ORIGINS):
-            production_warnings.append(
+        if settings.CORS_ORIGINS and any(
+            "localhost" in origin for origin in settings.CORS_ORIGINS
+        ):
+            readiness_warnings.append(
                 "CORS_ORIGINS contains localhost — remove development origins "
                 "before going live."
             )
 
-        if production_warnings:
+        # file_security fails OPEN outside production (is_clean = not
+        # is_production), so with no scanner the upload is accepted unverified;
+        # inside production the identical gap REJECTS every upload. Either way
+        # the operator needs to know which side of that they are on.
+        if not os.getenv("CLAMAV_HOST") and not (
+            getattr(settings, "VIRUSTOTAL_API_KEY", None)
+            or os.getenv("VIRUSTOTAL_API_KEY")
+        ):
+            readiness_warnings.append(
+                "No virus scanner configured (CLAMAV_HOST / VIRUSTOTAL_API_KEY). "
+                "Uploads are accepted unscanned and enter PHI storage unverified."
+            )
+        if not getattr(settings, "RECAPTCHA_SECRET_KEY", ""):
+            readiness_warnings.append(
+                "RECAPTCHA_SECRET_KEY not set — captcha is skipped on public "
+                "booking and the patient portal, leaving them open to bots."
+            )
+
+        if readiness_warnings:
             logger.warning("=" * 70)
-            logger.warning("PRODUCTION READINESS WARNINGS")
+            logger.warning(f"{settings.ENVIRONMENT.upper()} READINESS WARNINGS")
             logger.warning("=" * 70)
-            for w in production_warnings:
+            for w in readiness_warnings:
                 logger.warning(f"  • {w}")
             logger.warning("=" * 70)
         else:
-            logger.info("Production integrations check: all configured")
+            logger.info("Readiness check: all configured integrations present")
 
     # Publishing a task is not the same as running it: the message only leaves
     # the broker when a worker consumes it, so a deployment with no worker role
