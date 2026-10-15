@@ -188,62 +188,65 @@ export default function Landing() {
         </section>
 
         {/* ── Features Section ── */}
-        <section id="features" className="py-24 bg-accent/30 scroll-mt-16">
+        <section id="features" className="pt-4 pb-12 md:pt-6 md:pb-16 bg-accent/30 scroll-mt-16">
           <div className="container mx-auto px-4">
-            <div className="text-center max-w-3xl mx-auto mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">Everything you need to scale</h2>
-              <p className="text-lg text-muted-foreground">Replace your legacy servers with a cloud-native platform designed for speed, security, and intelligence.</p>
+            <div className="text-center max-w-3xl mx-auto mb-6 md:mb-8">
+              <div className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold border-transparent bg-primary/10 text-primary mb-2">
+                Features
+              </div>
+              <h2 className="text-2xl md:text-3xl lg:text-4xl font-bold tracking-tight mb-2">Everything you need to scale</h2>
+              <p className="text-sm md:text-base text-muted-foreground">Replace your legacy servers with a cloud-native platform designed for speed, security, and intelligence.</p>
             </div>
             
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
               {/* Feature 1 */}
-              <div className="p-8 rounded-3xl bg-background border shadow-sm hover:shadow-md transition-shadow group relative overflow-hidden">
+              <div className="p-6 rounded-2xl bg-background border shadow-sm hover:shadow-md transition-shadow group relative overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center mb-6">
-                  <BrainCircuit className="h-6 w-6 text-primary" />
+                <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
+                  <BrainCircuit className="h-5 w-5 text-primary" />
                 </div>
-                <h3 className="text-xl font-bold mb-3">AI-Powered Diagnostics</h3>
-                <p className="text-muted-foreground">Instantly overlay diagnostic findings on digital X-rays to improve case acceptance and clinical accuracy.</p>
+                <h3 className="text-lg font-bold mb-2">AI-Powered Diagnostics</h3>
+                <p className="text-sm text-muted-foreground">Instantly overlay diagnostic findings on digital X-rays to improve case acceptance and clinical accuracy.</p>
               </div>
 
               {/* Feature 2 */}
-              <div className="p-8 rounded-3xl bg-background border shadow-sm hover:shadow-md transition-shadow group relative overflow-hidden">
+              <div className="p-6 rounded-2xl bg-background border shadow-sm hover:shadow-md transition-shadow group relative overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="h-12 w-12 rounded-xl bg-indigo-500/10 flex items-center justify-center mb-6">
-                  <Building2 className="h-6 w-6 text-indigo-600" />
+                <div className="h-10 w-10 rounded-xl bg-indigo-500/10 flex items-center justify-center mb-4">
+                  <Building2 className="h-5 w-5 text-indigo-600" />
                 </div>
-                <h3 className="text-xl font-bold mb-3">True DSO Architecture</h3>
-                <p className="text-muted-foreground">Manage multiple locations, share patient records globally, and analyze enterprise revenue from a single dashboard.</p>
+                <h3 className="text-lg font-bold mb-2">True DSO Architecture</h3>
+                <p className="text-sm text-muted-foreground">Manage multiple locations, share patient records globally, and analyze enterprise revenue from a single dashboard.</p>
               </div>
 
               {/* Feature 3 */}
-              <div className="p-8 rounded-3xl bg-background border shadow-sm hover:shadow-md transition-shadow group relative overflow-hidden">
+              <div className="p-6 rounded-2xl bg-background border shadow-sm hover:shadow-md transition-shadow group relative overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-br from-rose-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="h-12 w-12 rounded-xl bg-rose-500/10 flex items-center justify-center mb-6">
-                  <FileSignature className="h-6 w-6 text-rose-600" />
+                <div className="h-10 w-10 rounded-xl bg-rose-500/10 flex items-center justify-center mb-4">
+                  <FileSignature className="h-5 w-5 text-rose-600" />
                 </div>
-                <h3 className="text-xl font-bold mb-3">Digital Intake Forms</h3>
-                <p className="text-muted-foreground">Send HIPAA-compliant consent forms and health histories to patients' phones before they walk in the door.</p>
+                <h3 className="text-lg font-bold mb-2">Digital Intake Forms</h3>
+                <p className="text-sm text-muted-foreground">Send HIPAA-compliant consent forms and health histories to patients' phones before they walk in the door.</p>
               </div>
               
               {/* Feature 4 */}
-              <div className="p-8 rounded-3xl bg-background border shadow-sm hover:shadow-md transition-shadow group relative overflow-hidden">
+              <div className="p-6 rounded-2xl bg-background border shadow-sm hover:shadow-md transition-shadow group relative overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="h-12 w-12 rounded-xl bg-blue-500/10 flex items-center justify-center mb-6">
-                  <ShieldCheck className="h-6 w-6 text-blue-600" />
+                <div className="h-10 w-10 rounded-xl bg-blue-500/10 flex items-center justify-center mb-4">
+                  <ShieldCheck className="h-5 w-5 text-blue-600" />
                 </div>
-                <h3 className="text-xl font-bold mb-3">Automated ERA Workflows</h3>
-                <p className="text-muted-foreground">Stop manually posting payments. Automatically process 835 files and manage actionable claim denials.</p>
+                <h3 className="text-lg font-bold mb-2">Automated ERA Workflows</h3>
+                <p className="text-sm text-muted-foreground">Stop manually posting payments. Automatically process 835 files and manage actionable claim denials.</p>
               </div>
 
               {/* Feature 5 */}
-              <div className="p-8 rounded-3xl bg-background border shadow-sm hover:shadow-md transition-shadow group relative overflow-hidden">
+              <div className="p-6 rounded-2xl bg-background border shadow-sm hover:shadow-md transition-shadow group relative overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="h-12 w-12 rounded-xl bg-amber-500/10 flex items-center justify-center mb-6">
-                  <Zap className="h-6 w-6 text-amber-600" />
+                <div className="h-10 w-10 rounded-xl bg-amber-500/10 flex items-center justify-center mb-4">
+                  <Zap className="h-5 w-5 text-amber-600" />
                 </div>
-                <h3 className="text-xl font-bold mb-3">1-Click Migration</h3>
-                <p className="text-muted-foreground">Upload your legacy Dentrix or OpenDental exports and we automatically migrate your entire patient base.</p>
+                <h3 className="text-lg font-bold mb-2">1-Click Migration</h3>
+                <p className="text-sm text-muted-foreground">Upload your legacy Dentrix or OpenDental exports and we automatically migrate your entire patient base.</p>
               </div>
             </div>
           </div>
@@ -352,56 +355,63 @@ export default function Landing() {
         </section>
 
         {/* ── Pricing Section ── */}
-        <section id="pricing" className="py-24 bg-accent/30 scroll-mt-16">
+        <section id="pricing" className="pt-4 pb-12 md:pt-6 md:pb-16 bg-accent/30 scroll-mt-16">
           <div className="container mx-auto px-4">
-            <div className="text-center max-w-3xl mx-auto mb-16">
-              <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">Simple, transparent pricing</h2>
-              <p className="text-lg text-muted-foreground">Choose the plan that fits your practice's growth.</p>
+            <div className="text-center max-w-3xl mx-auto mb-6 md:mb-8">
+              <div className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold border-transparent bg-primary/10 text-primary mb-2">
+                Pricing Plans
+              </div>
+              <h2 className="text-2xl md:text-3xl lg:text-4xl font-bold tracking-tight mb-2">Simple, transparent pricing</h2>
+              <p className="text-sm md:text-base text-muted-foreground">Choose the plan that fits your practice's growth.</p>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+            <div className="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto items-stretch">
               {/* Pro Plan */}
-              <div className="rounded-3xl border bg-card text-card-foreground p-8 shadow-sm flex flex-col">
-                <h3 className="text-2xl font-bold mb-2">Solo Practice</h3>
-                <p className="text-muted-foreground mb-6">Everything you need for a single location.</p>
-                <div className="mb-6 flex items-baseline text-5xl font-extrabold">
-                  $349
-                  <span className="text-lg font-medium text-muted-foreground ml-2">/mo</span>
+              <div className="rounded-2xl border bg-card text-card-foreground p-6 shadow-sm flex flex-col justify-between">
+                <div>
+                  <h3 className="text-xl font-bold mb-1.5">Solo Practice</h3>
+                  <p className="text-sm text-muted-foreground mb-4">Everything you need for a single location.</p>
+                  <div className="mb-4 flex items-baseline text-4xl md:text-5xl font-extrabold">
+                    $349
+                    <span className="text-base font-medium text-muted-foreground ml-2">/mo</span>
+                  </div>
+                  <ul className="space-y-2.5 mb-6 text-sm">
+                    {['Unlimited Patients', 'Digital Intake Forms', 'Native X-Ray Imaging', 'Online Booking Portal'].map((feature) => (
+                      <li key={feature} className="flex items-center gap-2.5">
+                        <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
+                        <span>{feature}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="space-y-4 mb-8 flex-1">
-                  {['Unlimited Patients', 'Digital Intake Forms', 'Native X-Ray Imaging', 'Online Booking Portal'].map((feature) => (
-                    <li key={feature} className="flex items-center gap-3">
-                      <CheckCircle2 className="h-5 w-5 text-primary" />
-                      <span>{feature}</span>
-                    </li>
-                  ))}
-                </ul>
                 <Link to="/register">
-                  <Button variant="outline" className="w-full h-12 text-lg rounded-xl">Start Free Trial</Button>
+                  <Button variant="outline" className="w-full h-11 text-base rounded-xl">Start Free Trial</Button>
                 </Link>
               </div>
 
               {/* Enterprise Plan */}
-              <div className="rounded-3xl border-2 border-primary bg-card text-card-foreground p-8 shadow-xl relative flex flex-col scale-[1.02]">
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-primary text-primary-foreground px-4 py-1 rounded-full text-sm font-bold tracking-wide">
+              <div className="rounded-2xl border-2 border-primary bg-card text-card-foreground p-6 shadow-xl relative flex flex-col justify-between">
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-primary text-primary-foreground px-3 py-0.5 rounded-full text-xs font-bold tracking-wide">
                   MOST POPULAR
                 </div>
-                <h3 className="text-2xl font-bold mb-2">DSO / Enterprise</h3>
-                <p className="text-muted-foreground mb-6">Advanced features for multi-location groups.</p>
-                <div className="mb-6 flex items-baseline text-5xl font-extrabold">
-                  $599
-                  <span className="text-lg font-medium text-muted-foreground ml-2">/mo per location</span>
+                <div>
+                  <h3 className="text-xl font-bold mb-1.5">DSO / Enterprise</h3>
+                  <p className="text-sm text-muted-foreground mb-4">Advanced features for multi-location groups.</p>
+                  <div className="mb-4 flex items-baseline text-4xl md:text-5xl font-extrabold">
+                    $599
+                    <span className="text-base font-medium text-muted-foreground ml-2">/mo per location</span>
+                  </div>
+                  <ul className="space-y-2.5 mb-6 text-sm">
+                    {['Everything in Solo', 'Global Patient Records', 'AI Diagnostic Overlays', 'Automated ERA Posting', 'Centralized Billing Hub'].map((feature) => (
+                      <li key={feature} className="flex items-center gap-2.5">
+                        <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
+                        <span className={feature === 'Everything in Solo' ? 'font-semibold' : ''}>{feature}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="space-y-4 mb-8 flex-1">
-                  {['Everything in Solo', 'Global Patient Records', 'AI Diagnostic Overlays', 'Automated ERA Posting', 'Centralized Billing Hub'].map((feature) => (
-                    <li key={feature} className="flex items-center gap-3">
-                      <CheckCircle2 className="h-5 w-5 text-primary" />
-                      <span className={feature === 'Everything in Solo' ? 'font-semibold' : ''}>{feature}</span>
-                    </li>
-                  ))}
-                </ul>
                 <Link to="/register">
-                  <Button className="w-full h-12 text-lg rounded-xl shadow-lg shadow-primary/25">Contact Sales</Button>
+                  <Button className="w-full h-11 text-base rounded-xl shadow-lg shadow-primary/25">Contact Sales</Button>
                 </Link>
               </div>
             </div>
