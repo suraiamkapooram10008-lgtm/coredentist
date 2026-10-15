@@ -250,26 +250,26 @@ export default function Landing() {
         </section>
 
         {/* ── Solutions Section ── */}
-        <section id="solutions" className="py-24 bg-background scroll-mt-16">
+        <section id="solutions" className="pt-4 pb-12 md:pt-6 md:pb-16 bg-background scroll-mt-16">
           <div className="container mx-auto px-4">
-            <div className="text-center max-w-3xl mx-auto mb-16">
-              <div className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold border-transparent bg-primary/10 text-primary mb-4">
+            <div className="text-center max-w-3xl mx-auto mb-6 md:mb-8">
+              <div className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold border-transparent bg-primary/10 text-primary mb-2">
                 Tailored Solutions
               </div>
-              <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">Purpose-built for every clinical model</h2>
-              <p className="text-lg text-muted-foreground">Whether you operate a boutique private clinic or a multi-location DSO, CoreDent adapts to your operational scale.</p>
+              <h2 className="text-2xl md:text-3xl lg:text-4xl font-bold tracking-tight mb-2">Purpose-built for every clinical model</h2>
+              <p className="text-sm md:text-base text-muted-foreground">Whether you operate a boutique private clinic or a multi-location DSO, CoreDent adapts to your operational scale.</p>
             </div>
 
-            <div className="grid md:grid-cols-3 gap-8">
+            <div className="grid md:grid-cols-3 gap-6 items-stretch">
               {/* Solution 1: Solo Practices */}
-              <div className="rounded-3xl border bg-card p-8 shadow-sm flex flex-col justify-between hover:border-primary/50 transition-colors">
+              <div className="rounded-2xl border bg-card p-6 shadow-sm flex flex-col justify-between hover:border-primary/50 transition-colors">
                 <div>
-                  <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center mb-6">
-                    <Stethoscope className="h-6 w-6 text-primary" />
+                  <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
+                    <Stethoscope className="h-5 w-5 text-primary" />
                   </div>
-                  <h3 className="text-xl font-bold mb-3">Solo & Private Practices</h3>
-                  <p className="text-muted-foreground mb-6">Eliminate expensive on-premise servers and streamline day-to-day operations with an intuitive, all-in-one browser system.</p>
-                  <ul className="space-y-3 mb-6 text-sm">
+                  <h3 className="text-lg font-bold mb-2">Solo & Private Practices</h3>
+                  <p className="text-sm text-muted-foreground mb-4">Eliminate expensive on-premise servers and streamline day-to-day operations with an intuitive, all-in-one browser system.</p>
+                  <ul className="space-y-2.5 mb-6 text-sm">
                     <li className="flex items-center gap-2">
                       <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
                       <span>One-click cloud charting & perio exams</span>
@@ -290,17 +290,17 @@ export default function Landing() {
               </div>
 
               {/* Solution 2: DSOs & Groups */}
-              <div className="rounded-3xl border-2 border-primary/80 bg-gradient-to-b from-primary/5 to-transparent p-8 shadow-md flex flex-col justify-between relative">
+              <div className="rounded-2xl border-2 border-primary/80 bg-gradient-to-b from-primary/5 to-transparent p-6 shadow-md flex flex-col justify-between relative">
                 <div className="absolute top-0 right-6 -translate-y-1/2 bg-primary text-primary-foreground text-xs font-bold px-3 py-0.5 rounded-full uppercase tracking-wider">
                   Enterprise Grade
                 </div>
                 <div>
-                  <div className="h-12 w-12 rounded-xl bg-primary flex items-center justify-center mb-6 shadow-md shadow-primary/30">
-                    <Building2 className="h-6 w-6 text-primary-foreground" />
+                  <div className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center mb-4 shadow-md shadow-primary/30">
+                    <Building2 className="h-5 w-5 text-primary-foreground" />
                   </div>
-                  <h3 className="text-xl font-bold mb-3">DSOs & Multi-Location Groups</h3>
-                  <p className="text-muted-foreground mb-6">Centralized management architecture designed for rapid DSO rollups with enterprise tenancy and global visibility.</p>
-                  <ul className="space-y-3 mb-6 text-sm">
+                  <h3 className="text-lg font-bold mb-2">DSOs & Multi-Location Groups</h3>
+                  <p className="text-sm text-muted-foreground mb-4">Centralized management architecture designed for rapid DSO rollups with enterprise tenancy and global visibility.</p>
+                  <ul className="space-y-2.5 mb-6 text-sm">
                     <li className="flex items-center gap-2">
                       <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
                       <span>Global patient lookup across all locations</span>
@@ -321,14 +321,14 @@ export default function Landing() {
               </div>
 
               {/* Solution 3: Patient Experience */}
-              <div className="rounded-3xl border bg-card p-8 shadow-sm flex flex-col justify-between hover:border-primary/50 transition-colors">
+              <div className="rounded-2xl border bg-card p-6 shadow-sm flex flex-col justify-between hover:border-primary/50 transition-colors">
                 <div>
-                  <div className="h-12 w-12 rounded-xl bg-indigo-500/10 flex items-center justify-center mb-6">
-                    <Users className="h-6 w-6 text-indigo-600" />
+                  <div className="h-10 w-10 rounded-xl bg-indigo-500/10 flex items-center justify-center mb-4">
+                    <Users className="h-5 w-5 text-indigo-600" />
                   </div>
-                  <h3 className="text-xl font-bold mb-3">Modern Patient Experience</h3>
-                  <p className="text-muted-foreground mb-6">Delight tech-savvy patients with frictionless mobile self-service from booking to check-out.</p>
-                  <ul className="space-y-3 mb-6 text-sm">
+                  <h3 className="text-lg font-bold mb-2">Modern Patient Experience</h3>
+                  <p className="text-sm text-muted-foreground mb-4">Delight tech-savvy patients with frictionless mobile self-service from booking to check-out.</p>
+                  <ul className="space-y-2.5 mb-6 text-sm">
                     <li className="flex items-center gap-2">
                       <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
                       <span>24/7 online booking with real-time operatory sync</span>
