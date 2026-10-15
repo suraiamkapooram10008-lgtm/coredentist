@@ -82,6 +82,7 @@ async def list_patients(
             filters = []
             if search_hmac:
                 filters.append(Patient.search_index_email == search_hmac)
+                filters.append(Patient.search_index_phone == search_hmac)
                 filters.append(Patient.search_index_last_name == search_hmac)
             # Also try exact match on non-encrypted fields
             filters.append(Patient.first_name == query)
@@ -139,6 +140,8 @@ async def list_patients(
     else:
         # SQL path: count + paginate as before.
         count_stmt = select(func.count()).select_from(Patient).where(Patient.practice_id == practice_id)
+        if not status_filter:
+            count_stmt = count_stmt.where(Patient.status != PatientStatus.INACTIVE)
         if query and not use_in_memory_fallback:
             query_clean = sanitize_search_query(query)
             if query_clean:
@@ -146,6 +149,7 @@ async def list_patients(
                 count_filters = []
                 if search_hmac:
                     count_filters.append(Patient.search_index_email == search_hmac)
+                    count_filters.append(Patient.search_index_phone == search_hmac)
                     count_filters.append(Patient.search_index_last_name == search_hmac)
                 count_filters.append(Patient.first_name == query_clean)
                 count_filters.append(Patient.last_name == query_clean)
@@ -1201,3 +1205,257 @@ async def delete_tooth_procedure(
     )
     await db.commit()
     return {"status": "success"}
+
+
+# ── Status and Note Management Endpoints ──────────────────────────────
+
+@router.put("/{id}/status")
+async def update_patient_status(
+    id: UUID,
+    payload: dict,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+):
+    """Update patient active/inactive status."""
+    patient = await _get_patient_or_404(db, id, current_user)
+    new_status = payload.get("status")
+    if not new_status:
+        raise HTTPException(status_code=400, detail="Missing status")
+    try:
+        patient.status = PatientStatus(new_status.lower())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {new_status}")
+
+    await log_audit_event(
+        db, current_user, "patient_status_updated", "patient", patient.id, request,
+        {"status": patient.status.value}
+    )
+    await db.commit()
+    return {"status": patient.status.value, "message": "Patient status updated"}
+
+
+@router.post("/{patient_id}/notes")
+async def create_patient_note(
+    patient_id: UUID,
+    payload: dict,
+    request: Request,
+    current_user: User = Depends(require_role(*CLINICAL_ROLES)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+):
+    """Add a note to a patient record."""
+    from app.models.clinical import NoteType
+    await _get_patient_or_404(db, patient_id, current_user)
+    raw_type = (payload.get("category") or payload.get("note_type") or "general").lower()
+    try:
+        note_type = NoteType(raw_type)
+    except ValueError:
+        note_type = NoteType.GENERAL
+
+    note = ClinicalNote(
+        patient_id=patient_id,
+        provider_id=current_user.id,
+        note_type=note_type,
+        content=payload.get("content") or payload.get("text") or "",
+        subjective=payload.get("subjective"),
+        objective=payload.get("objective"),
+        assessment=payload.get("assessment"),
+        plan=payload.get("plan"),
+    )
+    db.add(note)
+    await log_audit_event(
+        db, current_user, "clinical_note_created", "clinical_note", patient_id, request
+    )
+    await db.commit()
+    await db.refresh(note)
+    return {
+        "id": str(note.id),
+        "title": payload.get("title") or "Clinical Note",
+        "content": note.content or "",
+        "category": note.note_type.value if hasattr(note.note_type, 'value') else str(note.note_type),
+        "createdAt": note.created_at.isoformat() if note.created_at else datetime.now(timezone.utc).isoformat(),
+        "providerName": f"{current_user.first_name} {current_user.last_name}",
+    }
+
+
+@router.delete("/{patient_id}/notes/{note_id}")
+async def delete_patient_note(
+    patient_id: UUID,
+    note_id: UUID,
+    request: Request,
+    current_user: User = Depends(require_role(*CLINICAL_ROLES)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+):
+    """Delete a patient clinical note."""
+    await _get_patient_or_404(db, patient_id, current_user)
+    result = await db.execute(
+        select(ClinicalNote).where(
+            ClinicalNote.id == note_id,
+            ClinicalNote.patient_id == patient_id,
+        )
+    )
+    note = result.scalar_one_or_none()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    await db.delete(note)
+    await log_audit_event(
+        db, current_user, "clinical_note_deleted", "clinical_note", note_id, request
+    )
+    await db.commit()
+    return {"message": "Note deleted successfully"}
+
+
+# ── Decision 3: Two-Stage Data Migration (Dry-Run & Commit) ────────────
+
+@router.post("/import/dry-run")
+async def import_patients_dry_run(
+    payload: dict,
+    request: Request,
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stage 1: Validate rows, parse DOB/phone/email, check conflicts, return preview."""
+    rows = payload.get("rows") or []
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="Invalid payload: expected 'rows' list")
+
+    total_rows = len(rows)
+    valid_rows = []
+    errors = []
+    duplicates = []
+
+    for idx, r in enumerate(rows):
+        row_num = idx + 1
+        fn = (r.get("first_name") or r.get("firstName") or "").strip()
+        ln = (r.get("last_name") or r.get("lastName") or "").strip()
+        raw_dob = r.get("date_of_birth") or r.get("dob")
+        email = (r.get("email") or "").strip()
+        phone = (r.get("phone") or "").strip()
+
+        if not fn or not ln:
+            errors.append(f"Row {row_num}: First and last name are required.")
+            continue
+
+        parsed_dob = None
+        if raw_dob:
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y"):
+                try:
+                    parsed_dob = datetime.strptime(str(raw_dob).strip(), fmt).date()
+                    break
+                except ValueError:
+                    pass
+        if not parsed_dob:
+            errors.append(f"Row {row_num}: Missing or invalid date_of_birth (YYYY-MM-DD or MM/DD/YYYY required).")
+            continue
+
+        # Check existing duplicates in practice
+        dup_filters = []
+        if email:
+            em_h = hmac_index(email)
+            if em_h:
+                dup_filters.append(Patient.search_index_email == em_h)
+        if phone:
+            ph_h = hmac_index(phone)
+            if ph_h:
+                dup_filters.append(Patient.search_index_phone == ph_h)
+
+        is_dup = False
+        if dup_filters:
+            dup_stmt = select(Patient.id).where(
+                Patient.practice_id == current_user.practice_id,
+                or_(*dup_filters),
+            ).limit(1)
+            dup_res = await db.execute(dup_stmt)
+            if dup_res.scalar_one_or_none():
+                is_dup = True
+                duplicates.append(f"Row {row_num}: Patient with matching email/phone already exists.")
+
+        if not is_dup:
+            valid_rows.append({
+                "row_num": row_num,
+                "first_name": fn,
+                "last_name": ln,
+                "date_of_birth": parsed_dob.isoformat(),
+                "email": email or None,
+                "phone": phone or None,
+                "gender": (r.get("gender") or "other").lower(),
+            })
+
+    return {
+        "total_rows": total_rows,
+        "valid_count": len(valid_rows),
+        "duplicate_count": len(duplicates),
+        "error_count": len(errors),
+        "errors": errors[:50],
+        "duplicates": duplicates[:50],
+        "preview": valid_rows[:10],
+    }
+
+
+@router.post("/import/commit")
+async def import_patients_commit(
+    payload: dict,
+    request: Request,
+    current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+    _csrf: bool = Depends(verify_csrf),
+    _quota: None = Depends(enforce_plan_quota("patients")),
+):
+    """Stage 2: Transactional commit of validated migration rows."""
+    from app.models.patient import Gender
+    rows = payload.get("rows") or []
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=400, detail="No rows provided for import")
+
+    imported = []
+    for r in rows:
+        fn = (r.get("first_name") or r.get("firstName") or "").strip()
+        ln = (r.get("last_name") or r.get("lastName") or "").strip()
+        raw_dob = r.get("date_of_birth") or r.get("dob")
+        dob = None
+        if raw_dob:
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y"):
+                try:
+                    dob = datetime.strptime(str(raw_dob).strip(), fmt).date()
+                    break
+                except ValueError:
+                    pass
+        if not fn or not ln or not dob:
+            continue
+
+        raw_gender = (r.get("gender") or "other").lower()
+        gender = Gender.OTHER
+        if raw_gender in ("male", "m"):
+            gender = Gender.MALE
+        elif raw_gender in ("female", "f"):
+            gender = Gender.FEMALE
+
+        patient = Patient(
+            practice_id=current_user.practice_id,
+            first_name=fn,
+            last_name=ln,
+            date_of_birth=dob,
+            gender=gender,
+            email=r.get("email"),
+            phone=r.get("phone"),
+            status=PatientStatus.ACTIVE,
+        )
+        update_patient_search_indexes(patient, "email", "phone", "last_name")
+        db.add(patient)
+        imported.append(patient)
+
+    await db.commit()
+    await log_audit_event(
+        db, current_user, "patients_bulk_imported", "practice", current_user.practice_id, request,
+        {"count": len(imported)}
+    )
+
+    return {
+        "success": True,
+        "imported_count": len(imported),
+        "imported_ids": [str(p.id) for p in imported],
+        "message": f"Successfully imported {len(imported)} patient records",
+    }

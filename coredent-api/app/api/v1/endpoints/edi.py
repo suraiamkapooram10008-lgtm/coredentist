@@ -432,7 +432,7 @@ async def submit_claim(
             "payerId": insurance.payer_id,
             "providerNpi": current_user.npi,
             "providerName": f"{current_user.first_name} {current_user.last_name}",
-            "serviceFacilityNpi": current_user.practice.npi if current_user.practice else "",
+            "serviceFacilityNpi": current_user.practice.npi if (getattr(current_user, "practice", None) and getattr(current_user.practice, "npi", None)) else "",
             "procedures": procedures,
             "totalAmount": claim_data.total_amount,
             "diagnosisCodes": claim_data.diagnosis_codes or [],

@@ -193,6 +193,7 @@ class StatusBreakdown(BaseModel):
 class BillingSummary(BaseModel):
     """Schema for billing summary"""
     total_invoices: int
+    pending_invoices: int = 0
     total_revenue: float
     total_tax: float
     total_payments: int

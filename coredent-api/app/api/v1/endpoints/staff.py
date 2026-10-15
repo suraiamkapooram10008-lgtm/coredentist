@@ -254,6 +254,7 @@ async def update_staff(
     # Email changes must not collide with another account, and the new
     # address is unverified until the user re-confirms it.
     new_email = staff_data.get("email")
+    raw_email_verification_token = None
     if new_email and new_email != staff.email:
         dup = await db.execute(select(User).where(User.email == new_email))
         if dup.scalar_one_or_none():
@@ -261,8 +262,16 @@ async def update_staff(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A user with this email already exists",
             )
+        from app.core.security import generate_password_reset_token, hash_token as _hash_token
+        from app.core.config_simple import EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS
+
+        raw_email_verification_token = generate_password_reset_token()
         staff.is_email_verified = False
-        staff.email_verification_token = None
+        staff.email_verification_token = _hash_token(raw_email_verification_token)
+        staff.email_verification_token_expires_at = (
+            datetime.now(timezone.utc)
+            + timedelta(hours=EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS)
+        )
 
     sessions_terminated = False
     for field, value in staff_data.items():
@@ -299,6 +308,28 @@ async def update_staff(
     )
     await db.commit()
     await db.refresh(staff)
+
+    if raw_email_verification_token and staff.email:
+        try:
+            import html as _html
+            from app.core.email_tasks import enqueue_email
+            from app.core.email import log_email_failure
+
+            verify_link = f"{settings.FRONTEND_URL}/verify-email#token={raw_email_verification_token}"
+            safe_name = _html.escape(staff.first_name or "")
+            safe_link = _html.escape(verify_link, quote=True)
+            enqueue_email(
+                to=staff.email,
+                subject="CoreDent - Verify Your Updated Email Address",
+                html_content=(
+                    f"<p>Hi {safe_name},</p>"
+                    f"<p>Your CoreDent email address was updated. Please verify it: "
+                    f'<a href="{safe_link}">Verify Email</a></p>'
+                ),
+                text_content=f"Verify your updated CoreDent email address: {verify_link}",
+            )
+        except Exception as exc:
+            log_email_failure(exc, "staff_email_change_verification", staff.email)
 
     return staff
 

@@ -41,7 +41,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy import delete, select
@@ -55,22 +55,34 @@ logger = logging.getLogger(__name__)
 _fallback: deque[str] = deque(maxlen=10_000)
 
 _REDIS_PREFIX = "revoked:"
+_redis_client: Any = None
+_redis_client_url: Optional[str] = None
 
 
 def _redis():
-    """Return a Redis client or None."""
-    if not settings.REDIS_URL:
+    """Return a cached Redis client for the configured URL or None."""
+    global _redis_client, _redis_client_url
+    url = getattr(settings, "REDIS_URL", None) or ""
+    if not url:
+        _redis_client = None
+        _redis_client_url = None
         return None
+    if _redis_client is not None and _redis_client_url == url:
+        return _redis_client
     try:
         import redis as redis_lib
 
-        return redis_lib.from_url(
-            settings.REDIS_URL,
+        _redis_client = redis_lib.from_url(
+            url,
             decode_responses=True,
             socket_connect_timeout=2,
             socket_timeout=2,
         )
+        _redis_client_url = url
+        return _redis_client
     except Exception:
+        _redis_client = None
+        _redis_client_url = None
         return None
 
 
@@ -191,20 +203,17 @@ def is_revoked_cached(jti: str) -> Optional[bool]:
 async def is_revoked(db, jti: str) -> bool:
     """Return True if the token identified by *jti* has been revoked.
 
-    Redis answers the common case in one round trip. When Redis cannot answer,
-    we query ``revoked_tokens`` rather than guessing — that is what turns this
-    from a fail-open check into a correct one.
-
-    If *both* stores are unavailable the request is rejected: at that point the
-    database itself is down, so the request was going to fail anyway, and
-    honouring a possibly-revoked token is the worse of the two outcomes.
+    A positive hit in the local write-through deque or Redis short-circuits
+    immediately. On a cache miss (`False` or `None`), we always verify against
+    the durable ``revoked_tokens`` table so a missed Redis write, eviction, or
+    Redis restart never allows a revoked token to authenticate.
     """
     if not jti:
         return False
 
     cached = is_revoked_cached(jti)
-    if cached is not None:
-        return cached
+    if cached is True:
+        return True
 
     from app.models.revoked_token import RevokedToken
 
@@ -219,15 +228,48 @@ async def is_revoked(db, jti: str) -> bool:
         ).scalar_one_or_none()
     except Exception as exc:
         logger.critical(
-            "Both Redis and the database are unavailable for the revocation "
-            "check on jti=%s; failing closed: %s",
+            "Database unavailable for the revocation check on jti=%s; "
+            "failing closed: %s",
             jti,
             exc,
         )
         return True
 
     if row is not None:
-        # Warm the caches so subsequent requests avoid the database.
+        # Warm the local cache so subsequent requests avoid the database.
+        _fallback.append(jti)
+        return True
+    return False
+
+
+def is_revoked_sync(db, jti: str) -> bool:
+    """Synchronous counterpart of :func:`is_revoked` for sync ``Session`` routes."""
+    if not jti:
+        return False
+
+    cached = is_revoked_cached(jti)
+    if cached is True:
+        return True
+
+    from app.models.revoked_token import RevokedToken
+
+    try:
+        row = db.execute(
+            select(RevokedToken.jti).where(
+                RevokedToken.jti == jti,
+                RevokedToken.expires_at > datetime.now(timezone.utc),
+            )
+        ).scalar_one_or_none()
+    except Exception as exc:
+        logger.critical(
+            "Database unavailable for sync revocation check on jti=%s; "
+            "failing closed: %s",
+            jti,
+            exc,
+        )
+        return True
+
+    if row is not None:
         _fallback.append(jti)
         return True
     return False

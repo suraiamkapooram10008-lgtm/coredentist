@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Same roles that may post manual payments in billing.py.
-_PAYMENT_ROLES = (UserRole.OWNER, UserRole.ADMIN, UserRole.FRONT_DESK)
+_PAYMENT_ROLES = (UserRole.OWNER, UserRole.ADMIN, UserRole.FRONT_DESK, UserRole.ACCOUNTANT)
 
 _CENT = Decimal("0.01")
 
@@ -288,6 +288,8 @@ async def razorpay_webhook(
     payment.refunded_amount = new_refunded
     if new_refunded >= total:
         payment.status = PaymentStatus.REFUNDED
+    else:
+        payment.status = PaymentStatus.PARTIALLY_REFUNDED
 
     invoice = (
         await db.execute(select(Invoice).where(Invoice.id == payment.invoice_id))
@@ -309,3 +311,128 @@ async def razorpay_webhook(
     await db.commit()
     logger.info("Razorpay refund recorded for payment %s: %s", payment.id, refund_amount)
     return JSONResponse(status_code=200, content={"ok": True})
+
+
+@router.get("/transactions")
+async def list_payment_transactions(
+    request: Request,
+    search: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    current_user: User = Depends(require_role(*_PAYMENT_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """List tenant-scoped payment ledger rows for the Payments dashboard."""
+    from sqlalchemy.orm import joinedload
+    from app.models.patient import Patient
+
+    safe_limit = max(1, min(limit, 200))
+    safe_offset = max(0, offset)
+    stmt = (
+        select(Payment)
+        .join(Invoice, Invoice.id == Payment.invoice_id)
+        .outerjoin(Patient, Patient.id == Payment.patient_id)
+        .where(Invoice.practice_id == current_user.practice_id)
+        .options(joinedload(Payment.patient), joinedload(Payment.invoice))
+        .order_by(Payment.created_at.desc())
+        .offset(safe_offset)
+        .limit(safe_limit)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    q = (search or "").strip().lower()
+    transactions = []
+    for p in rows:
+        patient_name = (
+            f"{p.patient.first_name or ''} {p.patient.last_name or ''}".strip()
+            if p.patient is not None
+            else "Patient"
+        )
+        method_val = getattr(p.payment_method, "value", str(p.payment_method or "card"))
+        status_val = getattr(p.status, "value", str(p.status or "completed"))
+        if q:
+            haystack = f"{patient_name} {p.transaction_id or ''} {method_val}".lower()
+            if q not in haystack:
+                continue
+        transactions.append(
+            {
+                "id": str(p.id),
+                "patient_id": str(p.patient_id) if p.patient_id else None,
+                "patient_name": patient_name,
+                "invoice_id": str(p.invoice_id) if p.invoice_id else None,
+                "amount": float(Decimal(str(p.amount or 0)) - Decimal(str(p.refunded_amount or 0))),
+                "type": "Refund" if status_val == "refunded" else "Payment",
+                "payment_method": method_val,
+                "status": status_val,
+                "date": p.created_at.isoformat() if p.created_at else None,
+                "transaction_id": p.transaction_id,
+            }
+        )
+    await log_audit_event(
+        db, current_user, "list_payment_transactions", "payment", None, request
+    )
+    await db.commit()
+    return {"transactions": transactions, "count": len(transactions)}
+
+
+@router.get("/plans")
+async def list_recurring_payment_plans(
+    request: Request,
+    current_user: User = Depends(require_role(*_PAYMENT_ROLES)),
+    db: AsyncSession = Depends(get_db),
+):
+    """List tenant-scoped installment payment plans for the Payments dashboard."""
+    from sqlalchemy.orm import joinedload, selectinload
+    from app.models.billing import PaymentPlan
+
+    stmt = (
+        select(PaymentPlan)
+        .where(PaymentPlan.practice_id == current_user.practice_id)
+        .options(joinedload(PaymentPlan.patient), selectinload(PaymentPlan.installments))
+        .order_by(PaymentPlan.created_at.desc())
+        .limit(100)
+    )
+    rows = (await db.execute(stmt)).scalars().unique().all()
+    plans = []
+    for plan in rows:
+        patient_name = (
+            f"{plan.patient.first_name or ''} {plan.patient.last_name or ''}".strip()
+            if getattr(plan, "patient", None) is not None
+            else "Patient"
+        )
+        unpaid_installments = sorted(
+            [i for i in (plan.installments or []) if getattr(i, "status", "") != "paid"],
+            key=lambda i: i.due_date,
+        )
+        next_inst = unpaid_installments[0] if unpaid_installments else None
+        monthly_amount = (
+            float(next_inst.amount)
+            if next_inst is not None
+            else (
+                float(plan.installments[0].amount)
+                if plan.installments
+                else float(plan.total_amount or 0)
+            )
+        )
+        status_val = getattr(plan.status, "value", str(plan.status or "active"))
+        plans.append(
+            {
+                "id": str(plan.id),
+                "patient_id": str(plan.patient_id),
+                "patient_name": patient_name,
+                "name": plan.notes or "Installment Plan",
+                "monthly_amount": monthly_amount,
+                "total_amount": float(plan.total_amount or 0),
+                "frequency": "Monthly",
+                "next_payment_date": next_inst.due_date.isoformat() if next_inst and next_inst.due_date else (plan.start_date.isoformat() if plan.start_date else ""),
+                "status": status_val,
+            }
+        )
+    return {"plans": plans, "count": len(plans)}
+
+
+@router.get("/terminals")
+async def list_payment_terminals(
+    current_user: User = Depends(require_role(*_PAYMENT_ROLES)),
+):
+    """Return configured POS terminals for the practice (empty until hardware terminal pairing is configured)."""
+    return {"terminals": [], "count": 0}

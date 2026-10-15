@@ -282,7 +282,7 @@ class StripePaymentProcessor:
             )
             if not payment:
                 raise ValueError("Payment not found")
-            if payment.status != PaymentStatus.COMPLETED:
+            if payment.status not in (PaymentStatus.COMPLETED, PaymentStatus.PARTIALLY_REFUNDED):
                 raise ValueError(f"Payment is not refundable (status: {payment.status})")
 
             already_refunded = Decimal(str(payment.refunded_amount or 0))
@@ -302,6 +302,8 @@ class StripePaymentProcessor:
             payment.refunded_amount = already_refunded + refund_amount
             if refund_amount >= refundable:
                 payment.status = PaymentStatus.REFUNDED
+            else:
+                payment.status = PaymentStatus.PARTIALLY_REFUNDED
             await db.flush()
             # Re-open the invoice balance when the refund un-settles it.
             await PaymentService.refresh_invoice_status(
@@ -524,7 +526,7 @@ class RazorpayPaymentProcessor:
                 raise ValueError("Payment not found")
 
             # H5 FIX: double-refund and partial-refund bookkeeping.
-            if payment.status != PaymentStatus.COMPLETED:
+            if payment.status not in (PaymentStatus.COMPLETED, PaymentStatus.PARTIALLY_REFUNDED):
                 raise ValueError(f"Payment is not refundable (status: {payment.status})")
 
             already_refunded = Decimal(str(payment.refunded_amount or 0))
@@ -545,6 +547,8 @@ class RazorpayPaymentProcessor:
             payment.refunded_amount = already_refunded + refund_amount
             if refund_amount >= refundable:
                 payment.status = PaymentStatus.REFUNDED
+            else:
+                payment.status = PaymentStatus.PARTIALLY_REFUNDED
             await db.flush()
             await PaymentService.refresh_invoice_status(
                 db, payment.invoice_id, practice_id

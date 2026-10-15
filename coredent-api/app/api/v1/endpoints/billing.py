@@ -1106,11 +1106,21 @@ async def get_billing_summary(
     status_result = await db.execute(status_query)
     status_breakdown = status_result.all()
 
+    pending_count_res = await db.execute(
+        select(func.count(Invoice.id)).where(
+            Invoice.practice_id == current_user.practice_id,
+            Invoice.status.in_([InvoiceStatus.PENDING, InvoiceStatus.DRAFT, InvoiceStatus.SENT]),
+            *date_filter,
+        )
+    )
+    pending_invoices = pending_count_res.scalar() or 0
+
     await log_audit_event(db, current_user, "view_billing_summary", "practice", current_user.practice_id, request)
     await db.commit()
 
     return BillingSummary(
         total_invoices=invoice_stats.total_invoices or 0,
+        pending_invoices=pending_invoices,
         total_revenue=_money(invoice_stats.total_revenue),
         total_tax=_money(invoice_stats.total_tax),
         total_payments=payment_stats.total_payments or 0,
@@ -1293,6 +1303,11 @@ async def create_payment_plan(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invoice does not match patient",
             )
+        if plan_data.total_amount > invoice.total:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Payment plan amount cannot exceed invoice total",
+            )
 
     plan = PaymentPlan(
         practice_id=current_user.practice_id,
@@ -1306,6 +1321,18 @@ async def create_payment_plan(
         notes=plan_data.notes,
     )
     db.add(plan)
+    if plan_data.initial_deposit > Decimal("0") and plan_data.invoice_id:
+        deposit_payment = Payment(
+            practice_id=current_user.practice_id,
+            patient_id=patient.id,
+            invoice_id=plan_data.invoice_id,
+            amount=plan_data.initial_deposit,
+            payment_method=PaymentMethod.OTHER,
+            status=PaymentStatus.COMPLETED,
+            payment_date=datetime.now(timezone.utc),
+            notes=f"Initial deposit for payment plan {plan.id}",
+        )
+        db.add(deposit_payment)
     await db.flush()
 
     num_months = plan_data.months
@@ -1614,7 +1641,33 @@ async def refund_payment(
             detail="Refund amount must be greater than zero",
         )
 
-    # Lock the payment row first (tenant-scoped).
+    # Lookup payment without FOR UPDATE to determine invoice_id first.
+    lookup_stmt = select(Payment.invoice_id).where(
+        Payment.id == payment_id,
+        Payment.practice_id == current_user.practice_id,
+    )
+    inv_lookup_res = await db.execute(lookup_stmt)
+    target_invoice_id = inv_lookup_res.scalar_one_or_none()
+    if not target_invoice_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
+
+    # Lock the INVOICE row FIRST (consistent with POST /payments/ to prevent deadlock).
+    invoice_stmt = (
+        select(Invoice)
+        .where(
+            Invoice.id == target_invoice_id,
+            Invoice.practice_id == current_user.practice_id,
+        )
+        .options(selectinload(Invoice.payments))
+    )
+    if row_locks_supported():
+        invoice_stmt = invoice_stmt.with_for_update()
+    invoice_result = await db.execute(invoice_stmt)
+    invoice = invoice_result.scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+    # Lock the PAYMENT row SECOND.
     payment_stmt = (
         select(Payment)
         .where(
@@ -1644,22 +1697,6 @@ async def refund_payment(
             detail=f"Refund exceeds refundable balance ({refundable})",
         )
 
-    # Lock the invoice row (tenant-scoped) so concurrent ledger writes serialize.
-    invoice_stmt = (
-        select(Invoice)
-        .where(
-            Invoice.id == payment.invoice_id,
-            Invoice.practice_id == current_user.practice_id,
-        )
-        .options(selectinload(Invoice.payments))
-    )
-    if row_locks_supported():
-        invoice_stmt = invoice_stmt.with_for_update()
-    invoice_result = await db.execute(invoice_stmt)
-    invoice = invoice_result.scalar_one_or_none()
-    if not invoice:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
-
     # Apply the refund to the payment ledger row.
     payment.refunded_amount = already_refunded + refund_amount
     if Decimal(str(payment.refunded_amount)) >= Decimal(str(payment.amount)):
@@ -1680,7 +1717,11 @@ async def refund_payment(
     elif paid_total > 0:
         invoice.status = InvoiceStatus.PARTIALLY_PAID
     else:
-        invoice.status = InvoiceStatus.PENDING
+        today = business_date(await get_practice_timezone(db, current_user.practice_id))
+        if invoice.due_date and invoice.due_date < today:
+            invoice.status = InvoiceStatus.OVERDUE
+        else:
+            invoice.status = InvoiceStatus.PENDING
 
     await log_audit_event(
         db,

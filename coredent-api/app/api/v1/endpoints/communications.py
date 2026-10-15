@@ -542,6 +542,15 @@ def update_reminder(
         raise HTTPException(status_code=404, detail="Reminder schedule not found")
 
     update_data = reminder_update.model_dump(exclude_unset=True)
+    if "template_id" in update_data and update_data["template_id"] is not None:
+        template = db.query(MessageTemplateModel).filter(
+            and_(
+                MessageTemplateModel.id == update_data["template_id"],
+                MessageTemplateModel.practice_id == current_practice,
+            )
+        ).first()
+        if not template:
+            raise HTTPException(status_code=404, detail="Template not found")
     if 'patient_types' in update_data and update_data['patient_types'] is not None:
         update_data['patient_types'] = _json_text(update_data['patient_types'])
 
@@ -725,6 +734,16 @@ def update_conversation(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     update_data = conversation_update.model_dump(exclude_unset=True)
+    if "assigned_user_id" in update_data and update_data["assigned_user_id"] is not None:
+        assigned_user = db.query(User).filter(
+            and_(
+                User.id == update_data["assigned_user_id"],
+                User.practice_id == current_practice,
+                User.is_active.is_(True),
+            )
+        ).first()
+        if not assigned_user:
+            raise HTTPException(status_code=404, detail="Assigned user not found")
     for field, value in update_data.items():
         setattr(db_conversation, field, value)
 
@@ -815,6 +834,24 @@ def send_conversation_message(
                 detail="SMS delivery was not accepted",
             )
         external_id = delivery.get("external_id")
+    elif conversation.channel == MessageType.EMAIL:
+        import html as _html
+        from app.core.outbox import enqueue_email
+
+        patient = db.get(Patient, conversation.patient_id)
+        if not patient or not patient.email:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Patient email address is unavailable",
+            )
+        enqueue_email(
+            to=patient.email,
+            subject=getattr(conversation, "subject", None) or "Message from your dental practice",
+            html_content=f"<p>{_html.escape(message.content)}</p>",
+            text_content=message.content,
+            practice_id=current_practice,
+            patient_id=patient.id,
+        )
 
     message_data = message.model_dump(exclude={"conversation_id", "sender_id", "sender_type", "attachments"})
     message_data["attachments"] = _json_text(message.attachments)

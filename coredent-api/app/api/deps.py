@@ -165,16 +165,12 @@ async def get_current_user(
     # process-local deque. See app.core.token_blacklist.
     jti = payload.get("jti")
     if jti:
-        from app.core.token_blacklist import is_revoked, is_revoked_cached
+        from app.core.token_blacklist import is_revoked, is_revoked_sync
 
         if isinstance(db, AsyncSession):
             revoked = await is_revoked(db, jti)
         else:
-            # Sync sessions (a few legacy call sites) cannot await the durable
-            # lookup. Use the cache and treat an unavailable cache as revoked:
-            # a sync path must not be the one place revocation fails open.
-            cached = is_revoked_cached(jti)
-            revoked = True if cached is None else cached
+            revoked = is_revoked_sync(db, jti)
         if revoked:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
     user_id = payload.get("sub")
@@ -203,6 +199,7 @@ async def get_current_user(
         if not row:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
         user, practice = row
+        user.practice = practice
         if not user.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is inactive")
         if not user.practice_id:

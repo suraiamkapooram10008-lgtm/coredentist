@@ -608,6 +608,7 @@ async def update_lab_case(
         select(LabCase).where(
             LabCase.id == case_id,
             LabCase.practice_id == current_user.practice_id,
+            LabCase.is_deleted.is_(False),
         )
     )
     lab_case = result.scalar_one_or_none()
@@ -680,6 +681,7 @@ async def delete_lab_case(
         select(LabCase).where(
             LabCase.id == case_id,
             LabCase.practice_id == current_user.practice_id,
+            LabCase.is_deleted.is_(False),
         )
     )
     lab_case = result.scalar_one_or_none()
@@ -874,6 +876,7 @@ async def create_lab_invoice(
                 # workflow could otherwise be billed here.
                 LabCase.lab_id == invoice_data.lab_id,
                 LabCase.practice_id == current_user.practice_id,
+                LabCase.is_deleted.is_(False),
             )
         )
         if not case_res.scalar_one_or_none():
@@ -886,6 +889,11 @@ async def create_lab_invoice(
     tax = invoice_data.tax.quantize(cent, rounding=_MONEY_ROUNDING)
     shipping = invoice_data.shipping.quantize(cent, rounding=_MONEY_ROUNDING)
     discount = invoice_data.discount.quantize(cent, rounding=_MONEY_ROUNDING)
+    if discount > (subtotal + tax + shipping):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Discount cannot exceed invoice subtotal + tax + shipping",
+        )
     total = (subtotal + tax + shipping - discount).quantize(cent, rounding=_MONEY_ROUNDING)
 
     invoice = LabInvoice(
@@ -1080,6 +1088,7 @@ async def get_lab_summary(
 
     query = select(LabCase).where(
         LabCase.practice_id == current_user.practice_id,
+        LabCase.is_deleted.is_(False),
         case_instant >= instant_range.start_utc,
         case_instant < instant_range.end_utc,
     )

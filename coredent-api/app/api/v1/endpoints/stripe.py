@@ -110,12 +110,22 @@ async def get_subscription(
     subscription_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.OWNER, UserRole.ADMIN)),
-    _csrf: bool = Depends(verify_csrf)
 ):
     """
     Get subscription details from Stripe
     """
     try:
+        local_result = await db.execute(
+            select(Subscription.practice_id).where(
+                Subscription.stripe_subscription_id == subscription_id,
+            )
+        )
+        local_practice_id = local_result.scalar_one_or_none()
+        if local_practice_id is not None and local_practice_id != current_user.practice_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to view this subscription",
+            )
         subscription = await asyncio.to_thread(
             stripe.Subscription.retrieve,
             subscription_id,
@@ -123,15 +133,8 @@ async def get_subscription(
         )
 
         metadata_practice = (subscription.metadata or {}).get("practice_id")
-        local_result = await db.execute(
-            select(Subscription.id).where(
-                Subscription.stripe_subscription_id == subscription_id,
-                Subscription.practice_id == current_user.practice_id,
-            )
-        )
         if (
-            local_result.scalar_one_or_none() is None
-            and str(metadata_practice) != str(current_user.practice_id)
+            local_practice_id is None and str(metadata_practice) != str(current_user.practice_id)
         ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -672,6 +675,8 @@ async def handle_charge_refunded(db: AsyncSession, charge: dict):
             ledger_payment.refunded_amount = refunded
             if refunded >= Decimal(str(ledger_payment.amount)):
                 ledger_payment.status = InvoicePaymentStatus.REFUNDED
+            else:
+                ledger_payment.status = InvoicePaymentStatus.PARTIALLY_REFUNDED
             if ledger_payment.invoice_id is not None:
                 from app.services.payment_service import PaymentService
 
@@ -795,3 +800,4 @@ async def handle_invoice_paid(db: AsyncSession, invoice: dict):
     except (ValueError, TypeError, KeyError, AttributeError, SQLAlchemyError) as e:
         logger.error(f"Error handling invoice paid: {e}")
         await db.rollback()
+        raise

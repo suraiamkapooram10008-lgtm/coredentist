@@ -51,7 +51,7 @@ from app.models.booking import (
 from app.models.patient import Patient, PatientStatus
 from app.models.practice import Practice
 from app.models.appointment import Appointment, AppointmentStatus, AppointmentType, AppointmentTypeEnum
-from app.services.tenant_refs import require_appointment_type, require_provider
+from app.services.tenant_refs import require_appointment_type, require_practice_scoped, require_provider
 from app.schemas.appointment import _coerce_appointment_type
 from app.schemas.booking import (
     AppointmentTypePublicInfo,
@@ -975,7 +975,7 @@ async def create_online_booking(
                     OnlineBooking.status == BookingStatus.PENDING,
                     OnlineBooking.submitted_at >= cooldown_window
                 )
-            )
+            ).limit(1)
         )
         if duplicate_check.scalar_one_or_none():
             raise HTTPException(
@@ -1245,7 +1245,7 @@ async def create_online_booking(
                     patient_name=patient_full_name,
                     appointment_date=booking.requested_date.strftime('%B %d, %Y'),
                     appointment_time=booking.requested_time.strftime('%I:%M %p'),
-                    procedure=appointment_type.name,
+                    procedure=appointment_type.name if appointment_type else "Dental Appointment",
                 )
             except Exception as exc:
                 log_email_failure(exc, "booking_request_confirmation", booking.email)
@@ -1701,7 +1701,16 @@ async def confirm_booking(
                 # via search (the raw PHI columns are encrypted at rest and
                 # cannot be queried directly).
                 from app.core.search_index import hmac_index as _hmac
+                from app.services.plan_quota import check_plan_quota
 
+                await check_plan_quota(db, booking.practice_id, "patients")
+                insurance_info = None
+                if getattr(booking, "has_insurance", False):
+                    insurance_info = {
+                        "carrier_name": getattr(booking, "insurance_carrier_name", None),
+                        "member_id": getattr(booking, "insurance_member_id", None),
+                        "group_number": getattr(booking, "insurance_group_number", None),
+                    }
                 patient = Patient(
                     practice_id=booking.practice_id,
                     first_name=booking.first_name,
@@ -1710,6 +1719,8 @@ async def confirm_booking(
                     phone=booking.phone,
                     date_of_birth=booking.date_of_birth,
                     status="active",
+                    medical_history=getattr(booking, "medical_history", None) or {},
+                    insurance_info=insurance_info,
                     search_index_email=_hmac(booking.email or ""),
                     search_index_phone=_hmac(booking.phone or ""),
                     search_index_last_name=_hmac(booking.last_name or ""),
@@ -2161,6 +2172,35 @@ async def add_to_waitlist(
     try:
         page = await _resolve_public_page(db, practice_slug, page_slug)
 
+        if waitlist_data.appointment_type_id:
+            await require_appointment_type(
+                db, waitlist_data.appointment_type_id, page.practice_id
+            )
+            if (
+                page.allowed_appointment_types
+                and str(waitlist_data.appointment_type_id) not in page.allowed_appointment_types
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Requested appointment type is not offered on this booking page",
+                )
+        for pref_provider_id in waitlist_data.preferred_providers or []:
+            await require_provider(
+                db,
+                pref_provider_id,
+                page.practice_id,
+                field="Preferred provider",
+                roles=BOOKABLE_PROVIDER_ROLES,
+            )
+            if (
+                page.allowed_providers
+                and str(pref_provider_id) not in page.allowed_providers
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Requested provider is not available on this booking page",
+                )
+
         # Create waitlist entry
         entry = WaitlistEntry(
             booking_page_id=page.id,
@@ -2252,6 +2292,14 @@ async def update_waitlist_entry(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Waitlist entry not found")
 
         update_data = entry_data.model_dump(exclude_unset=True)
+        if update_data.get("booking_id") is not None:
+            await require_practice_scoped(
+                db,
+                OnlineBooking,
+                update_data["booking_id"],
+                current_user.practice_id,
+                field="Booking",
+            )
         for field, value in update_data.items():
             setattr(entry, field, value)
 

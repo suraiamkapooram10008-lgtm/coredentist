@@ -21,6 +21,7 @@ interface DentalHistoryCardProps {
 export const DentalHistoryCard = React.memo(function DentalHistoryCard({
   dentalHistory,
 }: DentalHistoryCardProps) {
+  const history = dentalHistory || ({} as PatientRecord['dentalHistory']);
   return (
     <Card>
       <CardHeader>
@@ -34,37 +35,37 @@ export const DentalHistoryCard = React.memo(function DentalHistoryCard({
           <div>
             <span className="text-muted-foreground">Last Cleaning:</span>
             <span className="ml-2">
-              {dentalHistory.lastCleaning
-                ? format(parseISO(dentalHistory.lastCleaning), 'MMM d, yyyy')
+              {history.lastCleaning
+                ? format(parseISO(history.lastCleaning), 'MMM d, yyyy')
                 : 'Unknown'}
             </span>
           </div>
           <div>
             <span className="text-muted-foreground">Last X-Rays:</span>
             <span className="ml-2">
-              {dentalHistory.lastXrays
-                ? format(parseISO(dentalHistory.lastXrays), 'MMM d, yyyy')
+              {history.lastXrays
+                ? format(parseISO(history.lastXrays), 'MMM d, yyyy')
                 : 'Unknown'}
             </span>
           </div>
         </div>
         <Separator />
         <div className="flex flex-wrap gap-2">
-          {dentalHistory.gumDiseaseHistory && (
+          {history.gumDiseaseHistory && (
             <Badge variant="outline">Gum Disease History</Badge>
           )}
-          {dentalHistory.toothSensitivity && (
+          {history.toothSensitivity && (
             <Badge variant="outline">Tooth Sensitivity</Badge>
           )}
-          {dentalHistory.grindsClenches && (
+          {history.grindsClenches && (
             <Badge variant="outline">Grinds/Clenches</Badge>
           )}
-          {dentalHistory.hasImplants && (
+          {history.hasImplants && (
             <Badge variant="outline">Has Implants</Badge>
           )}
-          {dentalHistory.missingTeeth.length > 0 && (
+          {history.missingTeeth && history.missingTeeth.length > 0 && (
             <Badge variant="outline">
-              Missing Teeth: {dentalHistory.missingTeeth.join(', ')}
+              Missing Teeth: {history.missingTeeth.join(', ')}
             </Badge>
           )}
         </div>

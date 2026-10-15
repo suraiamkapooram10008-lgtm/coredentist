@@ -19,6 +19,8 @@ def fresh_blacklist(monkeypatch):
 
     importlib.reload(token_blacklist)
     token_blacklist._fallback = deque(maxlen=10_000)
+    token_blacklist._redis_client = None
+    token_blacklist._redis_client_url = None
     return token_blacklist
 
 
@@ -75,6 +77,40 @@ def test_is_revoked_queries_durable_store_when_cache_unavailable(fresh_blacklist
 
     assert asyncio.run(fresh_blacklist.is_revoked(db, "unknown-jti")) is False
     db.execute.assert_awaited_once()
+
+
+def test_is_revoked_queries_durable_store_on_redis_cache_miss(fresh_blacklist):
+    """Regression for C-1: a Redis cache miss (False) must still consult RevokedToken."""
+    mock_redis = MagicMock()
+    mock_redis.exists.return_value = 0
+    db = MagicMock()
+    db.execute = AsyncMock(
+        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value="evicted-jti"))
+    )
+
+    import asyncio
+
+    with patch.object(fresh_blacklist, "_redis", return_value=mock_redis):
+        assert asyncio.run(fresh_blacklist.is_revoked(db, "evicted-jti")) is True
+    db.execute.assert_awaited_once()
+    assert "evicted-jti" in fresh_blacklist._fallback
+
+
+def test_is_revoked_sync_queries_durable_store(fresh_blacklist):
+    """Regression for C-1: sync Session endpoints consult RevokedToken instead of failing closed when Redis is unset."""
+    db = MagicMock()
+    db.execute = MagicMock(
+        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+    )
+    assert fresh_blacklist.is_revoked_sync(db, "sync-valid-jti") is False
+    db.execute.assert_called_once()
+
+    db_revoked = MagicMock()
+    db_revoked.execute = MagicMock(
+        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value="sync-revoked-jti"))
+    )
+    assert fresh_blacklist.is_revoked_sync(db_revoked, "sync-revoked-jti") is True
+    assert "sync-revoked-jti" in fresh_blacklist._fallback
 
 
 

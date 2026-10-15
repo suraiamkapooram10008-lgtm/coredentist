@@ -588,6 +588,7 @@ async def create_referral(
     db.add(referral)
     await db.commit()
     await db.refresh(referral)
+    referral.patient = patient
 
     return _referral_to_dict(referral)
 
@@ -663,6 +664,9 @@ async def update_referral(
 
     await db.commit()
     await db.refresh(referral)
+    if referral.patient_id:
+        p_res = await db.execute(select(Patient).where(Patient.id == referral.patient_id))
+        referral.patient = p_res.scalar_one_or_none()
 
     return _referral_to_dict(referral)
 

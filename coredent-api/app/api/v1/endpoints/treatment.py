@@ -597,6 +597,13 @@ async def update_treatment_procedure(
         procedure, plan = row
 
         update_data = procedure_data.dict(exclude_unset=True)
+        if update_data.get("phase_id") is not None:
+            phase = await TreatmentPlanningService.get_treatment_phase(db, update_data["phase_id"])
+            if not phase or phase.treatment_plan_id != procedure.treatment_plan_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Treatment phase not found",
+                )
         # M-11 FIX: same unvalidated references on the update path.
         await _validate_procedure_references(
             db,

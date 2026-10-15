@@ -18,6 +18,7 @@ interface AllergiesCardProps {
 export const AllergiesCard = React.memo(function AllergiesCard({
   allergies,
 }: AllergiesCardProps) {
+  const safeAllergies = Array.isArray(allergies) ? allergies : (allergies ? [String(allergies)] : []);
   return (
     <Card>
       <CardHeader>
@@ -27,9 +28,9 @@ export const AllergiesCard = React.memo(function AllergiesCard({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {allergies.length > 0 ? (
+        {safeAllergies.length > 0 ? (
           <div className="flex flex-wrap gap-2">
-            {allergies.map((allergy, i) => (
+            {safeAllergies.map((allergy, i) => (
               <Badge key={i} variant="destructive">
                 {allergy}
               </Badge>

@@ -51,6 +51,7 @@ class Practice(Base):
     group_id = Column(UUID(as_uuid=True), ForeignKey("practice_groups.id"), nullable=True)
     email = Column(String(255))
     phone = Column(String(20))
+    inbound_phone_number = Column(String(20), nullable=True, index=True)
     npi = Column(String(20), nullable=True)  # Service facility NPI (EDI claims)
     address = Column(String(255))  # Combined address field
     address_street = Column(String(255))

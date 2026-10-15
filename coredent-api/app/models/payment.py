@@ -169,7 +169,7 @@ class PaymentTransaction(Base):
     # processor transaction, and legacy rows predate the link. The link is
     # resolved from Payment.transaction_id == processor_transaction_id.
     payment_id = Column(
-        UUID(as_uuid=True), ForeignKey("payments.id", name="fk_payment_transactions_payment_id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("payments.id", name="fk_payment_transactions_payment_id"), nullable=True, index=True
     )
 
     # Transaction Details

@@ -200,7 +200,7 @@ class PatientPortalSession(Base):
     patient_id = Column(
         UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False
     )
-    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False, index=True)
 
     token_hash = Column(String(128), nullable=False, index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
@@ -238,7 +238,7 @@ class PatientPortalAccessCode(Base):
     patient_id = Column(
         UUID(as_uuid=True), ForeignKey("patients.id"), nullable=False
     )
-    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False)
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practices.id"), nullable=False, index=True)
 
     token_hash = Column(String(128), nullable=False, unique=True, index=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)

@@ -39,6 +39,7 @@ const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: 'dentist', label: 'Dentist (Clinical)' },
   { value: 'hygienist', label: 'Hygienist (Preventive)' },
   { value: 'front_desk', label: 'Front Desk (Admin/Scheduling)' },
+  { value: 'accountant', label: 'Accountant (Finance & Billing)' },
   { value: 'admin', label: 'Office Administrator' },
   { value: 'owner', label: 'Practice Owner (Full Access)' },
 ];

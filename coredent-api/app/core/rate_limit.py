@@ -233,7 +233,8 @@ def user_rate_limit(rate: str):
                     "user_rate_limit requires `request: Request` on the route"
                 )
 
-            key = _user_key(request)
+            endpoint_name = getattr(func, "__qualname__", getattr(func, "__name__", "endpoint"))
+            key = f"{endpoint_name}:{_user_key(request)}"
             try:
                 allowed, remaining, retry_after = _check_and_incr(key, rate)
             except RateLimitBackendUnavailable as exc:

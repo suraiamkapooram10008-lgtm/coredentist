@@ -262,7 +262,7 @@ class LabInvoicePayment(Base):
     transaction_id = Column(String(255), nullable=False)
     payment_date = Column(DateTime(timezone=True), nullable=False)
     notes = Column(Text)
-    recorded_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    recorded_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     lab_invoice = relationship("LabInvoice", back_populates="payments")

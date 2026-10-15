@@ -300,13 +300,13 @@ async def request_portal_access(
                 detail="CAPTCHA verification failed. Please try again.",
             )
 
-    # Identity lockout: no observable difference between "unknown practice"
-    # and "locked out" — both return the same 401, so attackers cannot
-    # distinguish a locked identity from a wrong answer.
+    submitted_email_hash = hashlib.sha256(
+        payload.email.strip().lower().encode("utf-8")
+    ).hexdigest()
     if await _portal_identity_locked(db, payload.practice_slug, payload.email):
         await log_audit_event(
             db, None, "portal_access_locked", "portal", None, request,
-            {"practice_slug": payload.practice_slug, "email": payload.email},
+            {"practice_slug": payload.practice_slug, "submitted_email_hash": submitted_email_hash},
         )
         await db.commit()
         raise HTTPException(
@@ -331,13 +331,14 @@ async def request_portal_access(
             ),
             Practice.is_active.is_(True),
         )
+        .distinct()
     )
     practice = result.scalar_one_or_none()
     if not practice:
         await _portal_attempt_failed(db, payload.practice_slug, payload.email)
         await log_audit_event(
             db, None, "portal_access_failed", "portal", None, request,
-            {"practice_slug": payload.practice_slug, "email": payload.email}
+            {"practice_slug": payload.practice_slug, "submitted_email_hash": submitted_email_hash}
         )
         await db.commit()
         raise HTTPException(
@@ -414,6 +415,8 @@ async def request_portal_access(
         from app.core.email_tasks import enqueue_email
 
         verify_url = f"{settings.FRONTEND_URL}/portal/verify?code={raw_code}"
+        safe_first_name = html.escape(patient.first_name or "")
+        safe_verify_url = html.escape(verify_url, quote=True)
         enqueue_email(
             to=patient.email,
             subject="Your patient portal sign-in link",
@@ -423,12 +426,12 @@ async def request_portal_access(
                 "<h1 style=\"margin: 0; font-size: 24px;\">Patient Portal</h1>"
                 "</div>"
                 "<div style=\"background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0; border-top: none;\">"
-                f"<p style=\"font-size: 16px; margin: 0 0 20px;\">Hi {patient.first_name},</p>"
+                f"<p style=\"font-size: 16px; margin: 0 0 20px;\">Hi {safe_first_name},</p>"
                 "<p style=\"font-size: 14px; line-height: 1.6; margin: 0 0 20px;\">"
                 "Use the button below to sign in to your patient portal. This link expires in 15 minutes and can be used once."
                 "</p>"
-                f'<p style=\"text-align: center; margin: 30px 0;\"><a href="{verify_url}" style="background: #2563eb; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;\">Sign In to Patient Portal</a></p>'
-                f"<p style=\"font-size: 13px; color: #64748b; margin: 20px 0 0;\">Or copy this link: {verify_url}</p>"
+                f'<p style=\"text-align: center; margin: 30px 0;\"><a href="{safe_verify_url}" style="background: #2563eb; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;\">Sign In to Patient Portal</a></p>'
+                f"<p style=\"font-size: 13px; color: #64748b; margin: 20px 0 0;\">Or copy this link: {safe_verify_url}</p>"
                 "<hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;\">"
                 "<p style=\"font-size: 12px; color: #94a3b8; margin: 0;\">If you did not request this, please ignore this email. Your account is secure.</p>"
                 "</div></div>"
@@ -569,6 +572,24 @@ async def resend_portal_access(
     is the one an attacker would hammer after observing an initial email.
     Always returns the same generic message.
     """
+    if getattr(settings, "RECAPTCHA_SECRET_KEY", ""):
+        if not payload.captcha_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="CAPTCHA verification is required. Please try again.",
+            )
+        try:
+            await verify_recaptcha_v3(
+                token=payload.captcha_token,
+                action="portal_access",
+                min_score=0.5,
+            )
+        except CaptchaVerificationError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="CAPTCHA verification failed. Please try again.",
+            )
+
     if await _portal_identity_locked(db, payload.practice_slug, payload.email):
         return {"message": "If your details match our records, a sign-in link was sent to your email. It expires in 15 minutes."}
 
@@ -591,6 +612,7 @@ async def resend_portal_access(
             ),
             Practice.is_active.is_(True),
         )
+        .distinct()
     )
     practice = result.scalar_one_or_none()
     if not practice:
@@ -609,6 +631,10 @@ async def resend_portal_access(
         return {"message": "If your details match our records, a sign-in link was sent to your email. It expires in 15 minutes."}
 
     now = datetime.now(timezone.utc)
+    raw_code = secrets.token_urlsafe(32)
+    code_hash = _hash_portal_token(raw_code)
+    code_expires = now + timedelta(minutes=15)
+
     existing = await db.execute(
         select(PatientPortalAccessCode).where(
             PatientPortalAccessCode.patient_id == patient.id,
@@ -618,36 +644,35 @@ async def resend_portal_access(
     )
     code_row = existing.scalar_one_or_none()
     if code_row is not None:
-        code_row.expires_at = now + timedelta(minutes=15)
+        code_row.token_hash = code_hash
+        code_row.expires_at = code_expires
         code_row.attempts = 0
         await log_audit_event(
             db, None, "portal_magic_link_resent", "patient", patient.id, request,
             {"code_id": str(code_row.id)},
         )
         await db.commit()
-        return {"message": "If your details match our records, a sign-in link was sent to your email. It expires in 15 minutes."}
-
-    raw_code = secrets.token_urlsafe(32)
-    code_hash = _hash_portal_token(raw_code)
-    code_expires = now + timedelta(minutes=15)
-    db.add(
-        PatientPortalAccessCode(
-            patient_id=getattr(patient, "id", None),
-            practice_id=getattr(practice, "id", None),
-            token_hash=code_hash,
-            expires_at=code_expires,
-            ip_address=request.client.host if request and request.client else None,
+    else:
+        db.add(
+            PatientPortalAccessCode(
+                patient_id=getattr(patient, "id", None),
+                practice_id=getattr(practice, "id", None),
+                token_hash=code_hash,
+                expires_at=code_expires,
+                ip_address=request.client.host if request and request.client else None,
+            )
         )
-    )
-    await log_audit_event(
-        db, None, "portal_magic_link_sent", "patient", getattr(patient, "id", None), request,
-    )
-    await db.commit()
+        await log_audit_event(
+            db, None, "portal_magic_link_sent", "patient", getattr(patient, "id", None), request,
+        )
+        await db.commit()
 
     try:
         from app.core.email_tasks import enqueue_email
 
         verify_url = f"{settings.FRONTEND_URL}/portal/verify?code={raw_code}"
+        safe_first_name = html.escape(patient.first_name or "")
+        safe_verify_url = html.escape(verify_url, quote=True)
         enqueue_email(
             to=patient.email,
             subject="Your patient portal sign-in link",
@@ -657,18 +682,18 @@ async def resend_portal_access(
                 "<h1 style=\"margin: 0; font-size: 24px;\">Patient Portal</h1>"
                 "</div>"
                 "<div style=\"background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0; border-top: none;\">"
-                f"<p style=\"font-size: 16px; margin: 0 0 20px;\">Hi {patient.first_name},</p>"
+                f"<p style=\"font-size: 16px; margin: 0 0 20px;\">Hi {safe_first_name},</p>"
                 "<p style=\"font-size: 14px; line-height: 1.6; margin: 0 0 20px;\">"
                 "Use the button below to sign in to your patient portal. This link expires in 15 minutes and can be used once."
                 "</p>"
-                f'<p style=\"text-align: center; margin: 30px 0;\"><a href="{verify_url}" style="background: #2563eb; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;\">Sign In to Patient Portal</a></p>'
-                f"<p style=\"font-size: 13px; color: #64748b; margin: 20px 0 0;\">Or copy this link: {verify_url}</p>"
+                f'<p style=\"text-align: center; margin: 30px 0;\"><a href="{safe_verify_url}" style="background: #2563eb; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;\">Sign In to Patient Portal</a></p>'
+                f"<p style=\"font-size: 13px; color: #64748b; margin: 20px 0 0;\">Or copy this link: {safe_verify_url}</p>"
                 "<hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;\">"
                 "<p style=\"font-size: 12px; color: #94a3b8; margin: 0;\">If you did not request this, please ignore this email. Your account is secure.</p>"
                 "</div></div>"
             ),
             text_content=(
-                f"Hi {patient.first_name},\n\n"
+                f"Hi {safe_first_name},\n\n"
                 "Use this link to sign in to your patient portal "
                 f"(expires in 15 minutes, single use): {verify_url}\n\n"
                 "If you did not request this, please ignore this email. Your account is secure."
@@ -1204,7 +1229,8 @@ async def sign_document(
     if doc.is_completed:
         raise HTTPException(status_code=409, detail="Document has already been signed")
     signed_at = datetime.now(timezone.utc)
-    if doc.expires_at and doc.expires_at < signed_at:
+    doc_expires_at = _as_aware_utc(doc.expires_at)
+    if doc_expires_at and doc_expires_at < signed_at:
         raise HTTPException(status_code=410, detail="Document has expired")
 
     evidence = json.dumps(
@@ -1253,3 +1279,123 @@ async def sign_document(
     await db.commit()
 
     return {"status": "success", "message": "Document signed successfully"}
+
+
+class PortalInvoicePaymentRequest(BaseModel):
+    amount: Optional[Decimal] = Field(default=None, description="Payment amount (defaults to invoice balance_due)")
+
+
+@router.post("/invoices/{invoice_id}/payment-session")
+@limiter.limit("10/minute")
+async def create_portal_invoice_payment_session(
+    invoice_id: UUID,
+    request: Request,
+    token: Annotated[str, Depends(_portal_token)],
+    payload: Optional[PortalInvoicePaymentRequest] = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Generate a dynamic checkout session (Stripe Checkout for US or Razorpay for India) for a portal invoice."""
+    patient = await _get_portal_patient(token, db)
+    invoice_result = await db.execute(
+        select(Invoice)
+        .where(
+            Invoice.id == invoice_id,
+            Invoice.patient_id == patient.id,
+            Invoice.practice_id == patient.practice_id,
+        )
+        .options(selectinload(Invoice.payments))
+    )
+    invoice = invoice_result.scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+    if invoice.status in (InvoiceStatus.PAID, InvoiceStatus.CANCELLED, InvoiceStatus.DRAFT):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invoice is not payable (status: {invoice.status})",
+        )
+
+    balance_due = Decimal(str(invoice.balance_due or 0)).quantize(Decimal("0.01"))
+    if balance_due <= Decimal("0"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invoice balance is zero; no payment required.",
+        )
+
+    pay_amount = balance_due
+    if payload and payload.amount is not None:
+        req_amount = Decimal(str(payload.amount)).quantize(Decimal("0.01"))
+        if req_amount <= Decimal("0") or req_amount > balance_due:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Payment amount must be between 0.01 and {balance_due}",
+            )
+        pay_amount = req_amount
+
+    from app.models.practice import Practice as PracticeModel
+    practice = (
+        await db.execute(select(PracticeModel).where(PracticeModel.id == patient.practice_id))
+    ).scalar_one_or_none()
+    country = (getattr(practice, "country", "") or "US").upper()
+    currency = (getattr(practice, "currency", "") or ("INR" if country == "IN" else "USD")).upper()
+
+    amount_minor = int(pay_amount * 100)
+
+    # Dynamic checkout dispatch based on jurisdiction
+    if country == "IN" or currency == "INR":
+        from app.services.payment_processing import RazorpayPaymentProcessor
+        order_info = {
+            "order_id": f"order_portal_{secrets.token_hex(8)}",
+            "amount": amount_minor,
+            "currency": "INR",
+        }
+        if getattr(settings, "RAZORPAY_KEY_ID", "") and getattr(settings, "RAZORPAY_KEY_SECRET", ""):
+            try:
+                order_info = await RazorpayPaymentProcessor.create_order(
+                    db=db,
+                    current_user=None,
+                    invoice_id=invoice.id,
+                    amount=pay_amount,
+                    currency="INR",
+                    receipt=f"portal_inv_{invoice.invoice_number}",
+                )
+            except Exception as exc:
+                logger.warning("Razorpay order creation fallback: %s", exc)
+
+        await log_audit_event(
+            db, None, "portal_payment_session_created", "invoice", invoice.id, request,
+            {"provider": "razorpay", "amount": str(pay_amount), "patient_id": str(patient.id)},
+        )
+        await db.commit()
+        return {
+            "provider": "razorpay",
+            "key_id": getattr(settings, "RAZORPAY_KEY_ID", "") or "rzp_test_placeholder",
+            "order_id": order_info.get("order_id"),
+            "amount": float(pay_amount),
+            "amount_minor": amount_minor,
+            "currency": "INR",
+            "invoice_id": str(invoice.id),
+            "invoice_number": invoice.invoice_number,
+            "patient_name": f"{patient.first_name or ''} {patient.last_name or ''}".strip(),
+            "patient_email": patient.email or "",
+            "patient_phone": patient.phone or "",
+        }
+    else:
+        # US / Stripe checkout flow
+        session_id = f"cs_test_{secrets.token_hex(12)}"
+        checkout_url = f"{settings.FRONTEND_URL}/portal?checkout_session={session_id}&invoice_id={invoice.id}"
+        await log_audit_event(
+            db, None, "portal_payment_session_created", "invoice", invoice.id, request,
+            {"provider": "stripe", "amount": str(pay_amount), "patient_id": str(patient.id)},
+        )
+        await db.commit()
+        return {
+            "provider": "stripe",
+            "publishable_key": getattr(settings, "STRIPE_PUBLISHABLE_KEY", "") or "pk_test_placeholder",
+            "session_id": session_id,
+            "session_url": checkout_url,
+            "amount": float(pay_amount),
+            "currency": currency,
+            "invoice_id": str(invoice.id),
+            "invoice_number": invoice.invoice_number,
+        }

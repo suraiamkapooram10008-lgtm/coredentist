@@ -78,10 +78,12 @@ export default function Documents() {
           <p className="text-muted-foreground">Templates, e-signatures, and patient documents</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" disabled title="Not wired in this build">`r`n            <Plus className="mr-2 h-4 w-4" />
+          <Button variant="outline" disabled title="Not wired in this build">
+            <Plus className="mr-2 h-4 w-4" />
             New Template
           </Button>
-          <Button disabled title="Not wired in this build">`r`n            <Plus className="mr-2 h-4 w-4" />
+          <Button disabled title="Not wired in this build">
+            <Plus className="mr-2 h-4 w-4" />
             Create Document
           </Button>
         </div>

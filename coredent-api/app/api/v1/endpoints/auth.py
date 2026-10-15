@@ -124,6 +124,13 @@ def _email_verification_overdue(user: User) -> bool:
     """True when an unverified account is past its verification grace period."""
     if user.is_email_verified:
         return False
+    if getattr(user, "email_verification_required", False):
+        return True
+    exp = getattr(user, "email_verification_token_expires_at", None)
+    if exp is not None:
+        exp_aware = _as_aware_utc(exp)
+        if exp_aware and datetime.now(timezone.utc) > exp_aware:
+            return True
     created_at = _as_aware_utc(user.created_at)
     if created_at is None:
         return False
@@ -449,6 +456,16 @@ async def register(
     )
     db.add(practice)
     await _await_if_needed(db.flush())
+
+    # Decision 4: Seed default chairs and appointment types for newly registered practice
+    from app.models.appointment import Chair, AppointmentType
+    db.add_all([
+        Chair(practice_id=practice.id, name="Operatory 1", color="#3B82F6", is_active=True),
+        Chair(practice_id=practice.id, name="Operatory 2", color="#10B981", is_active=True),
+        AppointmentType(practice_id=practice.id, name="Routine Cleaning", duration=45, color="#3B82F6", description="Prophylaxis and hygiene cleaning", is_active=True),
+        AppointmentType(practice_id=practice.id, name="Comprehensive Exam", duration=60, color="#10B981", description="Initial exam and dental evaluation", is_active=True),
+        AppointmentType(practice_id=practice.id, name="Emergency / Toothache", duration=30, color="#EF4444", description="Urgent pain assessment", is_active=True),
+    ])
 
     verification_token = generate_password_reset_token()
     user = User(

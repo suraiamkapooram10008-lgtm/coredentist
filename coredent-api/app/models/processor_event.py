@@ -94,7 +94,7 @@ class ProcessorWebhookEvent(Base):
 
     # Link to the ledger row this event produced, when it produced one.
     payment_transaction_id = Column(
-        UUID(as_uuid=True), ForeignKey("payment_transactions.id"), nullable=True
+        UUID(as_uuid=True), ForeignKey("payment_transactions.id"), nullable=True, index=True
     )
 
     # Allowlisted, non-PHI routing fields only. See summarize_event().

@@ -764,9 +764,9 @@ async def process_dunning(
     Postgres-only (SQLite returns True immediately per
     ``_try_acquire_task_lock``), so dev/test on SQLite keeps working.
     """
-    from app.core.tasks import _try_acquire_task_lock
+    from app.core.tasks import _try_acquire_task_lock_async
 
-    if not _try_acquire_task_lock(db, "process-dunning"):
+    if not await _try_acquire_task_lock_async(db, "process-dunning"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(

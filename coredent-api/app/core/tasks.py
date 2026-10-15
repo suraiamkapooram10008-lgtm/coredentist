@@ -297,6 +297,26 @@ def _try_acquire_task_lock(db, name: str) -> bool:
         return False
 
 
+async def _try_acquire_task_lock_async(db, name: str) -> bool:
+    """Serialize an async job run on PostgreSQL without weakening SQLite tests."""
+    try:
+        bind = db.get_bind()
+        if bind.dialect.name != "postgresql":
+            return True
+        lock_key = int.from_bytes(
+            hashlib.sha256(name.encode("utf-8")).digest()[:8],
+            byteorder="big",
+            signed=False,
+        ) & 0x7FFFFFFFFFFFFFFF
+        res = await db.execute(
+            text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": lock_key}
+        )
+        return bool(res.scalar())
+    except Exception as exc:
+        logger.error("Could not acquire async scheduler lock %s: %s", name, exc)
+        return False
+
+
 @shared_task(
     bind=True,
     max_retries=3,

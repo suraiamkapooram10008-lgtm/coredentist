@@ -214,13 +214,21 @@ class SubscriptionService:
 
         # Calculate proration against the ACTUAL period length, not a
         # hardcoded 30 days (annual/quarterly plans were wildly mis-prorated).
-        if subscription.current_period_end:
-            days_remaining = max(0, int((subscription.current_period_end - now).total_seconds() / 86400))
+        def _as_aware_utc(dt):
+            if dt is not None and getattr(dt, "tzinfo", None) is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt
+
+        period_end = _as_aware_utc(subscription.current_period_end)
+        period_start = _as_aware_utc(subscription.current_period_start)
+
+        if period_end:
+            days_remaining = max(0, int((period_end - now).total_seconds() / 86400))
         else:
             days_remaining = 30
 
-        if subscription.current_period_start and subscription.current_period_end:
-            total_days = max(1, int((subscription.current_period_end - subscription.current_period_start).total_seconds() / 86400))
+        if period_start and period_end:
+            total_days = max(1, int((period_end - period_start).total_seconds() / 86400))
         else:
             interval_days = {
                 SubscriptionInterval.WEEKLY: 7,

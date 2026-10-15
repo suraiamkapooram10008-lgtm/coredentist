@@ -140,14 +140,18 @@ async def _acquire_booking_lock(db, practice_id, *specs) -> None:
         return
     if not specs:
         specs = (("practice", practice_id),)
+    lock_keys = set()
     for tag, value in specs:
         if value is None:
             continue
         digest = hashlib.blake2b(
             f"{tag}|{practice_id}|{value}".encode("utf-8"), digest_size=8
         ).digest()
-        lock_key = int.from_bytes(digest, "big") & 0x7FFFFFFFFFFFFFFF
-        await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+        lock_keys.add(int.from_bytes(digest, "big") & 0x7FFFFFFFFFFFFFFF)
+
+    # Sort keys globally to prevent advisory-lock deadlocks under concurrent bookings
+    for k in sorted(lock_keys):
+        await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": k})
 
 
 def _build_conflict_query(

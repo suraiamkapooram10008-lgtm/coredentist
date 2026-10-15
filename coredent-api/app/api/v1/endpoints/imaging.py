@@ -13,6 +13,7 @@ import logging
 from app.core.database import get_db
 from app.api.deps import get_current_user, verify_csrf, require_role
 from app.core.audit import log_audit_event
+from app.core.limiter import limiter
 from app.models.user import User, UserRole
 from app.models.imaging import ImageType, ImageCategory
 from app.models.patient import Patient
@@ -100,6 +101,7 @@ async def list_patient_images(
         await log_audit_event(
             db, current_user, "list_patient_images", "patient", patient_id, request
         )
+        await db.commit()
 
         return PatientImageListResponse(
             images=images,
@@ -195,6 +197,7 @@ async def upload_image(
             db, current_user, "upload_image", "patient_image", image.id, request,
             {"file_size": file_size, "mime_type": file.content_type}
         )
+        await db.commit()
 
         return image
 
@@ -242,6 +245,7 @@ async def get_image(
         await log_audit_event(
             db, current_user, "view_image", "patient_image", image.id, request
         )
+        await db.commit()
 
         return image
 
@@ -409,6 +413,7 @@ async def share_image(
                 "referral_email": share_data.referral_email
             }
         )
+        await db.commit()
 
         message = "Image sharing settings updated"
 
@@ -486,17 +491,24 @@ async def share_image(
 # ============================================
 
 @router.get("/public/images/{image_id}", response_model=PatientImageResponse)
+@limiter.limit("30/minute")
 async def get_public_image(
+    request: Request,
     image_id: str,
-    token: str = Query(..., description="Secure share token"),
+    token: Optional[str] = Query(None, description="Secure share token"),
     db: AsyncSession = Depends(get_db),
-    request: Request = None,
 ) -> PatientImageResponse:
     """
     Get image metadata for external referral (Token-Gated)
     """
     try:
-        image = await ImagingService.get_public_image(db, image_id, token)
+        resolved_token = token or (request.headers.get("X-Share-Token") if request else None)
+        if not resolved_token:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Valid sharing link not found or expired",
+            )
+        image = await ImagingService.get_public_image(db, image_id, resolved_token)
 
         if not image:
             raise HTTPException(
@@ -510,8 +522,9 @@ async def get_public_image(
         # HIPAA: Log public access
         await log_audit_event(
             db, None, "public_image_viewed", "patient_image", image.id, request,
-            {"source": "public_link", "token_used": token[:8] + "..."}
+            {"source": "public_link", "token_used": resolved_token[:8] + "..."}
         )
+        await db.commit()
 
         return image
 

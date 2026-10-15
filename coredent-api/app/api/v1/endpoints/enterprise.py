@@ -18,7 +18,7 @@ from app.core.business_time import (
     resolve_instant_range,
 )
 from app.core.database import get_db
-from app.models.appointment import Appointment
+from app.models.appointment import Appointment, AppointmentStatus
 from app.models.billing import Invoice, InvoiceStatus, Payment, PaymentStatus
 from app.models.patient import Patient
 from app.models.practice import Practice
@@ -184,7 +184,7 @@ async def get_group_analytics(
         app_result = await db.execute(
             select(
                 func.count(Appointment.id),
-                func.count(Appointment.id).filter(Appointment.status == "completed"),
+                func.count(Appointment.id).filter(Appointment.status == AppointmentStatus.COMPLETED),
             ).where(
                 and_(
                     Appointment.practice_id == practice.id,

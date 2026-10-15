@@ -17,6 +17,7 @@ interface MedicationsCardProps {
 export const MedicationsCard = React.memo(function MedicationsCard({
   medications,
 }: MedicationsCardProps) {
+  const safeMedications = Array.isArray(medications) ? medications : (medications ? [String(medications)] : []);
   return (
     <Card>
       <CardHeader>
@@ -26,9 +27,9 @@ export const MedicationsCard = React.memo(function MedicationsCard({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {medications.length > 0 ? (
+        {safeMedications.length > 0 ? (
           <ul className="space-y-2">
-            {medications.map((med, i) => (
+            {safeMedications.map((med, i) => (
               <li key={i} className="text-sm">
                 {med}
               </li>

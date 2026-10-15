@@ -1,3 +1,4 @@
+from app.core.config_simple import settings
 """
 Communications Engineering Service
 Handles Twilio integration (Two-way SMS) and the Automated Recall Engine.
@@ -159,7 +160,11 @@ class CommunicationsEngine:
                         "patient_name": patient.first_name,
                         "practice_name": practice.name,
                         "last_visit_date": apt.start_time.strftime("%B %d, %Y") if apt.start_time else "recently",
-                        "booking_link": f"https://yourdomain.com/book/{practice.slug}" if hasattr(practice, 'slug') else ""
+                        "booking_link": (
+                            f"{settings.FRONTEND_URL.rstrip('/')}/book/{getattr(practice, 'public_slug', None) or getattr(practice, 'slug', '')}"
+                            if (getattr(practice, 'public_slug', None) or getattr(practice, 'slug', None))
+                            else ""
+                        )
                     }
 
                     body = self._replace_variables(template.content, context)
@@ -237,27 +242,41 @@ class CommunicationsEngine:
         # Clean phone number
         cleaned_phone = from_phone[-10:] if len(from_phone) >= 10 else from_phone
 
-        # 1. Match phone number to a patient without choosing arbitrarily.
-        # NOTE (explicit): no To->practice binding exists (Practice has no
-        # Twilio number column), so a last-10 collision across two practices
-        # cannot be routed by recipient. Refuse ambiguous matches instead of
-        # misattributing to the wrong tenant.
-        patient_query = self.db.query(Patient).filter(
-            func.lower(Patient.phone).like(f"%{cleaned_phone}%")
-        )
-        if isinstance(self.db, Session):
-            candidates = patient_query.limit(2).all()
-            if len(candidates) != 1:
-                logger.warning("Inbound SMS rejected: phone matched %s active patient records", len(candidates))
-                return False
-            patient = candidates[0]
+        # 1. Match destination practice by to_phone if available
+        destination_practice = None
+        if to_phone:
+            digits_to = "".join(filter(str.isdigit, str(to_phone)))
+            to_last10 = digits_to[-10:] if len(digits_to) >= 10 else digits_to
+            destination_practice = self.db.query(Practice).filter(
+                (Practice.inbound_phone_number.like(f"%{to_last10}%")) |
+                (Practice.phone.like(f"%{to_last10}%"))
+            ).first()
+
+        # Build candidate phone variants for blind index (search_index_phone)
+        from app.core.search_index import hmac_index
+        digits_from = "".join(filter(str.isdigit, str(from_phone)))
+        from_last10 = digits_from[-10:] if len(digits_from) >= 10 else digits_from
+        variants = {from_phone, f"+{digits_from}", digits_from, from_last10, f"+1{from_last10}"}
+        candidate_hmacs = [h for h in (hmac_index(v) for v in variants) if h]
+
+        patient_query = self.db.query(Patient)
+        if candidate_hmacs:
+            patient_query = patient_query.filter(Patient.search_index_phone.in_(candidate_hmacs))
         else:
-            # Lightweight mocks: same exactly-one rule, no arbitrary first().
-            candidates = patient_query.limit(2).all()
-            if len(candidates) != 1:
-                logger.warning("Inbound SMS rejected: phone matched %s records", len(candidates))
-                return False
-            patient = candidates[0]
+            patient_query = patient_query.filter(func.lower(Patient.phone).like(f"%{cleaned_phone}%"))
+
+        if destination_practice is not None:
+            patient_query = patient_query.filter(Patient.practice_id == destination_practice.id)
+
+        candidates = patient_query.limit(2).all()
+        if len(candidates) != 1:
+            if len(candidates) > 1:
+                logger.warning("Inbound SMS rejected: phone matched %s active patient records across practices", len(candidates))
+            else:
+                redacted_number = f"***{from_phone[-4:]}" if from_phone and len(str(from_phone)) >= 4 else "***"
+                logger.warning(f"Inbound SMS from unknown number: {redacted_number}")
+            return False
+        patient = candidates[0]
 
         if not patient:
             # PHI hygiene: never write a full phone number to logs. Keep the

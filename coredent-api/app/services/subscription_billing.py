@@ -206,14 +206,21 @@ class SubscriptionBillingService:
 
                             if invoices and invoices.data:
                                 invoice = invoices.data[0]
-                                await asyncio.to_thread(stripe_lib.Invoice.finalize_invoice, invoice.id)
-                                dunning_event.result = "success"
-                                dunning_event.executed_at = now
-                                sub.status = SubscriptionStatus.ACTIVE
-                                sub.dunning_retry_count = 0
-                                sub.last_payment_error = None
-                                processed_count += 1
-                                continue
+                                paid_inv = await asyncio.to_thread(stripe_lib.Invoice.pay, invoice.id)
+                                if paid_inv and getattr(paid_inv, "status", None) == "paid":
+                                    dunning_event.result = "success"
+                                    dunning_event.executed_at = now
+                                    sub.status = SubscriptionStatus.ACTIVE
+                                    sub.dunning_retry_count = 0
+                                    sub.last_payment_error = None
+                                    processed_count += 1
+                                    continue
+                                else:
+                                    raise stripe_lib.error.CardError(
+                                        message="Invoice payment attempt did not succeed",
+                                        param="invoice",
+                                        code="payment_failed",
+                                    )
 
                         except stripe_lib.error.StripeError as e:
                             error_msg = str(e)

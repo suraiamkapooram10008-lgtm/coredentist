@@ -113,3 +113,38 @@ def test_stripe_interval_map_has_no_none():
     enum_values = {member.value for member in SubscriptionInterval}
     assert enum_values == set(STRIPE_INTERVAL_MAP.keys())
     assert enum_values == set(STRIPE_INTERVAL_COUNT.keys())
+
+
+def test_billing_summary_has_pending_invoices():
+    from app.schemas.billing import BillingSummary
+
+    # Verify pending_invoices field exists with default 0
+    fields = BillingSummary.model_fields
+    assert "pending_invoices" in fields
+    assert fields["pending_invoices"].default == 0
+
+
+def test_practice_inbound_phone_number_column():
+    from app.models.practice import Practice
+
+    assert hasattr(Practice, "inbound_phone_number")
+    col = Practice.__table__.c.inbound_phone_number
+    assert col.nullable is True
+
+
+def test_user_roles_coverage():
+    from app.models.user import UserRole
+
+    assert hasattr(UserRole, "ACCOUNTANT")
+    assert hasattr(UserRole, "SUPER_ADMIN")
+    assert hasattr(UserRole, "OWNER")
+    assert hasattr(UserRole, "ADMIN")
+    assert hasattr(UserRole, "DENTIST")
+    assert hasattr(UserRole, "HYGIENIST")
+    assert hasattr(UserRole, "FRONT_DESK")
+
+
+def test_appointment_status_completed():
+    from app.models.appointment import AppointmentStatus
+
+    assert AppointmentStatus.COMPLETED.value == "completed"

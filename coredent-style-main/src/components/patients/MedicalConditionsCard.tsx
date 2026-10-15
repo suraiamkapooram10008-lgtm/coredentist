@@ -18,6 +18,7 @@ interface MedicalConditionsCardProps {
 export const MedicalConditionsCard = React.memo(function MedicalConditionsCard({
   conditions,
 }: MedicalConditionsCardProps) {
+  const safeConditions = Array.isArray(conditions) ? conditions : (conditions ? [String(conditions)] : []);
   return (
     <Card>
       <CardHeader>
@@ -27,9 +28,9 @@ export const MedicalConditionsCard = React.memo(function MedicalConditionsCard({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {conditions.length > 0 ? (
+        {safeConditions.length > 0 ? (
           <div className="flex flex-wrap gap-2">
-            {conditions.map((condition, i) => (
+            {safeConditions.map((condition, i) => (
               <Badge key={i} variant="secondary">
                 {condition}
               </Badge>

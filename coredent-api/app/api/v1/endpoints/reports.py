@@ -526,12 +526,14 @@ async def get_dashboard_metrics(
     minutes_by_hour: dict[int, int] = {}
     minutes_by_dow: dict[int, int] = {}
     for start_time, duration in appt_rows:
+        if start_time is not None and getattr(start_time, "tzinfo", None) is None:
+            start_time = start_time.replace(tzinfo=timezone.utc)
         local = start_time.astimezone(practice_tz)
         minutes_by_hour[local.hour] = minutes_by_hour.get(local.hour, 0) + (duration or 0)
         # Python weekday(): Mon=0 ... Sun=6
         minutes_by_dow[local.weekday()] = minutes_by_dow.get(local.weekday(), 0) + (duration or 0)
 
-    hour_available = num_chairs * 60
+    hour_available = num_chairs * 60 * days_count
     peak_hours = [
         {
             "hour": f"{hour:02d}:00",
@@ -542,13 +544,24 @@ async def get_dashboard_metrics(
         for hour, minutes in sorted(minutes_by_hour.items())
     ]
 
-    day_available = num_chairs * 8 * 60
+    dow_counts = {}
+    curr = from_date
+    while curr <= to_date:
+        dow_counts[curr.weekday()] = dow_counts.get(curr.weekday(), 0) + 1
+        curr += timedelta(days=1)
+
     _DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     by_day_of_week = [
         {
             "day": _DOW_NAMES[dow],
-            "utilization": min(100.0, round(minutes / day_available * 100, 1))
-            if day_available
+            "utilization": min(
+                100.0,
+                round(
+                    minutes / (num_chairs * 8 * 60 * max(1, dow_counts.get(dow, 1))) * 100,
+                    1,
+                ),
+            )
+            if num_chairs
             else 0.0,
         }
         for dow, minutes in sorted(minutes_by_dow.items())
